@@ -26,6 +26,7 @@ SQLite with WAL (Write-Ahead Logging) enabled for better concurrent read perform
 `sqlc.yaml` configures codegen. SQL query files are in `queries/`:
 
 - `tasks.sql` — task CRUD + label moves + dispatch queries
+- `human_decisions.sql` — one row per waiting_human run; question written at escalation, reply on DispatchReply; read by startRun for the HUMAN DECISIONS prompt section; not pruned by log retention
 - `workflows.sql` — workflow, label, transition, history CRUD
 - `agents.sql` — agent config CRUD
 - `providers.sql` — provider config CRUD (provider/model/env, shared by agent configs and chat sessions)

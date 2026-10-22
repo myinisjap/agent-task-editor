@@ -88,7 +88,7 @@ The `backend` service in `docker-compose.yml` / `docker-compose.release.yml` is 
 
 - `restart: unless-stopped` — the container is restarted automatically after a crash or OOM kill (and on daemon restart), unless you've explicitly stopped it.
 - A healthcheck against `GET /readyz` (not `/healthz`) — this actually checks DB connectivity and that the dispatch loop is still ticking, so Docker detects a wedged backend (e.g. a locked SQLite file or a hung sweep) instead of it appearing healthy forever. See [`docs/api.md`](api.md#get-readyz).
-- A default memory ceiling of **4 GB** via `deploy.resources.limits.memory` — headroom for the Go backend plus the agent CLIs (`claude`/`node`/etc.) it shells out to, including memory-hungry steps like a frontend test suite running under several concurrent agents. If you run many concurrent agent runs and still hit this ceiling (the container gets OOM-killed and auto-restarts), raise `memory:` under the backend service's `deploy.resources.limits` in your compose file.
+- A default memory ceiling of **4 GB** via `deploy.resources.limits.memory` — headroom for the Go backend plus the agent CLIs (`claude`/`node`/etc.) it shells out to, including memory-hungry steps like a frontend test suite running under several concurrent agents. If you run many concurrent agent runs and still hit this ceiling (the container gets OOM-killed and auto-restarts), set `BACKEND_MEMORY_LIMIT` (e.g. `BACKEND_MEMORY_LIMIT=8g` in `.env`), which both compose files use for the backend's `deploy.resources.limits.memory`.
 
 ## Single-replica deployment
 
@@ -117,7 +117,7 @@ All variables can also be set via a YAML config file pointed to by `CONFIG_FILE`
 | `CONFIG_FILE` | _(empty)_ | Path to a YAML config file (all keys are optional) |
 | `AGENT_ISOLATION` | `true` | Run provider CLIs (task runs, chat terminals) as a separate unprivileged `agent` user. `false` runs them as the server user. See [Agent user isolation](#agent-user-isolation). |
 | `AGENT_UID` | `10001` | uid of the `agent` account (set by `entrypoint.sh`; bumped to `10002` if it equals `PUID`). Its gid is always `PGID`. |
-| `AGENT_FIX_REPO_PERMS` | `auto` | `auto`: at startup add group-write (`chmod -R g+rwX`) to each repo directly under `REPO_BASE_DIR` whose top-level dir isn't already group-writable. `always`: re-walk every start. `never`: skip (manage permissions yourself). |
+| `AGENT_FIX_REPO_PERMS` | `auto` | `auto`: at startup add group-write (`chmod -R g+rwX`) to each repo directly under `REPO_BASE_DIR` whose top-level dir isn't already group-writable, re-open its `.git` when any directory in it has lost group write (e.g. object dirs created by host-side git with a `022` umask), and set `core.sharedRepository=group`. `always`: re-walk every start. `never`: skip (manage permissions yourself). |
 
 ### Cost Controls
 
