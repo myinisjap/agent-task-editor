@@ -142,6 +142,14 @@ func (l runLifecycle) escalate(ctx context.Context, e escalation) error {
 		return firstErr
 	}
 
+	// Best-effort: keep the question for the HUMAN DECISIONS prompt section.
+	// Never affects escalation, locking or firstErr.
+	if err := l.q.UpsertHumanQuestion(ctx, gen.UpsertHumanQuestionParams{
+		RunID: e.RunID, TaskID: e.TaskID, EscalationReason: reason, Question: msg,
+	}); err != nil {
+		slog.Warn("run lifecycle: record human question", "component", "lifecycle", "run_id", e.RunID, "task_id", e.TaskID, "err", err)
+	}
+
 	switch e.Lock {
 	case lockUntouched:
 		// Already locked on this run by the dispatcher; nothing to write.

@@ -22,6 +22,7 @@ triggers the "Release" workflow the same way.
 ### Fixed
 
 - **Agents can write to repos' `.git` again after host-side git use.** With `AGENT_FIX_REPO_PERMS=auto` the entrypoint skipped any repo whose top-level dir was already group-writable, so `.git/objects/xx` dirs created by git on the host (umask `022`) stayed owner-only and agent runs failed at `git add`/merge with a permission error. The entrypoint now re-opens `.git` whenever any directory in it lacks group write and sets `core.sharedRepository=group` on each repo, so git keeps new object dirs group-writable.
+- **Human replies now reach every later agent on the task.** Answers given via the reply box / `reply_to_run` are stored on the task (table `task_human_decisions`) and shown to every later run, on any label and agent, under `HUMAN DECISIONS ON THIS TASK`, with the question they answered and when. Before, only the resumed run saw the answer, so testers and reviewers kept failing tasks for following it. The resumed run still gets `RESPONSE FROM HUMAN` as before.
 
 ### Added
 
