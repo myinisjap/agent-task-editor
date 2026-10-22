@@ -761,7 +761,7 @@ The user prompt sent to the agent is assembled as:
 
 ```
 [FEEDBACK FROM PRIOR REVIEW:
-<feedback from the previous run, if any>
+<feedback from the previous run, if any; only present until a run that received it succeeds>
 
 ---]
 

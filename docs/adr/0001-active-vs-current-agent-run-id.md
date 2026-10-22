@@ -29,6 +29,7 @@ source of rework feedback.
 
 ## Consequences
 
+- The feedback read via `current_agent_run_id` is "pending for the next run": a successful run clears the feedback it was handed (`consumeInheritedFeedback`).
 - Code that needs a lock must use `active_agent_run_id`; code that needs "the
   last run" must use `current_agent_run_id`. Mixing them up either blocks
   dispatch forever or replays the wrong logs.

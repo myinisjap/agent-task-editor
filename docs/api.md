@@ -558,7 +558,7 @@ using the same matcher the importer/scheduler call at runtime.
 | `task_id` | UUID | Associated task |
 | `agent_config_id` | UUID | Agent config used for this run |
 | `status` | string | `pending`, `running`, `completed`, `failed`, `waiting_human`, `cancelled` |
-| `feedback` | string? | Feedback set on rejection (injected into the next run's prompt) |
+| `feedback` | string? | Feedback pending for the next run (failure summary, verify failure, PR review / rejection note); a run's inherited feedback is cleared once it succeeds |
 | `stored_info` | string? | Info stored by the agent via `store_info`; visible in the task UI |
 | `created_at` | RFC3339 | When the run was created |
 | `started_at` | RFC3339? | When the run started executing |
