@@ -43,11 +43,12 @@ services:
       retries: 5
       start_period: 10s
     # Default memory ceiling for the backend service — see docs/getting-started.md.
-    # Raise this if you run many concurrent agent runs.
+    # Raise it with BACKEND_MEMORY_LIMIT (e.g. 8g in .env) if you run many
+    # concurrent agent runs.
     deploy:
       resources:
         limits:
-          memory: 4g
+          memory: ${BACKEND_MEMORY_LIMIT:-4g}
     environment:
       - PORT=8080
       - DB_PATH=/data/agent-task-editor.db
