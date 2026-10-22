@@ -37,6 +37,24 @@ var factory = promauto.With(registry)
 
 // Dispatcher / pool metrics.
 var (
+	// MemguardCancelsTotal counts runs cancelled by the memory guard.
+	MemguardCancelsTotal = factory.NewCounter(prometheus.CounterOpts{
+		Name: "ate_memguard_cancels_total",
+		Help: "Total number of agent runs cancelled by the memory guard for low container memory.",
+	})
+
+	// DispatchMemoryPausesTotal counts global dispatch pauses from cancel bursts.
+	DispatchMemoryPausesTotal = factory.NewCounter(prometheus.CounterOpts{
+		Name: "ate_dispatch_memory_pauses_total",
+		Help: "Total number of times new dispatch was paused after a burst of memory-guard cancels.",
+	})
+
+	// DispatchMemoryPauseActive is 1 while the global memory pause is active.
+	DispatchMemoryPauseActive = factory.NewGauge(prometheus.GaugeOpts{
+		Name: "ate_dispatch_memory_pause_active",
+		Help: "1 while new dispatch is paused after a burst of memory-guard cancels, else 0.",
+	})
+
 	// DispatchEligibleTasks is the number of tasks the dispatcher found
 	// eligible for pickup on the most recent sweep.
 	DispatchEligibleTasks = factory.NewGauge(prometheus.GaugeOpts{

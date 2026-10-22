@@ -1321,6 +1321,9 @@ In addition to the standard Go runtime/process collectors (`go_*`,
 
 **Dispatcher / pool**
 - `ate_dispatch_eligible_tasks` (gauge) — tasks eligible for pickup on the most recent sweep.
+- `ate_memguard_cancels_total` (counter) — runs cancelled by the memory guard for low container memory.
+- `ate_dispatch_memory_pauses_total` (counter) — times new dispatch was paused after a burst of memory-guard cancels.
+- `ate_dispatch_memory_pause_active` (gauge) — 1 while that global pause is active, else 0.
 - `ate_dispatched_runs_total` (counter) — runs successfully started by the dispatcher.
 - `ate_pool_queue_depth` (gauge) — jobs currently queued in the worker pool.
 - `ate_pool_busy_workers` (gauge) — workers currently running a job.
