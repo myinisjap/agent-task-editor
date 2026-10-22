@@ -521,6 +521,14 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		resolvedLabel = p.resolveOutcome(ctx, job.Input.Task, result.Outcome)
 	}
 
+	// A run that succeeded consumes the feedback it was handed. This must
+	// happen before applyTerminalTransition, which clears the dispatch lock
+	// and lets the next sweep copy this row's feedback. With no resolved label
+	// the run escalates to waiting_human and a reply must still see it.
+	if finalStatus == "completed" && result.Outcome == "success" && resolvedLabel != "" {
+		p.consumeInheritedFeedback(ctx, job, log)
+	}
+
 	if p.pub != nil {
 		p.pub.Publish(wsevent.TypeTaskAgentDone, wsevent.TaskAgentDone{
 			TaskID: job.Input.Task.ID,

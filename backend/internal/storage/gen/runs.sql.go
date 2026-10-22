@@ -834,6 +834,27 @@ func (q *Queries) ListWaitingHumanRuns(ctx context.Context) ([]ListWaitingHumanR
 	return items, nil
 }
 
+const replaceAgentRunFeedbackIfUnchanged = `-- name: ReplaceAgentRunFeedbackIfUnchanged :execrows
+UPDATE agent_runs SET feedback = ?1 WHERE id = ?2 AND feedback = ?3
+`
+
+type ReplaceAgentRunFeedbackIfUnchangedParams struct {
+	Feedback   *string `json:"feedback"`
+	ID         string  `json:"id"`
+	Feedback_2 *string `json:"feedback_2"`
+}
+
+// Compare-and-swap on agent_runs.feedback: used by the pool to drop the
+// feedback a successful run inherited without clobbering feedback written
+// concurrently (ghsync append, human reject).
+func (q *Queries) ReplaceAgentRunFeedbackIfUnchanged(ctx context.Context, arg ReplaceAgentRunFeedbackIfUnchangedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, replaceAgentRunFeedbackIfUnchanged, arg.Feedback, arg.ID, arg.Feedback_2)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const runStatsByAgentConfig = `-- name: RunStatsByAgentConfig :many
 SELECT ac.id AS agent_config_id,
        ac.name AS agent_name,

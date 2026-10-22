@@ -31,6 +31,12 @@ UPDATE agent_runs SET provider_config_id = ? WHERE id = ?;
 -- name: SetAgentRunFeedback :exec
 UPDATE agent_runs SET feedback = ? WHERE id = ?;
 
+-- name: ReplaceAgentRunFeedbackIfUnchanged :execrows
+-- Compare-and-swap on agent_runs.feedback: used by the pool to drop the
+-- feedback a successful run inherited without clobbering feedback written
+-- concurrently (ghsync append, human reject).
+UPDATE agent_runs SET feedback = ?1 WHERE id = ?2 AND feedback = ?3;
+
 -- name: UpdateAgentRunStatus :one
 UPDATE agent_runs
 SET status = ?

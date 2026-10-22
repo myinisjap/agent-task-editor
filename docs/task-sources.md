@@ -556,6 +556,7 @@ On every sweep, for each task with a resolved PR number, the syncer:
    so it never clobbers a note a human already left via Reject. This is the
    same column rendered under the `FEEDBACK FROM PRIOR REVIEW:` prompt
    section on the run's next dispatch.
+   Ingested feedback is cleared once a later run that was handed it succeeds.
 
 **Write access only.** Both inline review comments (step 1) and reviews (step
 2) are ingested only from an author whose GitHub `author_association` is
