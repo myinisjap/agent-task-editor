@@ -1015,6 +1015,14 @@ func TestPool_WaitingHuman_PublishesEvent(t *testing.T) {
 	if !pub.hasEvent("task.needs_human") {
 		t.Errorf("expected task.needs_human event")
 	}
+
+	if err := q.RecordHumanReply(context.Background(), gen.RecordHumanReplyParams{RunID: runID, TaskID: taskID, Reply: &msg}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := q.ListTaskHumanDecisions(context.Background(), taskID)
+	if err != nil || len(rows) != 1 || rows[0].Question != "need approval" || rows[0].EscalationReason != "agent_question" {
+		t.Errorf("human decision row = %+v err=%v", rows, err)
+	}
 }
 
 func TestPool_Submit_DoesNotBlockWhenFull(t *testing.T) {

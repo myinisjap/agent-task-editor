@@ -868,6 +868,20 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 	}); err != nil {
 		log.Error("pool: set run completed", "err", err)
 	}
+	if finalStatus == "waiting_human" {
+		q := ""
+		if result.Message != nil {
+			q = *result.Message
+		}
+		if err := p.q.UpsertHumanQuestion(ctx, gen.UpsertHumanQuestionParams{
+			RunID:            job.RunID,
+			TaskID:           job.Input.Task.ID,
+			EscalationReason: string(result.EscalationReason),
+			Question:         q,
+		}); err != nil {
+			log.Warn("pool: record human question", "err", err)
+		}
+	}
 	metrics.RunTerminalTotal.WithLabelValues(finalStatus).Inc()
 	metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
 	if result.CostUSD > 0 {

@@ -268,6 +268,18 @@ type TaskGit struct {
 	PrMergeable  string `json:"pr_mergeable"`
 }
 
+type TaskHumanDecision struct {
+	RunID            string     `json:"run_id"`
+	TaskID           string     `json:"task_id"`
+	Label            string     `json:"label"`
+	EscalationReason string     `json:"escalation_reason"`
+	Question         string     `json:"question"`
+	AskedAt          time.Time  `json:"asked_at"`
+	Reply            *string    `json:"reply"`
+	ReplyRunID       *string    `json:"reply_run_id"`
+	RepliedAt        *time.Time `json:"replied_at"`
+}
+
 type TaskLabelHistory struct {
 	ID        string    `json:"id"`
 	TaskID    string    `json:"task_id"`
