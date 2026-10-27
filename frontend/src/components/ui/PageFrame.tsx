@@ -12,21 +12,26 @@ export type PageFrameProps = {
   actions?: ReactNode
   tabs?: PageTab[]
   width?: 'default' | 'wide' | 'full'
+  description?: ReactNode
+  /** Fill the available height (graphs, boards); children get a flex column. */
+  fill?: boolean
+  headerClassName?: string
   testId?: string
   children: ReactNode
 }
 
 const WIDTH = { default: 'max-w-5xl', wide: 'max-w-[1600px]', full: '' }
 
-export default function PageFrame({ title, titleAdornment, help, actions, tabs, width = 'default', testId, children }: PageFrameProps) {
+export default function PageFrame({ title, titleAdornment, help, actions, tabs, width = 'default', description, fill, headerClassName, testId, children }: PageFrameProps) {
   return (
-    <div className={cx('p-4 md:p-6 mx-auto w-full', WIDTH[width])} data-testid={testId}>
-      <div className="flex flex-wrap items-center gap-2 mb-6">
+    <div className={cx('p-4 md:p-6 mx-auto w-full', fill && 'h-full min-h-0 flex flex-col', WIDTH[width])} data-testid={testId}>
+      <div className={cx('flex flex-wrap items-center gap-2', headerClassName ?? 'mb-6', fill && 'shrink-0')}>
         <h1 className="text-xl font-semibold text-fg">{title}</h1>
         {titleAdornment}
         {help && <HelpButton onClick={help.onClick} title={help.title} />}
         {actions && <div className="ml-auto flex gap-2">{actions}</div>}
       </div>
+      {description && <p className="text-sm text-fg-muted -mt-4 mb-6">{description}</p>}
       {tabs && tabs.length > 0 && (
         <nav aria-label="Page tabs" className="flex gap-4 border-b border-border mb-4">
           {tabs.map((t) => (
@@ -43,7 +48,7 @@ export default function PageFrame({ title, titleAdornment, help, actions, tabs, 
           ))}
         </nav>
       )}
-      {children}
+      {fill ? <div className="flex-1 min-h-0 flex flex-col">{children}</div> : children}
     </div>
   )
 }
