@@ -136,7 +136,7 @@ export default function ReviewLayout({
             <button
               onClick={onReject}
               disabled={rejectDisabled(rejectNote, openCommentsCount, actionPending)}
-              className="px-4 py-1.5 text-xs font-medium rounded bg-red-700 hover:bg-red-600 text-white disabled:opacity-50"
+              className="px-4 py-1.5 text-xs font-medium rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-50"
             >
               Send back with changes
             </button>
