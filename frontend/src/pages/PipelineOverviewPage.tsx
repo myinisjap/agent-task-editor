@@ -1,3 +1,4 @@
+import { labelDisplayName } from '../lib/labelDisplay'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, type AgentConfig, type Workflow } from '../api/client'
@@ -285,11 +286,11 @@ export default function PipelineOverviewPage() {
           )}
           {!editing && label && (
             <aside
-              aria-label={`Assign agents to ${label.name}`}
+              aria-label={`Assign agents to ${labelDisplayName(label)}`}
               className="md:w-72 shrink-0 rounded border border-slate-700 bg-slate-900 p-3 space-y-2 overflow-auto"
             >
               <div className="flex items-start justify-between gap-2">
-                <h2 className="text-sm font-semibold text-slate-100">{label.name}</h2>
+                <h2 className="text-sm font-semibold text-slate-100">{labelDisplayName(label)}</h2>
                 <button
                   type="button"
                   aria-label="Close panel"

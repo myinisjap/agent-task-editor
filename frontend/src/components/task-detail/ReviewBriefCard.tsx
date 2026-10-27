@@ -22,7 +22,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 // summary" card shown while a task waits on a human (docs/workflows.md#review-brief).
 // It renders nothing while loading, on error, or when the task is not at a
 // human gate. `refreshKey` changes when the label or verification changes.
-export default function ReviewBriefCard({ taskId, refreshKey = '' }: { taskId: string | undefined; refreshKey?: string | number }) {
+export default function ReviewBriefCard({ taskId, refreshKey = '', hidePreview = false }: { taskId: string | undefined; refreshKey?: string | number; hidePreview?: boolean }) {
   const [brief, setBrief] = useState<ReviewBrief | null>(null)
   const [expanded, setExpanded] = useState(false)
 
@@ -98,7 +98,7 @@ export default function ReviewBriefCard({ taskId, refreshKey = '' }: { taskId: s
         )}
       </Row>
 
-      <PreviewStrip taskId={taskId} refreshKey={refreshKey} label="Preview" />
+      {!hidePreview && <PreviewStrip taskId={taskId} refreshKey={refreshKey} label="Preview" />}
 
       <Row label="Verified">
         <div className="flex flex-wrap items-center gap-2">

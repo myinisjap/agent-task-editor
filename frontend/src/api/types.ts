@@ -6875,6 +6875,8 @@ export interface components {
             id: string;
             workflow_id: string;
             name: string;
+            /** @description Optional human-readable title shown in the UI (column headers, chips). Empty/absent = UI derives one from name (separators to spaces, sentence case). name stays the API/URL identifier. */
+            display_name?: string;
             /** @description Hex color (#rgb/#rrggbb/#rrggbbaa) used by the UI, including the dashboard's factory visualization. Empty string is allowed (falls back to a UI default); anything else that isn't a hex literal is rejected with 400 on write. */
             color: string;
             sort_order: number;

@@ -1,3 +1,4 @@
+import { labelDisplayName } from '../../lib/labelDisplay'
 import { useCallback, useMemo } from 'react'
 import {
   ReactFlow,
@@ -106,6 +107,8 @@ function layoutNodes(nodes: Node[], edges: Edge[], nodeHeight: number): Node[] {
 
 interface LabelNodeData {
   label: string
+  /** Raw label identifier (the node id); `label` is the visible display text. */
+  name: string
   color: string
   isTerminal: boolean
   agentIgnore: boolean
@@ -161,13 +164,13 @@ function WorkflowLabelNode({ data }: NodeProps) {
       tabIndex={detail?.onSelect ? 0 : undefined}
       aria-label={detail ? `${d.label} stage` : undefined}
       aria-pressed={detail?.onSelect ? detail.selected : undefined}
-      data-testid={detail ? `pipeline-node-${d.label}` : undefined}
+      data-testid={detail ? `pipeline-node-${d.name}` : undefined}
       onKeyDown={
         detail?.onSelect
           ? (e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault()
-                detail.onSelect?.(d.label)
+                detail.onSelect?.(d.name)
               }
             }
           : undefined
@@ -273,7 +276,8 @@ export default function WorkflowFlowchart({ workflow, staffing, onSelectLabel, s
         type: 'workflowLabel',
         position: { x: 0, y: 0 }, // dagre will override
         data: {
-          label: lbl.name,
+          label: labelDisplayName(lbl),
+          name: lbl.name,
           color: lbl.color || '#6366f1',
           isTerminal: Boolean(lbl.is_terminal),
           agentIgnore: Boolean(lbl.agent_ignore),

@@ -14,7 +14,7 @@ test.describe('board and task-detail smoke flow', () => {
     // 1. Load board
     await page.goto('board')
     await expect(page.getByRole('heading', { name: 'Board', exact: true })).toBeVisible()
-    await expect(page.getByText('not_ready', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText('Not ready', { exact: true }).first()).toBeVisible()
 
     // 2. Create a task
     const addTaskButton = page.getByRole('button', { name: '+ Add task' })

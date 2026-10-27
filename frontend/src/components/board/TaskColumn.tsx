@@ -1,3 +1,4 @@
+import { labelDisplayName } from '../../lib/labelDisplay'
 import { useCallback, useMemo, useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import type { Task, WorkflowLabel } from '../../api/client'
@@ -96,8 +97,8 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
   return (
     <div className={`flex flex-col shrink-0${className ? ` ${className}` : ' w-72'}`}>
       <div className="flex items-center justify-between px-3 py-2 mb-2">
-        <span className={`text-sm font-semibold uppercase tracking-wide ${isAtOrOverLimit ? (isHardAtOrOverLimit ? 'text-red-300' : 'text-amber-300') : 'text-slate-300'}`}>
-          {label.name}
+        <span className={`text-sm font-semibold ${isAtOrOverLimit ? (isHardAtOrOverLimit ? 'text-red-300' : 'text-amber-300') : 'text-slate-300'}`}>
+          {labelDisplayName(label)}
         </span>
         {unstaffed && (
           <span

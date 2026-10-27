@@ -1,3 +1,4 @@
+import { labelDisplayName, humanizeLabelName } from '../../lib/labelDisplay'
 import { useState } from 'react'
 import {
   DEFAULT_LABEL_COLOR,
@@ -17,6 +18,7 @@ import {
   type TransitionKind,
   type VerifyMode,
   type WorkflowDraft,
+  MAX_DISPLAY_NAME,
 } from '../../lib/workflowEdit'
 
 type Props = {
@@ -62,7 +64,7 @@ function LabelForm({ draft, label, onChange, onSelectLabel, taskCount, locked, p
 
   return (
     <section aria-label={`Edit label ${label.name}`} className="space-y-2 border-t border-slate-700 pt-3">
-      <h3 className="text-sm font-semibold text-slate-100">Label: {label.name}</h3>
+      <h3 className="text-sm font-semibold text-slate-100">Label: {labelDisplayName(label)} <span className="font-mono text-xs text-slate-500">({label.name})</span></h3>
       {locked && (
         <p className="text-xs text-amber-300">
           {pending ? 'Checking which tasks are on this label…' : <>{taskCount} task{taskCount === 1 ? '' : 's'} on this label: it cannot be renamed or deleted until they are moved.</>}
@@ -73,6 +75,17 @@ function LabelForm({ draft, label, onChange, onSelectLabel, taskCount, locked, p
         <button type="button" className={btn} disabled={locked || name.trim() === label.name} onClick={rename}>Rename</button>
       </div>
       {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
+      <div className="flex items-center gap-2 text-sm text-slate-200">
+        <label htmlFor="edit-display-name">Display name</label>
+        <input
+          id="edit-display-name"
+          value={label.display_name}
+          maxLength={MAX_DISPLAY_NAME}
+          placeholder={humanizeLabelName(label.name)}
+          onChange={(e) => patch({ display_name: e.target.value })}
+          className={`${field} flex-1 min-w-0`}
+        />
+      </div>
       <div className="flex items-center gap-2 text-sm text-slate-200">
         <label htmlFor="edit-label-color">Color</label>
         <input

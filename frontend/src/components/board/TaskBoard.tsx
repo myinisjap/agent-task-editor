@@ -1,3 +1,4 @@
+import { labelDisplayName } from '../../lib/labelDisplay'
 import { useState, useEffect, useMemo } from 'react'
 import {
   DndContext,
@@ -249,10 +250,10 @@ function TaskBoardInner({
     condensed && transitions.length > 0
       ? groups.map((g) =>
           g.kind === 'single'
-            ? { key: g.label.name, label: g.label.name, names: [g.label.name] }
-            : { key: g.labels[0]?.name ?? '', label: 'Agent', names: g.labels.map((l) => l.name) },
+            ? { key: g.label.name, label: labelDisplayName(g.label), names: [g.label.name] }
+            : { key: g.labels[0]?.name ?? '', label: g.labels.map(labelDisplayName).join(' · '), names: g.labels.map((l) => l.name) },
         )
-      : sortedLabels.map((l) => ({ key: l.name, label: l.name, names: [l.name] }))
+      : sortedLabels.map((l) => ({ key: l.name, label: labelDisplayName(l), names: [l.name] }))
 
   const chips: ColumnChip[] = columnItems.map((c) => {
     const ts = c.names.flatMap((n) => tasksByLabel.get(n) ?? EMPTY_TASKS)
