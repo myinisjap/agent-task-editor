@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isHumanGateLabel, findLabel, humanActionsFor } from './humanGate'
+import { isHumanGateLabel, findLabel, humanActionsFor, humanPathTargetLabel } from './humanGate'
 import type { Workflow, WorkflowLabel, WorkflowTransition } from '../api/client'
 
 function label(name: string, opts: { agentIgnore?: boolean; isTerminal?: boolean } = {}): WorkflowLabel {
@@ -126,5 +126,24 @@ describe('humanActionsFor', () => {
   it('is false/false with no workflow or label', () => {
     expect(humanActionsFor(undefined, 'review')).toEqual({ canApprove: false, canReject: false })
     expect(humanActionsFor(wf, undefined)).toEqual({ canApprove: false, canReject: false })
+  })
+})
+
+describe('humanPathTargetLabel', () => {
+  const wf = workflow(
+    [label('a'), label('b'), label('c')],
+    [
+      { ...transition('a', 'b', 'human'), path: 'success' },
+      { ...transition('a', 'c', 'human'), path: 'failure' },
+      { ...transition('a', 'c', 'agent'), id: 'x', path: 'success' },
+    ] as WorkflowTransition[],
+  )
+  it('returns the human success/failure target', () => {
+    expect(humanPathTargetLabel(wf, 'a', 'success')?.name).toBe('b')
+    expect(humanPathTargetLabel(wf, 'a', 'failure')?.name).toBe('c')
+  })
+  it('is undefined with no matching human transition', () => {
+    expect(humanPathTargetLabel(wf, 'b', 'success')).toBeUndefined()
+    expect(humanPathTargetLabel(undefined, 'a', 'success')).toBeUndefined()
   })
 })

@@ -686,6 +686,15 @@ export function TaskDetailHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Review layout</h3>
+        <p>
+          On wide screens (1280px and up), a task waiting at a human gate shows{' '}
+          <strong>Approve</strong> / <strong>Request changes</strong> in the header, with the
+          diff (or the plan, on plan-review labels) beside the review brief, verification and
+          runs. Approve reads "Approve and open PR" when the next label opens a PR.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">Run history &amp; retries</h3>
         <p>
           Every dispatch of this task is its own <strong>run</strong>, shown oldest-first. A

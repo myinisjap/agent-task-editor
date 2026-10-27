@@ -179,3 +179,16 @@ describe('TaskActions phone bar', () => {
     expect(screen.getByRole('button', { name: 'Approve' }).className).toContain('min-h-[44px]')
   })
 })
+
+import { rejectDisabled, rejectPlaceholder } from './TaskActions'
+describe('rejectDisabled', () => {
+  it('needs a note or open comments, and not pending', () => {
+    expect(rejectDisabled('', 0, false)).toBe(true)
+    expect(rejectDisabled('  ', 0, false)).toBe(true)
+    expect(rejectDisabled('x', 0, false)).toBe(false)
+    expect(rejectDisabled('', 2, false)).toBe(false)
+    expect(rejectDisabled('x', 0, true)).toBe(true)
+    expect(rejectPlaceholder(0)).toMatch(/required/)
+    expect(rejectPlaceholder(1)).toMatch(/optional/)
+  })
+})
