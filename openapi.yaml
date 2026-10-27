@@ -518,6 +518,57 @@ components:
         updated_at:  { type: string, format: date-time }
       required: [id, name, title, description, type, created_at, updated_at]
 
+    RepoLesson:
+      type: object
+      description: >
+        Short curated lesson injected into agent prompts (REPO LESSONS section).
+        repo_id null means the lesson applies to every repo. Only status=active
+        lessons are injected, filtered by stages (empty = all agents) and
+        path_globs (empty = always; otherwise matched against the files the
+        task branch changed vs base).
+      properties:
+        id:              { type: string }
+        repo_id:         { type: string, nullable: true }
+        kind:            { type: string, enum: [convention, trap, command, decision, preference] }
+        body:            { type: string, maxLength: 300 }
+        path_globs:      { type: array, items: { type: string } }
+        stages:          { type: array, items: { type: string } }
+        citations:       { type: array, items: {}, description: "Reserved for citation checks in a later phase." }
+        source:          { type: string, enum: [human, agent, distiller] }
+        source_task_id:  { type: string, nullable: true }
+        status:          { type: string, enum: [proposed, active, stale, retired] }
+        injected_count:  { type: integer }
+        created_at:      { type: string, format: date-time }
+        updated_at:      { type: string, format: date-time }
+        last_checked_at: { type: string, format: date-time, nullable: true }
+      required: [id, repo_id, kind, body, path_globs, stages, citations, source, source_task_id, status, injected_count, created_at, updated_at, last_checked_at]
+
+    RepoLessonCreate:
+      type: object
+      required: [kind, body]
+      properties:
+        kind:           { type: string, enum: [convention, trap, command, decision, preference] }
+        body:           { type: string, maxLength: 300 }
+        path_globs:     { type: array, items: { type: string } }
+        stages:         { type: array, items: { type: string } }
+        citations:      { type: array, items: {} }
+        status:         { type: string, enum: [proposed, active, stale, retired], default: active }
+        source:         { type: string, enum: [human, agent, distiller], default: human }
+        source_task_id: { type: string }
+
+    RepoLessonUpdate:
+      type: object
+      description: Partial update; omitted fields are kept. repo_id cannot change.
+      properties:
+        kind:           { type: string, enum: [convention, trap, command, decision, preference] }
+        body:           { type: string, maxLength: 300 }
+        path_globs:     { type: array, items: { type: string } }
+        stages:         { type: array, items: { type: string } }
+        citations:      { type: array, items: {} }
+        status:         { type: string, enum: [proposed, active, stale, retired] }
+        source:         { type: string, enum: [human, agent, distiller] }
+        source_task_id: { type: string }
+
     TaskSchedule:
       type: object
       description: >
@@ -3254,6 +3305,95 @@ paths:
       summary: Delete a task template
       responses:
         "204": { description: Deleted }
+
+  /repos/{id}/lessons:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: List a repo's own lessons (global lessons excluded)
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [proposed, active, stale, retired] }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/RepoLesson" } }
+        "400": { description: Invalid status filter }
+        "404": { description: Repo not found }
+    post:
+      summary: Create a lesson for a repo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RepoLessonCreate" }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepoLesson" }
+        "400": { description: Invalid kind/status/source, empty or over-long body, or non-array citations }
+        "404": { description: Repo not found }
+
+  /lessons:
+    get:
+      summary: List global lessons (repo_id null)
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [proposed, active, stale, retired] }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/RepoLesson" } }
+        "400": { description: Invalid status filter }
+    post:
+      summary: Create a global lesson
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RepoLessonCreate" }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepoLesson" }
+        "400": { description: Invalid kind/status/source, empty or over-long body, or non-array citations }
+
+  /lessons/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    patch:
+      summary: Update a lesson (repo or global)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RepoLessonUpdate" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepoLesson" }
+        "400": { description: Invalid field value }
+        "404": { description: Lesson not found }
+    delete:
+      summary: Delete a lesson
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Lesson not found }
 
   /skills:
     get:

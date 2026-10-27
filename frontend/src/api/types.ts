@@ -2054,6 +2054,258 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{id}/lessons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** List a repo's own lessons (global lessons excluded) */
+        get: {
+            parameters: {
+                query?: {
+                    status?: "proposed" | "active" | "stale" | "retired";
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoLesson"][];
+                    };
+                };
+                /** @description Invalid status filter */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Create a lesson for a repo */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RepoLessonCreate"];
+                };
+            };
+            responses: {
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoLesson"];
+                    };
+                };
+                /** @description Invalid kind/status/source */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lessons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List global lessons (repo_id null) */
+        get: {
+            parameters: {
+                query?: {
+                    status?: "proposed" | "active" | "stale" | "retired";
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoLesson"][];
+                    };
+                };
+                /** @description Invalid status filter */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Create a global lesson */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RepoLessonCreate"];
+                };
+            };
+            responses: {
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoLesson"];
+                    };
+                };
+                /** @description Invalid kind/status/source */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lessons/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a lesson */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Lesson not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Update a lesson (repo or global) */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RepoLessonUpdate"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoLesson"];
+                    };
+                };
+                /** @description Invalid field value */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Lesson not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        trace?: never;
+    };
     "/skills": {
         parameters: {
             query?: never;
@@ -5298,6 +5550,63 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /** @description Short curated lesson injected into agent prompts (REPO LESSONS section). repo_id null means the lesson applies to every repo. Only status=active lessons are injected, filtered by stages (empty = all agents) and path_globs (empty = always; otherwise matched against the files the task branch changed vs base). */
+        RepoLesson: {
+            id: string;
+            repo_id: string | null;
+            /** @enum {string} */
+            kind: "convention" | "trap" | "command" | "decision" | "preference";
+            body: string;
+            path_globs: string[];
+            stages: string[];
+            /** @description Reserved for citation checks in a later phase. */
+            citations: unknown[];
+            /** @enum {string} */
+            source: "human" | "agent" | "distiller";
+            source_task_id: string | null;
+            /** @enum {string} */
+            status: "proposed" | "active" | "stale" | "retired";
+            injected_count: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            last_checked_at: string | null;
+        };
+        RepoLessonCreate: {
+            /** @enum {string} */
+            kind: "convention" | "trap" | "command" | "decision" | "preference";
+            body: string;
+            path_globs?: string[];
+            stages?: string[];
+            citations?: unknown[];
+            /**
+             * @default active
+             * @enum {string}
+             */
+            status: "proposed" | "active" | "stale" | "retired";
+            /**
+             * @default human
+             * @enum {string}
+             */
+            source: "human" | "agent" | "distiller";
+            source_task_id?: string;
+        };
+        /** @description Partial update; omitted fields are kept. repo_id cannot change. */
+        RepoLessonUpdate: {
+            /** @enum {string} */
+            kind?: "convention" | "trap" | "command" | "decision" | "preference";
+            body?: string;
+            path_globs?: string[];
+            stages?: string[];
+            citations?: unknown[];
+            /** @enum {string} */
+            status?: "proposed" | "active" | "stale" | "retired";
+            /** @enum {string} */
+            source?: "human" | "agent" | "distiller";
+            source_task_id?: string;
         };
         /** @description Recurring instantiation of a task_template against a repo on a cron expression. A sweep fires due, enabled schedules and creates a task (source="schedule"), skipping firing while an open task from a prior firing of the same schedule still exists. target_label defaults to the repo workflow's human-gate label — the lowest sort_order agent_ignore label, or the first label if none ("not_ready" in the default workflow) — so a human promotes the created task; setting it to a live agent label instead makes the schedule fully unattended — pair with a cost budget on the template's agent config as a safety net. */
         TaskSchedule: {

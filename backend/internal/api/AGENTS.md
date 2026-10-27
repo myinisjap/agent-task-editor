@@ -20,6 +20,7 @@ GET  /metrics                (Prometheus scrape; gated by METRICS_TOKEN, else by
   tasks/{id}/subtasks          SubtasksHandler (create_subtask MCP tool)
   tasks/{id}/review-comments/* ReviewCommentsHandler (inline diff review comments)
   templates/*                  TemplatesHandler
+  lessons/*, repos/{id}/lessons LessonsHandler
   uploads/{task_id}/{filename} UploadsHandler (serve attachment images)
   workflows/*                  WorkflowsHandler
   agents/*                     AgentsHandler

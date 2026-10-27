@@ -22,6 +22,7 @@ agent-task-editor/
 │   ├── api.md
 │   ├── task-sources.md
 │   ├── task-templates.md
+│   ├── lessons.md
 │   ├── websocket.md
 │   ├── mcp-tools.md
 │   ├── board-mcp.md

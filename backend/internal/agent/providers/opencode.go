@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -84,7 +85,9 @@ const opencodeMaxStepsMessage = "maximum steps for this agent have been reached"
 //     bash permission policy. opencode run auto-rejects any "ask"
 //     permission unless --auto is passed (deliberately never passed here),
 //     so a "deny" entry here genuinely blocks the pattern instead of
-//     pausing for approval that will never come.
+//     pausing for approval that will never come. Rules are emitted in
+//     last-match-wins order ("*" first, allows, then denies last); see
+//     opencodeBashPermission.
 func opencodeConfigContent(systemPrompt string, maxSteps int64, mcpCfg *MCPRunConfig, serverBinary string, allowlist, denylist []string) (string, error) {
 	agentCfg := map[string]any{
 		"prompt": systemPrompt,
@@ -110,7 +113,7 @@ func opencodeConfigContent(systemPrompt string, maxSteps int64, mcpCfg *MCPRunCo
 		}
 	}
 
-	if perm := opencodeBashPermission(allowlist, denylist); perm != nil {
+	if perm := opencodeBashPermission(allowlist, denylist); len(perm) > 0 {
 		cfg["permission"] = map[string]any{"bash": perm}
 	}
 
@@ -121,43 +124,83 @@ func opencodeConfigContent(systemPrompt string, maxSteps int64, mcpCfg *MCPRunCo
 	return string(b), nil
 }
 
-// opencodeBashPermission builds the "bash" permission map for opencode's
-// `permission` config block from a command allowlist/denylist, or nil if
-// both are empty. denylist entries always map to "deny"; allowlist entries
-// map to "allow" plus a catch-all "*": "deny" default (so an allowlist is a
-// true allowlist rather than merely adding exceptions) — but a pattern
-// present in both wins as "deny", since the denylist is the stronger signal
-// and must never be silently overridden by an allow entry for the same
-// pattern. Empty-string patterns are skipped (mirrors qwen.go's
-// buildQwenArgs denylist handling).
+// permRule is one ordered pattern -> action pair in a permission block.
+type permRule struct{ Pattern, Action string }
+
+// orderedPermission is a permission block that serialises as a JSON object
+// with keys in slice order (a Go map would be sorted alphabetically).
+type orderedPermission []permRule
+
+// MarshalJSON writes {"pattern":"action",...} preserving slice order.
+func (p orderedPermission) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, r := range p {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		k, err := json.Marshal(r.Pattern)
+		if err != nil {
+			return nil, err
+		}
+		v, err := json.Marshal(r.Action)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(k)
+		buf.WriteByte(':')
+		buf.Write(v)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
+// opencodeBashPermission builds the "bash" permission block for opencode's
+// `permission` config from a command allowlist/denylist, or nil if both are
+// empty.
 //
-// opencode's bash permission pattern-matching semantics (most-specific-wins
-// vs. first-match-wins, and whether "*" as a plain map key is even treated
-// as a wildcard default rather than a literal command named "*") have not
-// been verified live — no opencode binary was available while writing this.
-// This mirrors the same kind of unverified-but-documented gap as qwen.go's
-// --exclude-tools pattern shape (see docs/providers/qwen_code.md).
-func opencodeBashPermission(allowlist, denylist []string) map[string]string {
-	perm := map[string]string{}
+// opencode evaluates permission rules with last-matching-rule-wins
+// (https://opencode.ai/docs/permissions/), so order is significant and the
+// rules are emitted deliberately: the "*" catch-all first ("deny" when an
+// allowlist is set), then allowlist entries ("allow"), then denylist entries
+// ("deny") last, so a deny always beats an overlapping allow. A Go map cannot
+// carry order (encoding/json sorts keys), hence orderedPermission. A pattern
+// in both lists is emitted only as deny; empty patterns are skipped; keys are
+// never duplicated.
+func opencodeBashPermission(allowlist, denylist []string) orderedPermission {
+	denied := map[string]bool{}
 	for _, pat := range denylist {
-		if pat == "" {
+		if pat != "" {
+			denied[pat] = true
+		}
+	}
+	var perm orderedPermission
+	catchAll := false
+	if len(allowlist) > 0 {
+		action := "deny"
+		// An explicitly allowlisted "*" (not denied) keeps its allow, as before.
+		for _, pat := range allowlist {
+			if pat == "*" && !denied["*"] {
+				action = "allow"
+			}
+		}
+		perm = append(perm, permRule{"*", action})
+		catchAll = true
+	}
+	seen := map[string]bool{"*": catchAll}
+	for _, pat := range allowlist {
+		if pat == "" || denied[pat] || seen[pat] {
 			continue
 		}
-		perm[pat] = "deny"
+		seen[pat] = true
+		perm = append(perm, permRule{pat, "allow"})
 	}
-	if len(allowlist) > 0 {
-		for _, pat := range allowlist {
-			if pat == "" {
-				continue
-			}
-			if _, denied := perm[pat]; denied {
-				continue
-			}
-			perm[pat] = "allow"
+	for _, pat := range denylist {
+		if pat == "" || seen[pat] {
+			continue
 		}
-		if _, ok := perm["*"]; !ok {
-			perm["*"] = "deny"
-		}
+		seen[pat] = true
+		perm = append(perm, permRule{pat, "deny"})
 	}
 	if len(perm) == 0 {
 		return nil

@@ -98,6 +98,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	reposH := handlers.NewReposHandler(q, repoBaseDir, hub)
 	reviewH := handlers.NewReviewCommentsHandler(q)
 	templatesH := handlers.NewTemplatesHandler(q)
+	lessonsH := handlers.NewLessonsHandler(q)
 	schedulesH := handlers.NewSchedulesHandler(q)
 	intakeRulesH := handlers.NewIntakeRulesHandler(q)
 	skillsH := handlers.NewSkillsHandler(q, db.SQL(), skills.Store{Dir: deps.SkillsDir})
@@ -242,6 +243,14 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Get("/templates/{id}", templatesH.Get)
 			r.Put("/templates/{id}", templatesH.Update)
 			r.Delete("/templates/{id}", templatesH.Delete)
+
+			// Repo lessons: curated cross-task knowledge injected into agent prompts
+			r.Get("/repos/{id}/lessons", lessonsH.ListForRepo)
+			r.Post("/repos/{id}/lessons", lessonsH.CreateForRepo)
+			r.Get("/lessons", lessonsH.ListGlobal)
+			r.Post("/lessons", lessonsH.CreateGlobal)
+			r.Patch("/lessons/{id}", lessonsH.Update)
+			r.Delete("/lessons/{id}", lessonsH.Delete)
 
 			// Task schedules — fire a template on a cron expression against a repo
 			r.Get("/schedules", schedulesH.List)
