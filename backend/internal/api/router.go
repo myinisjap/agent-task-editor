@@ -9,6 +9,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
+	"github.com/myinisjap/agent-task-editor/backend/internal/intakehook"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/reviewbrief"
 	"github.com/myinisjap/agent-task-editor/backend/internal/skills"
@@ -103,6 +104,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	lessonsH := handlers.NewLessonsHandler(q)
 	schedulesH := handlers.NewSchedulesHandler(q)
 	intakeRulesH := handlers.NewIntakeRulesHandler(q)
+	intakeEndpointsH := handlers.NewIntakeEndpointsHandler(q, intakehook.NewService(db.SQL(), q, hub))
 	skillsH := handlers.NewSkillsHandler(q, db.SQL(), skills.Store{Dir: deps.SkillsDir})
 	// dispatcherLiveness may also implement GlobalCostReporter (as
 	// *agent.Dispatcher does) to supply the dashboard's global spend-ceiling
@@ -161,6 +163,12 @@ func NewRouter(deps RouterDeps) http.Handler {
 	// so it wins over the /api/v1 mount below.
 	webhookH := handlers.NewGitHubWebhookHandler(deps.GitHubWebhookSecret, deps.PRRefresher)
 	r.Post("/api/v1/github/webhook", webhookH.Handle)
+
+	// Intake webhook receiver - outside BearerAuth for the same reason: the
+	// sender is an external system (CI, error tracker). Authenticated by the
+	// per-endpoint HMAC-SHA256 signature in X-ATE-Signature-256; applies its
+	// own 256 KB body cap and per-endpoint rate limit.
+	r.Post("/api/v1/intake/{endpoint_id}", intakeEndpointsH.Receive)
 
 	// Prometheus scrape endpoint — mounted outside the main API's BearerAuth
 	// group (and outside /api/v1) so self-hosters don't need to hand the
@@ -271,6 +279,16 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Get("/intake-rules/{id}", intakeRulesH.Get)
 			r.Put("/intake-rules/{id}", intakeRulesH.Update)
 			r.Delete("/intake-rules/{id}", intakeRulesH.Delete)
+
+			// Intake webhook endpoints CRUD (the receiver is mounted outside
+			// BearerAuth above).
+			r.Get("/intake-endpoints", intakeEndpointsH.List)
+			r.Post("/intake-endpoints", intakeEndpointsH.Create)
+			r.Get("/intake-endpoints/{id}", intakeEndpointsH.Get)
+			r.Put("/intake-endpoints/{id}", intakeEndpointsH.Update)
+			r.Delete("/intake-endpoints/{id}", intakeEndpointsH.Delete)
+			r.Post("/intake-endpoints/{id}/rotate-secret", intakeEndpointsH.RotateSecret)
+			r.Post("/intake-endpoints/{id}/test", intakeEndpointsH.Test)
 
 			// Inline diff review comments — persisted, injected into agent prompts while open
 			r.Get("/tasks/{id}/review-comments", reviewH.List)
