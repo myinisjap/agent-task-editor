@@ -158,6 +158,24 @@ The brief is served by `GET /tasks/{id}/review-brief`; the Inbox gets flag codes
 
 **Caching**: the diff-derived part is cached in memory per task, keyed on the branch head, base ref head and a hash of `agent_notes`; a cached entry checked in the last 15 seconds is reused without running git. Nothing is stored on the task.
 
+### Preview screenshots
+
+For UI changes, the review brief also shows screenshots of the affected pages (`GET /tasks/{id}/previews`), so a change can be reviewed from a phone. Everything is per repo and **off unless a preview command is set**:
+
+| Setting | Meaning |
+|---|---|
+| `preview_command` | Shell command that starts the app in the task's worktree, e.g. `cd frontend && npm ci && npm run dev -- --port $PORT --host 127.0.0.1`. It runs as the agent user with the same sanitized environment as the verify command, and must listen on `$PORT` (also set: `HOST=127.0.0.1`). |
+| `preview_routes` | Newline-separated paths to screenshot (`/`, `/inbox`, ...), at most 20. |
+| `preview_paths_glob` | Newline-separated globs deciding when a diff is a UI change. Empty = `frontend/**`, `web/**`, `src/**/*.{tsx,jsx,vue,svelte,css}`. `{a,b}` alternation is supported. |
+
+**When it runs.** After a run reports success (and any verify command passed) and the task lands on a **human-gate** label, if a preview command and routes are set and at least one file changed against the base branch matches the globs. Capture happens asynchronously after the transition, so it never delays the task or holds a worker slot. The app is started with a free `$PORT`, the server waits up to 120 s for the port, each route is captured with headless Chromium at **1280x800 (desktop)** and **390x844 (phone)**, then the process group is stopped (SIGTERM, then SIGKILL after 5 s). A whole capture is limited to 5 minutes.
+
+**Storage.** PNGs are stored in `UPLOAD_DIR/<task_id>/preview-<uuid>.png` and listed in `task_preview_images`; they are *not* task attachments, so they are never fed to agents. The latest 3 captures per task are kept; deleting the task removes the files. Screenshots appear in the review brief card (Task Detail and Inbox) as a thumbnail strip that opens full size.
+
+**Failures never block.** Any problem (command exits, port never opens, browser missing, one route failing) is recorded on the capture and shown as "Preview failed: ..." in the brief; the task label, failure counts and run status are untouched. A capture left `running` by a server restart is marked failed at startup.
+
+**v1 limits.** After-only: there is no base-branch "before" shot yet (the `variant` column leaves room for it). Dev servers that daemonize into a new session escape the process-group cleanup. See [runtime.md](runtime.md#preview-screenshots) for the browser setup.
+
 ## Custom Workflows
 
 Create additional workflows via Pipeline → Workflow → New Workflow in the UI, or via the REST API:

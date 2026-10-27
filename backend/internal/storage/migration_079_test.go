@@ -2,20 +2,20 @@ package storage
 
 import "testing"
 
-func TestMigration078AgentExperiments(t *testing.T) {
-	db, err := Open(t.TempDir() + "/mig078.db")
+func TestMigration079AgentExperiments(t *testing.T) {
+	db, err := Open(t.TempDir() + "/mig079.db")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer func() { _ = db.Close() }()
 	sqlDB := db.SQL()
 	m := newMigrator063(t, db)
-	if err := m.Migrate(77); err != nil {
-		t.Fatalf("to 77: %v", err)
+	if err := m.Migrate(78); err != nil {
+		t.Fatalf("to 78: %v", err)
 	}
 	assertColumnAbsent(t, sqlDB, "agent_runs", "experiment_id")
-	if err := m.Migrate(78); err != nil {
-		t.Fatalf("up to 78: %v", err)
+	if err := m.Migrate(79); err != nil {
+		t.Fatalf("up to 79: %v", err)
 	}
 	assertColumnPresent(t, sqlDB, "agent_runs", "experiment_id")
 	assertColumnPresent(t, sqlDB, "agent_runs", "experiment_arm")
@@ -35,8 +35,8 @@ func TestMigration078AgentExperiments(t *testing.T) {
 	if _, err := sqlDB.Exec(`INSERT INTO agent_experiments (id, agent_config_id, candidate_snapshot, share_percent, status) VALUES ('e4', 'ac1', '{}', 95, 'stopped')`); err == nil {
 		t.Fatal("share_percent 95 should be rejected")
 	}
-	if err := m.Migrate(77); err != nil {
-		t.Fatalf("down to 77: %v", err)
+	if err := m.Migrate(78); err != nil {
+		t.Fatalf("down to 78: %v", err)
 	}
 	assertColumnAbsent(t, sqlDB, "agent_runs", "experiment_id")
 }

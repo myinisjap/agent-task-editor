@@ -171,6 +171,32 @@ describe('ReposPage — Agent runtime section', () => {
   })
 })
 
+describe('ReposPage — Preview screenshots section', () => {
+  beforeEach(() => {
+    listMock.mockReset().mockResolvedValue([repo()])
+    workflowsListMock.mockReset().mockResolvedValue([workflow()])
+    createMock.mockReset()
+    updateMock.mockReset()
+  })
+
+  it('sends the preview fields in the create payload', async () => {
+    createMock.mockResolvedValue(repo({ id: 'repo-2', name: 'acme/new' }))
+    render(<ReposPage />)
+    await screen.findByText('acme/widgets')
+    await userEvent.click(screen.getByText('+ Add Repo'))
+    await userEvent.type(screen.getByPlaceholderText('org/repo'), 'acme/new')
+    await userEvent.type(screen.getByPlaceholderText(/Leave blank to auto-clone/), '/tmp/new')
+    await userEvent.type(screen.getByLabelText('Preview command'), 'npm run dev')
+    await userEvent.type(screen.getByLabelText('Preview routes'), '/{enter}/inbox')
+    await userEvent.click(screen.getByText('Add Repo'))
+
+    await waitFor(() => expect(createMock).toHaveBeenCalled())
+    const body = createMock.mock.calls[0][0]
+    expect(body.preview_command).toBe('npm run dev')
+    expect(body.preview_routes).toBe('/\n/inbox')
+  })
+})
+
 describe('ReposPage — Lessons panel', () => {
   it('opens a per-repo lessons panel via the Lessons button', async () => {
     listMock.mockReset().mockResolvedValue([repo()])

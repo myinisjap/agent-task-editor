@@ -1660,6 +1660,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/previews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Latest preview screenshot capture for a task
+         * @description Screenshots of the repo's preview routes at desktop (1280x800) and phone (390x844) width, captured when a run succeeded into a human gate and the diff touched UI files. capture is null when none was taken. Failures never block the task; they appear as status failed.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            capture: components["schemas"]["TaskPreviewCapture"] | null;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/verifications": {
         parameters: {
             query?: never;
@@ -4463,7 +4505,7 @@ export interface paths {
         put?: never;
         /**
          * Register a repo
-         * @description The body also accepts verify_command (string) and verify_timeout_seconds (integer, 1-3600); see the Repo schema.
+         * @description The body also accepts verify_command (string) and verify_timeout_seconds (integer, 1-3600); see the Repo schema. It also accepts preview_command, preview_routes and preview_paths_glob (strings).
          */
         post: {
             parameters: {
@@ -4583,6 +4625,12 @@ export interface paths {
                         verify_command?: string;
                         /** @description Replaces the verify timeout. Omit to leave unchanged. */
                         verify_timeout_seconds?: number;
+                        /** @description Replaces the preview command; empty string disables previews. Omit to leave unchanged. */
+                        preview_command?: string;
+                        /** @description Replaces the newline-separated preview routes. Omit to leave unchanged. */
+                        preview_routes?: string;
+                        /** @description Replaces the newline-separated UI path globs (empty = defaults). Omit to leave unchanged. */
+                        preview_paths_glob?: string;
                     };
                 };
             };
@@ -7117,6 +7165,12 @@ export interface components {
             verify_command?: string;
             /** @description Timeout for verify_command in seconds (1-3600, default 600). */
             verify_timeout_seconds?: number;
+            /** @description Shell command that starts the app's dev server in the task's worktree (run as the agent user, `$PORT` is a free port, bind 127.0.0.1). Empty (the default) disables preview screenshots. See docs/workflows.md#preview-screenshots. */
+            preview_command?: string;
+            /** @description Newline-separated paths to screenshot (each starts with /, at most 20). */
+            preview_routes?: string;
+            /** @description Newline-separated globs deciding when a diff counts as a UI change. Empty = frontend/**, web/**, src/**\/*.{tsx,jsx,vue,svelte,css}. */
+            preview_paths_glob?: string;
             /** Format: date-time */
             created_at: string;
         };
@@ -7140,6 +7194,32 @@ export interface components {
             duration_ms: number;
             /** Format: date-time */
             created_at: string;
+        };
+        TaskPreviewImage: {
+            id: string;
+            route: string;
+            /**
+             * @description Only after is produced today.
+             * @enum {string}
+             */
+            variant: "after" | "before";
+            width: number;
+            height: number;
+            /** @description Served by GET /uploads/{task_id}/{filename}. */
+            url: string;
+        };
+        /** @description One preview screenshot capture for a task. */
+        TaskPreviewCapture: {
+            id: string;
+            /** @enum {string} */
+            status: "running" | "ok" | "failed";
+            /** @description Short failure reason; for status ok it lists routes that failed (partial success). */
+            error: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            finished_at: string | null;
+            images: components["schemas"]["TaskPreviewImage"][];
         };
         /** @description One toolchain pin in a repo's runtime_languages array (the wire shape used by POST /repos, PATCH /repos/{id}, and the runtime/detect suggestions — the DB column itself stores this array serialized to JSON text). */
         RuntimeLanguagePin: {
@@ -7544,7 +7624,7 @@ export interface components {
             error: string;
         };
         /** @description Envelope of every message the server pushes on the /ws socket (and the locally synthesised `resync` after a reconnect). Discriminated by `type`. */
-        WsEvent: components["schemas"]["WsTaskLabelChangedEvent"] | components["schemas"]["WsTaskUpdatedEvent"] | components["schemas"]["WsTaskSideEffectEvent"] | components["schemas"]["WsTaskAgentStartedEvent"] | components["schemas"]["WsTaskAgentDoneEvent"] | components["schemas"]["WsTaskNeedsHumanEvent"] | components["schemas"]["WsTaskCostWarningEvent"] | components["schemas"]["WsSystemCostBudgetTrippedEvent"] | components["schemas"]["WsTaskReviewCommentsChangedEvent"] | components["schemas"]["WsTaskVerificationEvent"] | components["schemas"]["WsTaskRateLimitedEvent"] | components["schemas"]["WsProviderPauseChangedEvent"] | components["schemas"]["WsTaskGitStateChangedEvent"] | components["schemas"]["WsTaskPrMergeableChangedEvent"] | components["schemas"]["WsTaskReviewCommentAddedEvent"] | components["schemas"]["WsTaskSubtaskConflictEvent"] | components["schemas"]["WsTaskSourceCommentAddedEvent"] | components["schemas"]["WsTaskCreatedEvent"] | components["schemas"]["WsTaskCreatedBulkEvent"] | components["schemas"]["WsRepoCloneDoneEvent"] | components["schemas"]["WsRepoCloneFailedEvent"] | components["schemas"]["WsAgentLogEvent"] | components["schemas"]["WsAgentLogReplayEvent"] | components["schemas"]["WsResyncEvent"];
+        WsEvent: components["schemas"]["WsTaskLabelChangedEvent"] | components["schemas"]["WsTaskUpdatedEvent"] | components["schemas"]["WsTaskSideEffectEvent"] | components["schemas"]["WsTaskAgentStartedEvent"] | components["schemas"]["WsTaskAgentDoneEvent"] | components["schemas"]["WsTaskNeedsHumanEvent"] | components["schemas"]["WsTaskCostWarningEvent"] | components["schemas"]["WsSystemCostBudgetTrippedEvent"] | components["schemas"]["WsTaskReviewCommentsChangedEvent"] | components["schemas"]["WsTaskVerificationEvent"] | components["schemas"]["WsTaskPreviewEvent"] | components["schemas"]["WsTaskRateLimitedEvent"] | components["schemas"]["WsProviderPauseChangedEvent"] | components["schemas"]["WsTaskGitStateChangedEvent"] | components["schemas"]["WsTaskPrMergeableChangedEvent"] | components["schemas"]["WsTaskReviewCommentAddedEvent"] | components["schemas"]["WsTaskSubtaskConflictEvent"] | components["schemas"]["WsTaskSourceCommentAddedEvent"] | components["schemas"]["WsTaskCreatedEvent"] | components["schemas"]["WsTaskCreatedBulkEvent"] | components["schemas"]["WsRepoCloneDoneEvent"] | components["schemas"]["WsRepoCloneFailedEvent"] | components["schemas"]["WsAgentLogEvent"] | components["schemas"]["WsAgentLogReplayEvent"] | components["schemas"]["WsResyncEvent"];
         WsTaskLabelChangedEvent: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -7704,6 +7784,21 @@ export interface components {
             run_id: string;
             /** @enum {string} */
             status: "pass" | "fail" | "timeout" | "error";
+        };
+        WsTaskPreviewEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.preview";
+            payload: components["schemas"]["WsTaskPreviewPayload"];
+        };
+        /** @description A preview screenshot capture started or finished (refetch GET /tasks/{id}/previews). */
+        WsTaskPreviewPayload: {
+            task_id: string;
+            capture_id: string;
+            /** @enum {string} */
+            status: "running" | "ok" | "failed";
         };
         WsTaskRateLimitedEvent: {
             /**

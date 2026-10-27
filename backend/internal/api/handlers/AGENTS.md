@@ -63,3 +63,5 @@ Open `task_review_comments` are injected into every run's prompt; agents resolve
 ## Response Helpers
 
 `respond.go`: `JSON(w, status, v)` and `Err(w, status, msg)` (`{"error": msg}`). Route every error through `Err`; the same shape is used by `middleware.BearerAuth` and `ws.ServeWS` pre-upgrade rejections. Only a failed `websocket.Accept` upgrade is plain (ADR 0030).
+
+`task_previews.go`: `GET /tasks/{id}/previews` returns the latest preview screenshot capture (`{capture: null}` when none); image URLs point at the uploads endpoint. Repo `preview_*` settings are validated by `resolvePreview` in `repos.go`.
