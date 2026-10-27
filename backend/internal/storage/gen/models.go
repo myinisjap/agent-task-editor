@@ -36,6 +36,11 @@ type AgentConfig struct {
 	FallbackProviderConfigIds string    `json:"fallback_provider_config_ids"`
 }
 
+type AgentConfigSkill struct {
+	AgentConfigID string `json:"agent_config_id"`
+	SkillID       string `json:"skill_id"`
+}
+
 type AgentLog struct {
 	ID         string    `json:"id"`
 	AgentRunID string    `json:"agent_run_id"`
@@ -168,6 +173,11 @@ type Repo struct {
 	VerifyTimeoutSeconds          int64     `json:"verify_timeout_seconds"`
 }
 
+type RepoSkill struct {
+	RepoID  string `json:"repo_id"`
+	SkillID string `json:"skill_id"`
+}
+
 type RunVerification struct {
 	RunID      string    `json:"run_id"`
 	TaskID     string    `json:"task_id"`
@@ -178,6 +188,15 @@ type RunVerification struct {
 	Truncated  int64     `json:"truncated"`
 	DurationMs int64     `json:"duration_ms"`
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+type Skill struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Enabled     int64     `json:"enabled"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type Task struct {

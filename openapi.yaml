@@ -477,6 +477,31 @@ components:
         blocking_count:   { type: integer, description: "Count of dependents" }
       required: [blocked_by, blocking, blocked_by_count, blocking_count]
 
+    Skill:
+      type: object
+      description: >
+        An Agent Skills folder (SKILL.md with name + description frontmatter,
+        plus optional files) in the provider-neutral skills library. Trusted
+        admin config: only the normal API token can read or write it, never an
+        MCP sidecar scoped token. Enabled skills attached to an agent config
+        or its repo are copied into the run's worktree.
+      properties:
+        id:          { type: string }
+        name:        { type: string, description: "Unique slug from the SKILL.md frontmatter" }
+        description: { type: string, description: "From the SKILL.md frontmatter" }
+        enabled:     { type: boolean }
+        created_at:  { type: string, format: date-time }
+        updated_at:  { type: string, format: date-time }
+        skill_md:    { type: string, description: "SKILL.md contents (GET /skills/{id} only)" }
+        files:       { type: array, items: { type: string }, description: "Relative file paths (GET /skills/{id} only)" }
+      required: [id, name, description, enabled, created_at, updated_at]
+
+    SkillIDs:
+      type: object
+      properties:
+        skill_ids: { type: array, items: { type: string } }
+      required: [skill_ids]
+
     TaskTemplate:
       type: object
       description: >
@@ -3229,6 +3254,148 @@ paths:
       summary: Delete a task template
       responses:
         "204": { description: Deleted }
+
+  /skills:
+    get:
+      summary: List skills
+      responses:
+        "200":
+          description: Skills sorted by name
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Skill" } }
+    post:
+      summary: Create a skill from a SKILL.md body or a zip of a skill folder
+      description: >
+        Send JSON `{skill_md}` or an `application/zip` body (max 1 MB, at most
+        200 files; SKILL.md at the root or in a single top-level folder).
+        Zips with path traversal, absolute paths or symlinks are rejected.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [skill_md]
+              properties:
+                skill_md: { type: string }
+          application/zip:
+            schema: { type: string, format: binary }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Skill" }
+        "400": { description: Invalid SKILL.md frontmatter or unsafe zip }
+        "409": { description: A skill with that name already exists }
+
+  /skills/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get a skill with its SKILL.md and file list
+      responses:
+        "200":
+          description: The skill
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Skill" }
+        "404": { description: Skill not found }
+    patch:
+      summary: Enable/disable a skill and/or replace its content
+      description: >
+        JSON `{enabled?, skill_md?}` or an `application/zip` body replacing the
+        content. Replacement content must keep the skill's name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:  { type: boolean }
+                skill_md: { type: string }
+          application/zip:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Skill" }
+        "400": { description: Invalid content or name mismatch }
+        "404": { description: Skill not found }
+    delete:
+      summary: Delete a skill (also detaches it everywhere)
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Skill not found }
+
+  /agents/{id}/skills:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: List skills attached to an agent config
+      responses:
+        "200":
+          description: Attached skills
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Skill" } }
+        "404": { description: Agent config not found }
+    put:
+      summary: Replace the set of skills attached to an agent config
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SkillIDs" }
+      responses:
+        "200":
+          description: The new attached set
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Skill" } }
+        "400": { description: Unknown skill id }
+        "404": { description: Agent config not found }
+
+  /repos/{id}/skills:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: List skills attached to a repo
+      responses:
+        "200":
+          description: Attached skills
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Skill" } }
+        "404": { description: Repo not found }
+    put:
+      summary: Replace the set of skills attached to a repo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SkillIDs" }
+      responses:
+        "200":
+          description: The new attached set
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Skill" } }
+        "400": { description: Unknown skill id }
+        "404": { description: Repo not found }
 
   /schedules:
     get:

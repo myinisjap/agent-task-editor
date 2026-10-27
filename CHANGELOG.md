@@ -19,6 +19,10 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+
+- Skills library: provider-neutral Agent Skills (`SKILL.md` folders) stored under `SKILLS_DIR`, managed via `/skills` (create from a SKILL.md body or a zip, enable/disable, delete) and attached to agent configs and repos via `PUT /agents/{id}/skills` / `PUT /repos/{id}/skills`. At run start the union of enabled skills is copied into the worktree directory the provider scans (`.claude/skills`, `.agents/skills` for codex_cli, `.qwen/skills`, `.opencode/skills`), skipping skills the repo commits and excluding them from git. See `docs/skills.md`.
+
 ### Fixed
 
 - **Stale review feedback no longer follows every later run.** Feedback from a failed run, a failed verify, a PR review or a rejection is now dropped once a run that received it completes successfully, instead of being copied onto every later run (it showed up as `FEEDBACK FROM PRIOR REVIEW` long after it was fixed). Retries after a transient error and replies to a run waiting on a human still see it.

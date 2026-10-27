@@ -441,6 +441,36 @@ Delete a template. Returns `204`.
 
 ---
 
+## Skills
+
+Provider-neutral Agent Skills library (see [skills.md](skills.md)). Admin-only:
+the MCP sidecar's scoped tokens are rejected with 403 on every route here.
+
+### `GET /skills`
+List skills: `[{id, name, description, enabled, created_at, updated_at}]`.
+
+### `POST /skills`
+Create from JSON `{"skill_md": "---\nname: x\ndescription: y\n---\n..."}` or an
+`application/zip` body (max 1 MB; path traversal, absolute paths and symlinks
+are rejected). `201` with the skill; `400` for invalid frontmatter/zip; `409`
+if the name exists.
+
+### `GET /skills/{id}`
+The skill plus `skill_md` and `files`.
+
+### `PATCH /skills/{id}`
+`{"enabled"?: bool, "skill_md"?: string}` or a zip body to replace content (the
+frontmatter `name` must stay the same).
+
+### `DELETE /skills/{id}`
+Deletes the skill and its folder; detaches it from all agents and repos.
+
+### `GET /agents/{id}/skills`, `PUT /agents/{id}/skills`
+### `GET /repos/{id}/skills`, `PUT /repos/{id}/skills`
+`PUT` replaces the attached set: `{"skill_ids": ["..."]}`; `400` on an unknown
+id. At run start the union of the agent's and repo's enabled skills is copied
+into the worktree.
+
 ## Task Schedules
 
 Recurring instantiation of a task template against a repo on a cron
