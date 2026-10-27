@@ -127,6 +127,9 @@ type RunInput struct {
 	// this task. Trusted human input, rendered as HUMAN DECISIONS ON THIS
 	// TASK, and loaded fresh for every run regardless of label or agent.
 	HumanDecisions []HumanDecision
+	// RepoLessons are curated per-repo/global lessons, already selected and
+	// within budget. Rendered only by buildPrompt (not the resume prompt).
+	RepoLessons []RepoLesson
 	// Absolute paths of attachment images on the server filesystem
 	AttachmentAbsPaths []string
 	// ResumeSessionID, if non-empty, asks the provider to resume this prior
@@ -337,4 +340,11 @@ type HumanDecision struct {
 	RepliedAt string // UTC, e.g. "2006-01-02 15:04 UTC"
 	Label     string // label the task was on when asked
 	AgentName string // agent config that asked ("" if deleted)
+}
+
+// RepoLesson is a short curated lesson injected into the agent prompt.
+type RepoLesson struct {
+	ID   string
+	Kind string
+	Body string
 }

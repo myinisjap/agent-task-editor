@@ -982,6 +982,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		RunID:         runID,
 		Provider:      provider,
 		SetupWorktree: setup,
+		SelectLessons: d.lessonSelector(t, log),
 		Input: RunInput{
 			RunID:                runID,
 			Task:                 Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Branch: t.Branch, ParentID: derefStr(t.ParentTaskID), RepoPath: repo.Path, Attachments: attachmentRels},

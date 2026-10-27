@@ -22,6 +22,7 @@ One file per resource group. All handlers receive a `*gen.Queries` for database 
 | `repos.go` | `ReposHandler` | `gen.Queries`, `repoBaseDir string` |
 | `review_comments.go` | `ReviewCommentsHandler` | `gen.Queries` |
 | `templates.go` | `TemplatesHandler` | `gen.Queries` |
+| `lessons.go` | `LessonsHandler` | `gen.Queries` |
 | `dashboard.go` | `DashboardHandler` | `gen.Queries` |
 | `health.go` | `Health` func | none |
 | `health_providers.go` | `HealthHandler` | `gen.Queries`, mcp/repo config, backup dir/interval/keep |

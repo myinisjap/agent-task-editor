@@ -44,6 +44,10 @@ type Job struct {
 	// Input.Runtime.WorktreeDir from the result. Nil means the worktree already
 	// exists and Input.RepoPath is final.
 	SetupWorktree func(ctx context.Context) (WorktreeResult, error)
+	// SelectLessons, when non-nil, picks the repo lessons to inject. It runs in
+	// the pool worker after SetupWorktree so git never runs in the dispatcher
+	// sweep. Nil means no lessons.
+	SelectLessons func(ctx context.Context, workDir, branch string, resuming bool) []RepoLesson
 }
 
 // WorktreeResult is what Job.SetupWorktree reports about the provisioned
@@ -432,6 +436,9 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	var ok bool
 	if job, ok = p.setupWorktree(ctx, job, rc, log, startedAt); !ok {
 		return
+	}
+	if job.SelectLessons != nil {
+		job.Input.RepoLessons = job.SelectLessons(ctx, job.Input.RepoPath, job.Input.Task.Branch, job.Input.ResumeSessionID != "")
 	}
 
 	// Prepare the repo's pinned toolchains (mise install / uv venv), if any,
