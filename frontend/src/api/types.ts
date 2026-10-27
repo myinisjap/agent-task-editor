@@ -6323,6 +6323,28 @@ export interface components {
             since: string;
             /** @description Review-brief flag codes; present only for human_gate items whose branch diff could be computed and raised at least one flag. */
             risk_flags?: components["schemas"]["RiskFlagCode"][];
+            /** @description One-line agent summary from the review brief. human_gate items only, when the brief could be built and an agent summary exists. */
+            summary?: string;
+            /** @description Diff size. human_gate items only, when the branch diff could be computed. */
+            changed?: {
+                files: number;
+                additions: number;
+                deletions: number;
+            };
+            /**
+             * Format: double
+             * @description Cost so far across the task's runs. human_gate items only, when the review brief could be built.
+             */
+            cost_usd?: number;
+            /** @description True when some run had unknown cost. human_gate items only, when the review brief could be built. */
+            cost_unknown?: boolean;
+            /**
+             * @description Latest verify result. human_gate items only, when the review brief could be built.
+             * @enum {string}
+             */
+            verification?: "pass" | "fail" | "timeout" | "error" | "not_run";
+            /** @description Images in the latest preview capture. human_gate items only, when the review brief could be built; omitted when 0. */
+            preview_count?: number;
         };
         /**
          * @description Deterministic, advisory risk flag computed from the task's branch diff. migration - a migrations/ path, a .sql file named like schema, or DDL (CREATE/ALTER/DROP TABLE|INDEX|VIEW|TRIGGER) in a .sql file. auth_or_security - path contains auth, oauth, token, secret, middleware, crypto, password, credential, jwt, csrf, cors, permission, security or session, or a .env* file. dependencies - manifests/lockfiles (go.mod, package.json, requirements*.txt, Cargo.*, ...) or a Dockerfile FROM change. tests_removed - a test file deleted, net test functions removed, or skip/only markers added. ci_config - .github/workflows, .gitea/workflows or .gitlab-ci.yml. large_change - more than 800 changed lines (lockfiles/generated excluded) or more than 25 files. outside_plan_scope - the plan in agent_notes lists files and the diff touches others (skipped when the plan has no file list).
