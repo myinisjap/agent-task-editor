@@ -1,5 +1,6 @@
+import { Check } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { Button, PageFrame } from '../components/ui'
+import { Button, PageFrame, Icon } from '../components/ui'
 import {
   api,
   type IntakeRule,
@@ -688,7 +689,7 @@ function PreviewResultsPanel({ results, error }: { results: IntakeRulePreviewMat
       <ul className="flex flex-col gap-1">
         {results.map((m) => (
           <li key={m.task_id} className="text-xs flex items-center gap-2">
-            <span className={m.matched ? 'text-success' : 'text-fg-subtle'}>{m.matched ? '✓' : '·'}</span>
+            <span className={m.matched ? 'text-success' : 'text-fg-subtle'}>{m.matched ? <><Icon icon={Check} size="sm" /><span className="sr-only">matched</span></> : <><span aria-hidden="true">·</span><span className="sr-only">not matched</span></>}</span>
             <span className="text-fg-muted truncate">{m.title}</span>
             {m.matched && m.target_label && (
               <span className="text-fg-subtle shrink-0">→ {m.target_label}</span>

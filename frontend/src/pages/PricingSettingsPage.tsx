@@ -1,5 +1,6 @@
+import { X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
-import { PageFrame } from '../components/ui'
+import { PageFrame, Icon } from '../components/ui'
 import { api, type ModelPricing } from '../api/client'
 import HelpModal from '../components/shared/HelpModal'
 import { PricingHelp } from '../components/shared/pageHelp'
@@ -222,7 +223,7 @@ export default function PricingSettingsPage() {
                 aria-label={`Remove ${row.model || 'row'}`}
                 className="px-2 py-1.5 text-sm text-fg-muted hover:text-danger disabled:opacity-50"
               >
-                ✕
+                <Icon icon={X} size="md" />
               </button>
             </div>
           ))}
