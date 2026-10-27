@@ -180,7 +180,8 @@ components:
           description: >
             Where the task was imported from ("github" for the GitHub Issues
             importer, "gitea" for the Gitea Issues importer against a
-            self-hosted instance). Empty for manually created tasks.
+            self-hosted instance, "webhook" for an intake webhook endpoint).
+            Empty for manually created tasks.
         source_ref:
           type: string
           description: >
@@ -589,7 +590,7 @@ components:
         name:                { type: string }
         enabled:             { type: boolean }
         sort_order:          { type: integer, description: "Lower sorts first; first-match-wins evaluation order among enabled rules." }
-        match_source:        { type: string, enum: ['', manual, issue, schedule, subtask], description: "Empty = any. Only 'issue' and 'schedule' are currently evaluated by any code path." }
+        match_source:        { type: string, enum: ['', manual, issue, schedule, webhook, subtask], description: "Empty = any. Only 'issue', 'schedule' and 'webhook' are currently evaluated by any code path." }
         match_repo_id:       { type: string, nullable: true, description: "Null = any repo." }
         match_labels:        { type: array, items: { type: string }, description: "ANY-of, case-insensitive. Empty = any." }
         match_title_pattern: { type: string, description: "Go regexp (unanchored substring search unless anchored). Empty = any." }
@@ -604,6 +605,73 @@ components:
         created_at:          { type: string, format: date-time }
         updated_at:          { type: string, format: date-time }
       required: [id, name, enabled, sort_order, match_source, match_labels, match_title_pattern, match_body_pattern, match_author_assoc, apply_target_label, stop_processing, created_at, updated_at]
+
+    IntakeEndpoint:
+      type: object
+      description: >
+        A signed inbound webhook endpoint that creates tasks (see
+        docs/task-sources.md). The HMAC secret is never included here; it is
+        returned only by create and rotate-secret.
+      properties:
+        id:                   { type: string }
+        name:                 { type: string }
+        repo_id:              { type: string }
+        workflow_id:          { type: string, nullable: true, description: "Null = the repo's workflow." }
+        target_label:         { type: string, description: "Empty = the workflow's human-gate label. A non-gate label starts tasks without human review." }
+        enabled:              { type: boolean }
+        title_template:       { type: string }
+        description_template: { type: string, description: "Empty = the payload pretty-printed as JSON." }
+        dedupe_key_template:  { type: string, description: "Empty = never dedupe." }
+        last_received_at:     { type: string, format: date-time, nullable: true }
+        created_at:           { type: string, format: date-time }
+        updated_at:           { type: string, format: date-time }
+        secret_set:           { type: boolean }
+        url_path:             { type: string, example: "/api/v1/intake/<id>" }
+      required: [id, name, repo_id, workflow_id, target_label, enabled, title_template, description_template, dedupe_key_template, last_received_at, created_at, updated_at, secret_set, url_path]
+
+    IntakeEndpointCreated:
+      allOf:
+        - $ref: "#/components/schemas/IntakeEndpoint"
+        - type: object
+          properties:
+            secret: { type: string, description: "HMAC secret. Shown only once." }
+          required: [secret]
+
+    IntakeEndpointBody:
+      type: object
+      properties:
+        name:                 { type: string }
+        repo_id:              { type: string }
+        workflow_id:          { type: string, nullable: true }
+        target_label:         { type: string }
+        enabled:              { type: boolean, description: "Default true." }
+        title_template:       { type: string, maxLength: 4096 }
+        description_template: { type: string, maxLength: 4096 }
+        dedupe_key_template:  { type: string, maxLength: 4096 }
+      required: [name, repo_id, title_template]
+
+    IntakeEndpointTestRequest:
+      type: object
+      description: Sample payload plus optional unsaved template overrides.
+      properties:
+        payload:              { type: object, additionalProperties: true }
+        title_template:       { type: string }
+        description_template: { type: string }
+        dedupe_key_template:  { type: string }
+      required: [payload]
+
+    IntakeEndpointTestResponse:
+      type: object
+      properties:
+        title:           { type: string }
+        description:     { type: string }
+        dedupe_key:      { type: string }
+        label:           { type: string }
+        workflow_id:     { type: string }
+        priority:        { type: integer }
+        matched_rule_id: { type: string, nullable: true }
+        existing_task_id: { type: string, nullable: true, description: "Open task a real delivery would append a comment to." }
+      required: [title, description, dedupe_key, label, workflow_id, priority, matched_rule_id, existing_task_id]
 
     BackupSettings:
       type: object
@@ -3505,7 +3573,7 @@ paths:
                 name:                { type: string }
                 enabled:             { type: boolean, default: true }
                 sort_order:          { type: integer, default: 0 }
-                match_source:        { type: string, enum: ['', manual, issue, schedule, subtask] }
+                match_source:        { type: string, enum: ['', manual, issue, schedule, webhook, subtask] }
                 match_repo_id:       { type: string, nullable: true }
                 match_labels:        { type: array, items: { type: string } }
                 match_title_pattern: { type: string }
@@ -3595,7 +3663,7 @@ paths:
                 name:                { type: string }
                 enabled:             { type: boolean, default: true }
                 sort_order:          { type: integer, default: 0 }
-                match_source:        { type: string, enum: ['', manual, issue, schedule, subtask] }
+                match_source:        { type: string, enum: ['', manual, issue, schedule, webhook, subtask] }
                 match_repo_id:       { type: string, nullable: true }
                 match_labels:        { type: array, items: { type: string } }
                 match_title_pattern: { type: string }
@@ -4198,6 +4266,165 @@ paths:
                 properties:
                   authed: { type: boolean }
                   note:   { type: string }
+
+  /intake-endpoints:
+    get:
+      summary: List intake webhook endpoints
+      responses:
+        "200":
+          description: Endpoints (secrets omitted)
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/IntakeEndpoint" } }
+    post:
+      summary: Create an intake webhook endpoint
+      description: The response includes the generated HMAC `secret`; it is not retrievable again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IntakeEndpointBody" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeEndpointCreated" }
+        "400": { description: Validation error }
+
+  /intake-endpoints/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get an intake webhook endpoint
+      responses:
+        "200":
+          description: The endpoint (secret omitted)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeEndpoint" }
+        "404": { description: Not found }
+    put:
+      summary: Update an intake webhook endpoint
+      description: Does not change the secret; use rotate-secret.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IntakeEndpointBody" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeEndpoint" }
+        "400": { description: Validation error }
+        "404": { description: Not found }
+    delete:
+      summary: Delete an intake webhook endpoint
+      responses:
+        "204": { description: Deleted }
+
+  /intake-endpoints/{id}/rotate-secret:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      summary: Rotate an endpoint's HMAC secret
+      description: The old secret stops working immediately. The new one is shown only in this response.
+      responses:
+        "200":
+          description: New secret
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret: { type: string }
+                required: [secret]
+        "404": { description: Not found }
+
+  /intake-endpoints/{id}/test:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      summary: Preview how a sample payload would be turned into a task
+      description: Renders the templates and runs intake rules. Creates nothing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IntakeEndpointTestRequest" }
+      responses:
+        "200":
+          description: Rendered preview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeEndpointTestResponse" }
+        "400": { description: Missing or invalid payload }
+        "404": { description: Not found }
+        "422": { description: No workflow resolvable }
+
+  /intake/{endpoint_id}:
+    post:
+      summary: Deliver a signed event to an intake endpoint
+      description: >
+        NOT behind bearer auth; authenticated by the HMAC-SHA256 of the raw
+        body, keyed with the endpoint secret, sent as
+        `X-ATE-Signature-256: sha256=<hex>` (constant-time compare). Body is
+        capped at 256 KB, must be a JSON object, and each endpoint accepts at
+        most 30 authenticated requests per minute. Creates a task (source
+        `webhook`, on the workflow's gate label unless the endpoint sets a
+        target label), or, when the dedupe key matches an open task, appends
+        the event as an untrusted source comment to it. See
+        docs/task-sources.md.
+      security: []
+      parameters:
+        - { name: endpoint_id, in: path, required: true, schema: { type: string } }
+        - { name: X-ATE-Signature-256, in: header, required: true, schema: { type: string, example: "sha256=..." } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: Deduplicated into an existing open task
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id: { type: string }
+                  deduped: { type: boolean }
+        "201":
+          description: Task created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id: { type: string }
+                  created: { type: boolean }
+        "400": { description: Unreadable body, invalid JSON, or not an object }
+        "401": { description: Missing or invalid signature }
+        "403": { description: Endpoint disabled }
+        "404": { description: Unknown endpoint }
+        "413": { description: Body larger than 256 KB }
+        "415": { description: Content type is not application/json }
+        "422": { description: No workflow resolvable for the endpoint }
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After: { schema: { type: integer } }
 
   /github/webhook:
     post:

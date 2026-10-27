@@ -5,14 +5,17 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
+	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ws"
 )
@@ -56,6 +59,7 @@ var bearerGatedRoutes = []authSmokeRoute{
 	{"lessons delete", http.MethodDelete, "/api/v1/lessons/nope", ""},
 	{"schedules", http.MethodGet, "/api/v1/schedules", ""},
 	{"intake rules", http.MethodGet, "/api/v1/intake-rules", ""},
+	{"intake endpoints", http.MethodGet, "/api/v1/intake-endpoints", ""},
 	{"chat", http.MethodGet, "/api/v1/chat/sessions", ""},
 	{"chat", http.MethodPost, "/api/v1/chat/sessions", `{}`},
 	{"chat", http.MethodDelete, "/api/v1/chat/sessions/nope", ""},
@@ -240,5 +244,78 @@ func TestRouterAuthSmoke_Metrics(t *testing.T) {
 				t.Errorf("want 401=%v, got %d", tc.want401, w.Code)
 			}
 		})
+	}
+}
+
+// TestRouterAuthSmoke_IntakeWebhook checks POST /api/v1/intake/{id} is routed
+// to the receiver (not the /api/v1 bearer-gated mount), is authenticated by
+// its HMAC signature rather than the bearer token, and that the CRUD routes
+// stay bearer-gated.
+func TestRouterAuthSmoke_IntakeWebhook(t *testing.T) {
+	db := openRouterTestDB(t)
+	hub := ws.NewHub()
+	r := api.NewRouter(api.RouterDeps{
+		DB: db, Engine: workflow.New(db.SQL(), hub), Hub: hub, CORSOrigins: "*",
+		BearerToken: "api-secret", UploadDir: t.TempDir(),
+		BackupInterval: 24 * time.Hour, BackupKeep: 7, Version: "dev", MaxWorkers: 5,
+	})
+	q := gen.New(db.SQL())
+	ctx := context.Background()
+	wf, err := q.CreateWorkflow(ctx, gen.CreateWorkflowParams{ID: uuid.NewString(), Name: "wf"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.CreateWorkflowLabel(ctx, gen.CreateWorkflowLabelParams{ID: uuid.NewString(), WorkflowID: wf.ID, Name: "not_ready", Color: "#888", AgentIgnore: 1}); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := q.CreateRepo(ctx, gen.CreateRepoParams{ID: uuid.NewString(), Name: "r", Path: t.TempDir(), WorkflowID: &wf.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create the endpoint through the bearer-gated API.
+	createBody := `{"name":"ci","repo_id":"` + repo.ID + `","title_template":"{{alert.title}}"}`
+	if w := authSmokeDo(r, http.MethodPost, "/api/v1/intake-endpoints", createBody, ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("create without bearer: expected 401, got %d", w.Code)
+	}
+	w := authSmokeDo(r, http.MethodPost, "/api/v1/intake-endpoints", createBody, "api-secret")
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	var created struct {
+		ID     string `json:"id"`
+		Secret string `json:"secret"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil || created.Secret == "" {
+		t.Fatalf("bad create response: %v %s", err, w.Body.String())
+	}
+
+	body := `{"alert":{"title":"CI red"}}`
+	sign := func(secret string) string {
+		mac := hmac.New(sha256.New, []byte(secret))
+		mac.Write([]byte(body))
+		return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	}
+	do := func(sig, bearer string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/intake/"+created.ID, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if sig != "" {
+			req.Header.Set("X-ATE-Signature-256", sig)
+		}
+		if bearer != "" {
+			req.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := do("", "api-secret"); rec.Code != http.StatusUnauthorized {
+		t.Errorf("bearer but no signature: expected 401, got %d", rec.Code)
+	}
+	if rec := do("sha256="+strings.Repeat("0", 64), ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("bad signature: expected 401, got %d", rec.Code)
+	}
+	if rec := do(sign(created.Secret), ""); rec.Code != http.StatusCreated {
+		t.Errorf("valid signature without bearer: expected 201, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

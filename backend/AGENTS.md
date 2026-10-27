@@ -39,6 +39,7 @@ internal/remotemcp/ Remote MCP endpoint (POST /mcp) + Google-backed OAuth server
 internal/prflow/  Push a task's branch and create/find its PR (forge resolution, PR body, SetTaskPR persist, issue write-back); shared by the HTTP CreatePR handler and the workflow OnCreatePR hook wired in cmd/server. Must not import api/handlers
 internal/storage/ SQLite DB, migrations, sqlc-generated queries, seed data
 internal/tasksource/ GitHub Issues importer — polls opted-in repos, creates tasks for new issues, updates tasks whose issue drifted, reconciles tasks whose issue closed/unlabeled, and (opt-in) ingests the issue comment thread
+internal/intakehook/ Signed inbound webhook events (POST /api/v1/intake/{id}) -> tasks via intake rules; dedupe appends untrusted source comments to open tasks
 internal/workflow/ State machine engine — validates/executes label transitions
 internal/ws/      WebSocket hub + per-client connection management
 ```

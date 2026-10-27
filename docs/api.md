@@ -1502,3 +1502,35 @@ with `ws://host/ws?ticket=<ticket>` before it expires; a replayed or expired
 ticket is rejected with `401`. See [websocket.md](websocket.md) for the full
 connection flow. The former `?token=<API_TOKEN>` query-string fallback has
 been removed; `/ws?token=...` now returns `401`.
+
+---
+
+## Intake webhooks
+
+Signed inbound events that create tasks; see
+[task-sources.md](task-sources.md#intake-webhooks-signed-inbound-events).
+
+### `POST /intake/{endpoint_id}` (no bearer token)
+Authenticated by `X-ATE-Signature-256: sha256=<hex>` (HMAC-SHA256 of the raw
+body with the endpoint secret). Max 256 KB, JSON object, 30/min per endpoint.
+`201 {task_id, created}` / `200 {task_id, deduped}` / `400` / `401` / `403`
+(disabled) / `404` / `413` / `415` / `422` / `429`.
+
+### `GET /intake-endpoints`, `GET /intake-endpoints/{id}`
+Endpoints without the secret (`secret_set` and `url_path` are included).
+
+### `POST /intake-endpoints`
+Body: `name`, `repo_id`, `title_template` (required); `workflow_id`,
+`target_label`, `enabled`, `description_template`, `dedupe_key_template`.
+`201` returns the endpoint plus `secret` (the only time it is shown).
+
+### `PUT /intake-endpoints/{id}`
+Same body/validation; does not change the secret. `DELETE` returns `204`.
+
+### `POST /intake-endpoints/{id}/rotate-secret`
+Returns `{secret}`; the old secret stops working.
+
+### `POST /intake-endpoints/{id}/test`
+Body `{payload, title_template?, description_template?, dedupe_key_template?}`.
+Returns the rendered `title`, `description`, `dedupe_key`, resolved `label`,
+`workflow_id`, `priority`, `matched_rule_id`, `existing_task_id`. Creates nothing.

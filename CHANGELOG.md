@@ -21,6 +21,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
 - **Repo lessons.** Short, human-curated per-repo (or global) lessons stored in `repo_lessons` and managed via `GET/POST /repos/{id}/lessons`, `GET/POST /lessons`, `PATCH/DELETE /lessons/{id}`. Active lessons matching the run's label (and, when set, the task's changed files) are injected into agent prompts under `REPO LESSONS`, capped at 15 lessons / about 2,000 characters. UI comes in a follow-up. Task runs keep Claude Code auto-memory off via `--bare` (now covered by a test and documented).
 - Escalation ladder: agent configs can define `escalation_ladder` rungs (provider config + effort) used after consecutive failures / review bounce-backs on that stage; the rung is recorded on each run, shown in Task Detail, and summarized on Agent Performance. Empty by default (no behaviour change).
 
@@ -34,6 +35,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
 - **`BACKEND_MEMORY_LIMIT`** sets the backend container's memory ceiling in both compose files (default `4g`, unchanged), so it can be raised from `.env` without editing the compose file.
 - **`--mcp-profile` flag on `dev.sh` and `run.sh`.** Sets the remote MCP connector's tool set per invocation instead of relying on `MCP_TOOL_PROFILE` in `.env`: `./dev.sh --with-remote-mcp --mcp-profile admin start`. Accepts `readonly`, `full` or `admin`; any other value exits 1. Passing it without `--with-remote-mcp` prints a warning and is ignored, since it only affects the remote endpoint. Omitting it changes nothing — the value from `.env`/compose still applies (backend default: `readonly`). Widening the profile is deliberately an explicit per-run choice: `admin` adds workflow/repo/agent/template/schedule writes to a publicly reachable endpoint whose only gate is the OAuth check against `MCP_ALLOWED_EMAILS`.
 - **Opt-in tool profiles for the stdio board MCP.** `mcp-board` (Chat tab and Claude Desktop) reads a new `TOOL_PROFILE` env var: unset or `create` keeps today's three tools (`list_repos`, `list_workflows`, `create_task`); `readonly`, `full` and `admin` expose the same tool sets as the remote connector's `MCP_TOOL_PROFILE`, along with its server instructions. An unknown value exits with an error. The in-app Chat tab now defaults to the `full` profile: set the backend setting `MCP_BOARD_TOOL_PROFILE` (passed through in both compose files) to `create`, `readonly`, `full` or `admin` to change it; the session's scoped token is widened to exactly the REST calls that profile's tools make (an exact method+path allowlist; no DELETE or other routes) unless it is `create`. Set `create` if chat sessions read untrusted repo code. Claude Desktop keeps `create` as the default. See `docs/board-mcp.md`.
@@ -47,6 +49,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
 - **Set up recurring work from a chat.** The remote MCP connector gains `list_templates` and `list_schedules` (every profile) and, in `MCP_TOOL_PROFILE=admin`, `create_template`, `update_template`, `create_schedule` and `update_schedule` (5-field cron; `update_schedule` merges onto the current record and can pause a schedule with `enabled: false`). Schedules create tasks unattended, so these are admin-only; there are no delete tools. See `docs/board-mcp.md`.
 - **Wire agents to labels from chat.** The remote MCP connector gains `list_provider_configs` and `get_agent` (every profile; provider env is never returned) and, in the `admin` profile, `create_agent` and `update_agent` (name, provider, system prompt, labels, enabled, limits, priority, effort, permission mode, fallback providers; updates change only the fields passed). Command lists, plugins and MCP servers stay app-only.
 - **`create_pr` and `get_costs` board MCP tools.** `create_pr` (remote `full` profile) pushes a task's branch and opens its GitHub PR, returning the URL (idempotent: an existing PR is returned). `get_costs` (every profile, read-only) summarises agent spend: total tokens/USD, the split by provider and the top tasks by cost. See `docs/board-mcp.md#remote-connector`.
@@ -68,6 +71,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 - **Phone board: swipe and jump between columns.** A scrollable row of column chips (name + task count) sits above the single-column board; tap to jump, and columns holding a task that needs you (needs-me or waiting on a human) are highlighted. Swiping horizontally pages columns (only clearly horizontal, quick swipes — not scrolls or long-press drags), and the selected column is kept in the URL (`?col=`) so Back and reload keep your place. Desktop layout is unchanged.
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
 - **Installed phone app polish.** The page title is now "Agent Task Editor"; the web manifest gains an `id`, opens on the Inbox, and offers Inbox/Board/Chat long-press shortcuts; Settings shows an "Install app" bar (via `beforeinstallprompt`) until the app is installed. See "Install on your phone" in `docs/getting-started.md`.
 - **One-thumb Inbox and task actions on phones.** Inbox rows stack text above full-width, 44px-tall action buttons and the whole row taps through to the task. On task detail, the approval/reply/retry panel is a sticky bottom bar on phones, offset by the `--ate-bottom-bar-height` CSS variable (default `0px`) so a bottom tab bar can reserve room by setting it. Both pages no longer overflow horizontally at 360px. Desktop is unchanged.
 - **`opencode` now gets the task-editor MCP tools.** `signal_complete`, `request_human`, `update_task_notes`, `store_info`, `resolve_comment`, `get_task_transitions` (plus `create_subtask` when subtasks are enabled) are now available, injected via `OPENCODE_CONFIG_CONTENT`'s inline `mcp` config since opencode has no `--mcp-config` flag like `claude`/`qwen_code`. The text `OUTCOME: success`/`OUTCOME: failure` marker still works as a fallback in case the MCP tool call doesn't land (opencode's own MCP tool-naming hasn't been verified live).
@@ -111,6 +115,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 - **`archive_task` board MCP tool** — the remote MCP's `full` profile can now archive (or, with `archived: false`, unarchive) a task from any label, backed by `PATCH /tasks/{id}/archive`. Before this, a connector had no way to clear finished or obsolete tasks: `move_task` only follows workflow transitions, and there is none from `not_ready` to `done`.
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
 - **Remote MCP endpoint for claude.ai custom connectors** — set `MCP_REMOTE_ENABLED=true` (plus `MCP_PUBLIC_URL`, `MCP_GOOGLE_CLIENT_ID`/`MCP_GOOGLE_CLIENT_SECRET`/`MCP_ALLOWED_EMAILS`/`MCP_SIGNING_KEY`; `true` with any missing fails startup) and the backend serves the board tools over MCP streamable HTTP at `<MCP_PUBLIC_URL>/mcp`, guarded by a built-in OAuth server that signs you in with Google. Beyond `list_repos`/`list_workflows`/`create_task`, the remote surface adds `list_tasks`, `get_task`, `list_runs`, `get_run_logs`, `get_diff`, `reply_to_run`, `approve_task`, `reject_task` and `move_task`; changes are recorded in label history under the signed-in email. The bundled nginx forwards the new paths, and the opt-in override `docker-compose.mcp-remote.yml` (separate from `docker-compose.traefik.yml`; `./run.sh`/`./dev.sh --with-remote-mcp` include it and set the flag) adds a Traefik router for just those paths that skips `forward-auth` and goes straight to the backend. Sign-in shows a consent page and is bound to the browser that started it. Hardened: `MCP_SIGNING_KEY` (required, independent of the Google secret) signs tokens; the endpoint defaults to a read-only tool profile (`MCP_TOOL_PROFILE=full` adds create/reply/approve/reject/move); OAuth redirects are pinned to exact URIs (`MCP_REDIRECT_URIS`, default claude.ai's callbacks) with an optional `MCP_ALLOWED_CLIENT_IDS`; each sign-in is a revocable grant (`server mcp-grants list|revoke|revoke-email`); and the in-process trusted-actor bypass no longer applies to `/metrics`. Strictly opt-in and off by default: `MCP_PUBLIC_URL` and the other `MCP_*` settings alone do nothing, and neither the public route nor the backend endpoint exists without the flag. See `docs/board-mcp.md#remote-connector`.
 - **Pipeline graph editor**: the Pipeline overview now has an **Edit workflow** mode for basic graph editing without YAML. Add, rename and delete labels (blocked while tasks are on them), drag or use a form to connect labels and pick each transition's type (agent success / failure / human), delete transitions, set a human approval gate, mark a label terminal / open-PR, set a WIP limit and choose its verify mode. Edits are staged with an unsaved indicator and Save / Discard, validated client-side, saved via the existing workflow YAML endpoint, and a change made on the server in the meantime is surfaced as a conflict instead of overwritten. The YAML tab remains as the Advanced view. See `docs/workflows.md#editing-the-workflow-graph`.
 - **Pipeline overview**: `/pipeline` now opens on a read-only graph of the workflow (labels as nodes, transitions as edges) showing who works each stage (agent name and provider, "Human gate", or a "No agent assigned" warning chip), plus verify-mode, terminal and open-PR markers. Click a stage to assign or unassign agent configs, which edits their `labels`. A workflow selector appears when several workflows exist. Board column headers show the same "No agent assigned" chip for unstaffed agent-triggerable labels. The workflow graph now follows the light/dark theme.
@@ -218,6 +223,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 - **`install.sh`** — one-line installer (`curl ... | bash`) that downloads
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
   just `run.sh` and the two Compose files needed to run from prebuilt images,
   without a full `git clone`. README Quick Start now leads with it, and
   documents `run.sh`'s subcommands (`stop`/`restart`/`pull`/`logs`/`login`/`shell`)
@@ -257,6 +263,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 - **Reasoning effort selection on agent configs.** A new optional `effort`
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
   field (`""`/low/medium/high/xhigh/max) lets an agent config request a
   specific reasoning effort level. `claude` maps it directly to the CLI's
   `--effort` flag (verified against a live claude CLI, v2.1.223); `codex_cli`
@@ -1655,6 +1662,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 - **In-app help modals on every page.** Each page (Overview, Board, Chat,
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
   Workflows, Agents, Providers, Pricing, Repos, Templates, Health, Cost &
   Usage, Agent Performance) now has an "i" info button that opens a modal
   explaining what the page does and how to configure it — aimed at making the
@@ -1771,6 +1779,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 - **Board MCP server (`mcp-board`) for creating tickets from a chat.** A new MCP
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
   server lets you work through a plan in a chat and have it create tickets on the
   board via `list_repos`, `list_workflows`, and `create_task`. It talks to the
   backend over REST and is deliberately separate from the per-run MCP sidecar, so
@@ -1845,6 +1854,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 - **Provider Config: provider/model/API keys split out into a separate,
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
   reusable entity.** Previously `AgentConfig` bundled which provider CLI to
   use, its model, and its env vars (API keys) together with unrelated
   workflow-behavior settings (system prompt, labels, retry policy, plugins,
@@ -1993,6 +2003,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 - **Recurring scheduled tasks from templates.** New `task_schedules` table
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
   (migration 035) links a task template to a repo and a cron expression. A
   background sweep (`internal/schedule`, same poll-loop shape as the GitHub
   Issues importer) fires due, enabled schedules and creates a task from the
@@ -2060,6 +2071,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 - **Agent config priority / failover.** Agent configs now have a `priority`
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
   (lower runs first). When multiple enabled configs share a label, dispatch
   tries them in priority order and skips any that are currently
   rate-limited/out of usage credits, so a lower-priority config
@@ -2070,6 +2082,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 - **Container-local `qwen_code` config.** The backend now reads qwen settings
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
   from a repo-managed `backend/qwen-config/settings.json` (mounted read-write as
   the single `settings.json` under `QWEN_HOME=/home/node/qwen-home`) instead of
   the host's `~/.qwen`. This lets the container point the model `baseUrl` at
@@ -2124,6 +2137,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 - **`-all-cli` backend release image**. The release workflow now also builds
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
   and publishes `ghcr.io/myinisjap/agent-task-editor-backend:{version,latest}-all-cli`,
   a backend image with the Gemini, Codex, and Qwen CLIs preinstalled (the
   `INSTALL_GEMINI_CLI`/`INSTALL_CODEX_CLI`/`INSTALL_QWEN_CLI` build args, all
@@ -2488,6 +2502,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 - **SQLite backup/restore story** (#89).
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
   - `GET /api/v1/backup` streams a consistent point-in-time database
     snapshot as `application/octet-stream`, generated via SQLite's
     `VACUUM INTO` (not a raw file copy), so it's safe to call even while
@@ -2543,6 +2558,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 - **Cost budgets per agent config / task, plus new cost analytics** (#42).
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
   - `max_cost_usd` (migration 030) can be set on an agent config and/or on
     an individual task as an advisory USD spending cap. Before each
     sweep-dispatch, the dispatcher sums a task's recorded `cost_usd` across
@@ -2636,6 +2652,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 - **Per-agent-config run analytics** on the Dashboard (#47). A new "Agent
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
   config performance" table breaks run history down by `agent_config_id`
   instead of just provider: success rate (completed/failed/waiting_human
   counts), average and p90 run duration, average "turns to done" per task,
@@ -2694,6 +2711,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 - Shift-click a task card's select checkbox to select every task between it and
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
   the last-clicked card in that column, instead of toggling one at a time.
 - README and `docs/overview.md` now include real screenshots (board, task detail
   with live logs, diff viewer with an inline comment, workflow editor, dashboard,
@@ -2723,6 +2741,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 - **Dark / light theme toggle** (#87). The UI now ships an explicit theme switch in the
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
   sidebar; it defaults to the operating system's `prefers-color-scheme` and remembers your
   choice in `localStorage`. The theme is applied before first paint (an inline bootstrap in
   `index.html`) so there's no flash of the wrong theme on load. The dark theme is unchanged;
@@ -2847,6 +2866,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 - **Session continuity across runs** (#77). The `claude` provider now records each
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
   run's conversation `session_id` (from the CLI's stream-json envelope) and, when
   the same agent config runs the task again — a review rejection back to `work`, a
   re-run after a failure — resumes it with `claude --resume` instead of starting
@@ -2887,6 +2907,7 @@ First tagged release.
 
 ### Added
 - Versioned multi-arch (amd64 + arm64) Docker images published to GHCR on every
+- **Intake webhooks.** Signed inbound events (`POST /api/v1/intake/{id}`, HMAC-SHA256 `X-ATE-Signature-256`) create tasks via intake rules (new `webhook` match source), with templated title/description, dedupe into open tasks (follow-ups become untrusted source comments), a per-endpoint rate limit, and a Settings → Intake UI.
   `v*` tag push, plus an automated GitHub Release.
 - `docker-compose.release.yml` for running from the prebuilt
   `ghcr.io/myinisjap/agent-task-editor-{backend,frontend}` images instead of
