@@ -1,16 +1,19 @@
+import type { LucideIcon } from 'lucide-react'
+import { ChevronDown, ChevronUp, CircleX, Dot, FileText, FlaskConical, MessageSquare, Pencil, Terminal, User, Wrench, X } from 'lucide-react'
+import Icon from '../ui/Icon'
 import AgentLogEntry from '../board/AgentLogEntry'
 import type { StepGroup, StepKind } from '../../lib/runTimeline'
 
-const KIND_ICON: Record<StepKind, string> = {
-  read: '📄',
-  edit: '✏️',
-  command: '⚡',
-  test: '🧪',
-  message: '💬',
-  human: '🙋',
-  error: '✕',
-  system: '•',
-  tool: '🔧',
+const KIND_ICON: Record<StepKind, LucideIcon> = {
+  read: FileText,
+  edit: Pencil,
+  command: Terminal,
+  test: FlaskConical,
+  message: MessageSquare,
+  human: User,
+  error: CircleX,
+  system: Dot,
+  tool: Wrench,
 }
 
 // Single-row groups of these kinds are shown directly: hiding them is pointless.
@@ -45,22 +48,22 @@ export default function RunStepGroup({ group, open, onToggle, failed }: {
         onClick={onToggle}
         className={`w-full flex items-center gap-2 py-1.5 px-3 rounded-lg text-left border text-xs transition-colors ${
           isErr
-            ? 'bg-red-950/20 border-red-800/30 text-red-300 hover:bg-red-950/40'
-            : 'bg-slate-900/60 border-slate-800 text-slate-300 hover:bg-slate-800/60'
+            ? 'bg-red-950/20 border-red-800/30 text-danger hover:bg-red-950/40'
+            : 'bg-surface-raised/60 border-border text-fg-muted hover:bg-surface-sunken/60'
         }`}
       >
-        <span className="shrink-0" aria-hidden="true">{KIND_ICON[group.kind]}</span>
+        <span className="shrink-0" aria-hidden="true"><Icon icon={KIND_ICON[group.kind]} size="sm" /></span>
         <span className="flex-1 min-w-0 truncate" title={group.summary}>{group.summary}</span>
         {group.pending && (
           <span className="text-yellow-300/90 bg-yellow-500/10 border border-yellow-500/30 rounded-full px-1.5 text-[10px] animate-pulse">
             running
           </span>
         )}
-        {failed && <span className="text-red-400 shrink-0" aria-label="failed" title="Something in this group failed">✕</span>}
-        <span className="text-slate-500 shrink-0" aria-hidden="true">{open ? '▲' : '▼'}</span>
+        {failed && <span className="text-danger shrink-0" aria-label="failed" title="Something in this group failed"><Icon icon={X} size="sm" /></span>}
+        <span className="text-fg-subtle shrink-0" aria-hidden="true"><Icon icon={open ? ChevronUp : ChevronDown} size="sm" /></span>
       </button>
       {open && (
-        <div className="ml-3 mt-0.5 border-l border-slate-800 pl-1">
+        <div className="ml-3 mt-0.5 border-l border-border pl-1">
           {group.rows.map((row) => <AgentLogEntry key={row.key} row={row} />)}
         </div>
       )}

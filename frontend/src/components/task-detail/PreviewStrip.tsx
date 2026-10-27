@@ -1,3 +1,5 @@
+import { X } from 'lucide-react'
+import Icon from '../ui/Icon'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, authedRawFetch, type TaskPreviewCapture, type TaskPreviewImage } from '../../api/client'
 import ModalShell from '../shared/ModalShell'
@@ -60,10 +62,10 @@ function Thumb({ img, onOpen }: { img: TaskPreviewImage; onOpen: () => void }) {
       data-testid="preview-thumb"
       aria-label={`Open ${img.route} ${sizeName(img)} screenshot`}
     >
-      <div className="h-20 w-full overflow-hidden rounded border border-slate-700 bg-slate-950">
+      <div className="h-20 w-full overflow-hidden rounded border border-border bg-surface">
         {src && <img src={src} alt={`${img.route} (${sizeName(img)})`} loading="lazy" className="w-full h-full object-cover object-top" />}
       </div>
-      <div className="mt-1 text-[10px] text-slate-400 truncate">
+      <div className="mt-1 text-[10px] text-fg-muted truncate">
         <span className="font-mono">{img.route}</span> · {sizeName(img)}
       </div>
     </button>
@@ -83,21 +85,21 @@ function Viewer({ images, index, onIndex, onClose }: { images: TaskPreviewImage[
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [prev, next])
-  const btn = 'min-h-[44px] min-w-[44px] px-3 rounded border border-slate-600 text-sm text-slate-200 hover:bg-slate-800'
+  const btn = 'min-h-[44px] min-w-[44px] px-3 rounded border border-border text-sm text-fg hover:bg-surface-sunken'
   return (
-    <ModalShell onClose={onClose} ariaLabel="Preview screenshot" className="w-full max-w-[95vw] max-h-[95vh] flex flex-col bg-slate-900 p-2 rounded">
+    <ModalShell onClose={onClose} ariaLabel="Preview screenshot" className="w-full max-w-[95vw] max-h-[95vh] flex flex-col bg-surface-raised p-2 rounded">
       <div className="flex items-center justify-between gap-2 pb-2">
-        <div className="text-xs text-slate-300 truncate">
+        <div className="text-xs text-fg-muted truncate">
           <span className="font-mono">{img.route}</span> · {sizeName(img)} {img.width}×{img.height} · {index + 1}/{images.length}
         </div>
         <div className="flex gap-2 shrink-0">
           <button type="button" className={btn} onClick={prev} aria-label="Previous screenshot" disabled={images.length < 2}>‹</button>
           <button type="button" className={btn} onClick={next} aria-label="Next screenshot" disabled={images.length < 2}>›</button>
-          <button type="button" className={btn} onClick={onClose} aria-label="Close">✕</button>
+          <button type="button" className={btn} onClick={onClose} aria-label="Close"><Icon icon={X} size="md" /></button>
         </div>
       </div>
       <div className="overflow-auto flex-1 min-h-0">
-        {src ? <img src={src} alt={`${img.route} (${sizeName(img)})`} className="max-w-full h-auto mx-auto" data-testid="preview-full" /> : <div className="text-xs text-slate-500 p-4">Loading…</div>}
+        {src ? <img src={src} alt={`${img.route} (${sizeName(img)})`} className="max-w-full h-auto mx-auto" data-testid="preview-full" /> : <div className="text-xs text-fg-subtle p-4">Loading…</div>}
       </div>
     </ModalShell>
   )
@@ -132,17 +134,17 @@ export default function PreviewStrip({ taskId, refreshKey = '', label }: { taskI
   const wrap = (node: React.ReactNode) =>
     label ? (
       <div className="flex flex-col sm:flex-row sm:gap-3 min-w-0">
-        <div className="sm:w-24 shrink-0 text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
+        <div className="sm:w-24 shrink-0 text-xs font-semibold uppercase tracking-wide text-fg-subtle">{label}</div>
         <div className="min-w-0 flex-1">{node}</div>
       </div>
     ) : (
       node
     )
   if (capture.status === 'running') {
-    return wrap(<div className="text-xs text-slate-400" data-testid="preview-running">Capturing preview…</div>)
+    return wrap(<div className="text-xs text-fg-muted" data-testid="preview-running">Capturing preview…</div>)
   }
   if (capture.status === 'failed') {
-    return wrap(<div className="text-xs text-amber-400 break-words" data-testid="preview-failed">Preview failed: {capture.error || 'unknown error'}</div>)
+    return wrap(<div className="text-xs text-warning break-words" data-testid="preview-failed">Preview failed: {capture.error || 'unknown error'}</div>)
   }
   const images = capture.images
   if (images.length === 0) return null
@@ -153,7 +155,7 @@ export default function PreviewStrip({ taskId, refreshKey = '', label }: { taskI
           <Thumb key={img.id} img={img} onOpen={() => setOpen(i)} />
         ))}
       </div>
-      {capture.error && <div className="mt-1 text-xs text-amber-400 break-words">Some previews failed: {capture.error}</div>}
+      {capture.error && <div className="mt-1 text-xs text-warning break-words">Some previews failed: {capture.error}</div>}
       {open !== null && images[open] && <Viewer images={images} index={open} onIndex={setOpen} onClose={() => setOpen(null)} />}
     </div>
   )

@@ -1,3 +1,5 @@
+import { X } from 'lucide-react'
+import Icon from '../ui/Icon'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { wsClient } from '../../api/ws'
@@ -89,7 +91,7 @@ export default function ProviderPausedBanner() {
             View health →
           </Link>
           <button type="button" onClick={dismiss} aria-label="Dismiss for this session" className="px-1 hover:text-white">
-            ✕
+            <Icon icon={X} size="md" />
           </button>
         </span>
       </div>

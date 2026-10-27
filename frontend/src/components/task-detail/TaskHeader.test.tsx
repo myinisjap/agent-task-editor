@@ -325,14 +325,14 @@ describe('TaskHeader block_reason banner (#353)', () => {
 
     expect(screen.getByText(/Not dispatching/)).toBeInTheDocument()
     expect(screen.getByText('task is paused')).toBeInTheDocument()
-    expect(screen.queryByText('⏸ Paused — agents will not pick up this task')).not.toBeInTheDocument()
+    expect(screen.queryByText('Paused — agents will not pick up this task')).not.toBeInTheDocument()
   })
 
   it('falls back to the plain Paused badge when there is no block_reason', () => {
     renderHeader(TaskHeader, baseTask({ paused: true }))
 
     expect(screen.queryByText(/Not dispatching/)).not.toBeInTheDocument()
-    expect(screen.getByText('⏸ Paused — agents will not pick up this task')).toBeInTheDocument()
+    expect(screen.getByText('Paused — agents will not pick up this task')).toBeInTheDocument()
   })
 
   it('renders a countdown for a transient reason with clears_at', () => {

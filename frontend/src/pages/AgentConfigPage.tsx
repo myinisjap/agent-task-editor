@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api, type AgentConfig, type Skill } from '../api/client'
 import { useAgentsStore } from '../stores/agents'
 import { useWorkflowStore } from '../stores/workflow'
@@ -7,7 +8,7 @@ import { EMPTY, TEMPLATES } from '../lib/agentTemplates'
 import AgentSidebar from '../components/agents/AgentSidebar'
 import AgentConfigForm, { type FormState } from '../components/agents/AgentConfigForm'
 import HelpModal from '../components/shared/HelpModal'
-import HelpButton from '../components/shared/HelpButton'
+import { Button, PageFrame } from '../components/ui'
 import { AgentsHelp } from '../components/shared/pageHelp'
 
 export default function AgentConfigPage() {
@@ -38,6 +39,10 @@ export default function AgentConfigPage() {
   const [skillIds, setSkillIds] = useState<string[]>([])
   const [allSkills, setAllSkills] = useState<Skill[]>([])
   const selectedIdRef = useRef<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  // True once the user explicitly chose "New" (or deleted the last agent), so
+  // store refreshes don't auto-select an agent over the empty form.
+  const [creatingNew, setCreatingNew] = useState(false)
 
   const availableLabels = workflows[0]?.labels.map((l) => l.name) ?? []
 
@@ -49,6 +54,11 @@ export default function AgentConfigPage() {
   }, [fetchAgents, fetchWorkflows, fetchProviderConfigs])
 
   useEffect(() => {
+    if (selected || creatingNew || agents.length === 0) return
+    selectAgent(agents.find((a) => a.id === searchParams.get('agent')) ?? agents[0])
+  }, [agents, selected, creatingNew]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
     const provider = providerConfigs.find((pc) => pc.id === form.provider_config_id)?.provider
     if (provider !== 'claude') return
     fetchClaudeOptions()
@@ -56,6 +66,8 @@ export default function AgentConfigPage() {
 
   function selectAgent(a: AgentConfig) {
     setNote('')
+    setCreatingNew(false)
+    setSearchParams({ agent: a.id }, { replace: true })
     selectedIdRef.current = a.id
     setSkillIds([])
     api.agents
@@ -97,6 +109,8 @@ export default function AgentConfigPage() {
   }
 
   function newAgent() {
+    setCreatingNew(true)
+    setSearchParams({}, { replace: true })
     selectedIdRef.current = null
     setSkillIds([])
     setSelected(null)
@@ -137,23 +151,26 @@ export default function AgentConfigPage() {
 
   async function handleSave() {
     setSaving(true)
+    let savedConfig: AgentConfig | null = null
     try {
       if (selected) {
-        const { labelConflict } = await updateAgent(selected.id, { ...form, enabled: !!selected.enabled, note: note.trim() || undefined })
+        const { config: updated, labelConflict } = await updateAgent(selected.id, { ...form, enabled: !!selected.enabled, note: note.trim() || undefined })
         await saveSkills(selected.id)
+        savedConfig = updated
         if (labelConflict) {
           alert(`Saved, but this label is also handled by active config "${labelConflict}" — failover will run them in priority order.`)
         }
       } else {
         const { config, labelConflict } = await createAgent(form)
         await saveSkills(config.id)
+        savedConfig = config
         if (labelConflict) {
           alert(`Agent created but started disabled — label conflict with active config "${labelConflict}".`)
         }
       }
       setNote('')
       setHistoryReloadKey((k) => k + 1)
-      newAgent()
+      if (savedConfig) selectAgent(savedConfig)
     } catch (e: any) {
       alert(e.message)
     } finally {
@@ -218,8 +235,10 @@ export default function AgentConfigPage() {
     if (!confirm(`Delete agent "${selected.name}"?`)) return
     setDeleting(true)
     try {
+      const remaining = agents.filter((a) => a.id !== selected.id)
       await deleteAgent(selected.id)
-      newAgent()
+      if (remaining.length > 0) selectAgent(remaining[0])
+      else newAgent()
     } catch (e: any) {
       alert(e.message)
     } finally {
@@ -228,24 +247,17 @@ export default function AgentConfigPage() {
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden" data-testid="agents-page">
-      {/* Mobile-only header bar: shows selected agent + button to open the configs drawer */}
-      <div className="md:hidden flex items-center justify-between px-4 py-2 border-b border-slate-800 bg-slate-950">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-sm text-slate-300 truncate">
-            {selected ? selected.name : 'New agent'}
-          </span>
-          <HelpButton onClick={() => setShowHelp(true)} title="About agent configs" />
-        </div>
-        <button
-          onClick={() => setSidebarOpen(true)}
-          className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-300"
-        >
+    <PageFrame
+      title="Agents"
+      testId="agents-page"
+      help={{ onClick: () => setShowHelp(true), title: 'About agent configs' }}
+      actions={
+        <Button size="sm" className="md:hidden" onClick={() => setSidebarOpen(true)}>
           Configs
-        </button>
-      </div>
-
-      <div className="flex-1 flex overflow-hidden">
+        </Button>
+      }
+    >
+      <div className="flex items-start gap-6">
         <AgentSidebar
           agents={agents}
           selected={selected}
@@ -284,9 +296,6 @@ export default function AgentConfigPage() {
           skills={allSkills}
           skillIds={skillIds}
           onSkillIdsChange={setSkillIds}
-          helpButton={
-            <HelpButton onClick={() => setShowHelp(true)} title="About agent configs" />
-          }
         />
       </div>
 
@@ -295,6 +304,6 @@ export default function AgentConfigPage() {
           <AgentsHelp />
         </HelpModal>
       )}
-    </div>
+    </PageFrame>
   )
 }

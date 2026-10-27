@@ -1,3 +1,5 @@
+import { X } from 'lucide-react'
+import Icon from '../ui/Icon'
 import type { ReactNode } from 'react'
 import ModalShell from './ModalShell'
 
@@ -24,20 +26,20 @@ export default function HelpModal({
     <ModalShell
       onClose={onClose}
       ariaLabel={title}
-      className="bg-slate-900 border border-slate-700 rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col"
+      className="bg-surface-raised border border-border rounded-lg shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col"
     >
-      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 flex-shrink-0">
-        <h2 className="text-lg font-semibold text-slate-100">{title}</h2>
+      <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
+        <h2 className="text-lg font-semibold text-fg">{title}</h2>
         <button
           onClick={onClose}
           aria-label="Close"
-          className="text-slate-500 hover:text-slate-200 transition-colors text-sm leading-none"
+          className="text-fg-subtle hover:text-fg transition-colors text-sm leading-none"
         >
-          ✕
+          <Icon icon={X} size="md" />
         </button>
       </div>
 
-      <div className="px-6 py-4 overflow-y-auto flex flex-col gap-5 text-sm text-slate-300">
+      <div className="px-6 py-4 overflow-y-auto flex flex-col gap-5 text-sm text-fg-muted">
         {children}
       </div>
     </ModalShell>

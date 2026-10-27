@@ -30,3 +30,20 @@ describe('PageFrame', () => {
     expect(screen.getByTestId('f').className).not.toMatch(/max-w-/)
   })
 })
+
+describe('PageFrame description/fill/headerClassName', () => {
+  it('renders description under the header', () => {
+    wrap(<PageFrame title="T" description="About this page">x</PageFrame>)
+    expect(screen.getByText('About this page')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'T' })).toHaveTextContent('T')
+  })
+  it('fill makes the root a full-height flex column', () => {
+    wrap(<PageFrame title="T" fill testId="fl">x</PageFrame>)
+    expect(screen.getByTestId('fl')).toHaveClass('h-full', 'min-h-0', 'flex', 'flex-col')
+  })
+  it('headerClassName overrides header margin', () => {
+    wrap(<PageFrame title="T" headerClassName="mb-4" testId="hc">x</PageFrame>)
+    expect(screen.getByRole('heading').parentElement).toHaveClass('mb-4')
+    expect(screen.getByRole('heading').parentElement).not.toHaveClass('mb-6')
+  })
+})

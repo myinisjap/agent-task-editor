@@ -7,12 +7,12 @@ function deriveGitState(branch: string, gitState: string): GitState {
 }
 
 const GIT_STATE_CONFIG: Record<GitState, { label: string; icon: string; className: string }> = {
-  none:      { label: 'No branch',  icon: '○',  className: 'text-slate-600' },
-  branched:  { label: 'Branch',     icon: '⎇',  className: 'text-slate-400' },
+  none:      { label: 'No branch',  icon: '○',  className: 'text-fg-subtle' },
+  branched:  { label: 'Branch',     icon: '⎇',  className: 'text-fg-muted' },
   pushed:    { label: 'Pushed',     icon: '↑',  className: 'text-blue-400' },
   pr_open:   { label: 'PR open',    icon: '⬡',  className: 'text-yellow-400' },
   pr_merged: { label: 'PR merged',  icon: '⬢',  className: 'text-purple-400' },
-  pr_closed: { label: 'PR closed',  icon: '⊗',  className: 'text-red-400' },
+  pr_closed: { label: 'PR closed',  icon: '⊗',  className: 'text-danger' },
 }
 
 interface GitStateBadgeProps {
@@ -45,12 +45,14 @@ export default function GitStateBadge({ branch, gitState, prMergeable }: GitStat
     <span className="inline-flex items-center gap-1">
       {icon}
       <span
-        className="text-xs font-mono select-none text-red-400"
+        className="text-xs font-mono select-none text-danger"
         title="PR conflicts with its base branch"
         aria-label="merge conflict"
       >
-        ⚠
+        <Icon icon={TriangleAlert} size="sm" />
       </span>
     </span>
   )
-}
+}import { TriangleAlert } from 'lucide-react'
+import Icon from '../ui/Icon'
+

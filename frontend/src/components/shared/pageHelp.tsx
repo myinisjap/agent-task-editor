@@ -32,7 +32,7 @@ export function WorkflowHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Overview</h3>
+        <h3 className="text-fg font-semibold">Overview</h3>
         <p>
           A workflow is a state machine made up of <strong>labels</strong> (the columns on the board)
           and <strong>transitions</strong> (the allowed moves between labels). Tasks start on a label
@@ -42,47 +42,47 @@ export function WorkflowHelp() {
       </section>
 
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Labels</h3>
+        <h3 className="text-fg font-semibold">Labels</h3>
         <ul className="flex flex-col gap-1 list-disc list-inside">
-          <li><code className="bg-slate-800 rounded px-1 font-mono">name</code> — unique identifier within the workflow</li>
-          <li><code className="bg-slate-800 rounded px-1 font-mono">color</code> — hex color used on the board (e.g. <code className="bg-slate-800 rounded px-1 font-mono">#RRGGBB</code>); empty is allowed, anything else is rejected</li>
-          <li><code className="bg-slate-800 rounded px-1 font-mono">sort_order</code> — column order on the board</li>
-          <li><code className="bg-slate-800 rounded px-1 font-mono">agent_ignore</code> — agents cannot move tasks here; the dispatcher skips tasks already on this label</li>
-          <li><code className="bg-slate-800 rounded px-1 font-mono">is_terminal</code> — marks the task as complete; no further transitions</li>
-          <li><code className="bg-slate-800 rounded px-1 font-mono">create_pr</code> — entering this label pushes the branch and auto-opens a GitHub PR (needs a GitHub remote and gh auth); at most one label per workflow may set this</li>
-          <li><code className="bg-slate-800 rounded px-1 font-mono">verify_mode</code> / <code className="bg-slate-800 rounded px-1 font-mono">verify_command</code> — per-label override of the repo&apos;s verify command (set on the Repos page), applied when a run on this label reports success. Omit (or <code className="bg-slate-800 rounded px-1 font-mono">inherit</code>) to use the repo command; <code className="bg-slate-800 rounded px-1 font-mono">custom</code> (with a <code className="bg-slate-800 rounded px-1 font-mono">verify_command</code>) replaces it; <code className="bg-slate-800 rounded px-1 font-mono">disabled</code> skips verification on this label</li>
+          <li><code className="bg-surface-sunken rounded px-1 font-mono">name</code> — unique identifier within the workflow</li>
+          <li><code className="bg-surface-sunken rounded px-1 font-mono">color</code> — hex color used on the board (e.g. <code className="bg-surface-sunken rounded px-1 font-mono">#RRGGBB</code>); empty is allowed, anything else is rejected</li>
+          <li><code className="bg-surface-sunken rounded px-1 font-mono">sort_order</code> — column order on the board</li>
+          <li><code className="bg-surface-sunken rounded px-1 font-mono">agent_ignore</code> — agents cannot move tasks here; the dispatcher skips tasks already on this label</li>
+          <li><code className="bg-surface-sunken rounded px-1 font-mono">is_terminal</code> — marks the task as complete; no further transitions</li>
+          <li><code className="bg-surface-sunken rounded px-1 font-mono">create_pr</code> — entering this label pushes the branch and auto-opens a GitHub PR (needs a GitHub remote and gh auth); at most one label per workflow may set this</li>
+          <li><code className="bg-surface-sunken rounded px-1 font-mono">verify_mode</code> / <code className="bg-surface-sunken rounded px-1 font-mono">verify_command</code> — per-label override of the repo&apos;s verify command (set on the Repos page), applied when a run on this label reports success. Omit (or <code className="bg-surface-sunken rounded px-1 font-mono">inherit</code>) to use the repo command; <code className="bg-surface-sunken rounded px-1 font-mono">custom</code> (with a <code className="bg-surface-sunken rounded px-1 font-mono">verify_command</code>) replaces it; <code className="bg-surface-sunken rounded px-1 font-mono">disabled</code> skips verification on this label</li>
         </ul>
         <p>
           Tasks created without an explicit label — GitHub Issue imports, scheduled tasks, and API
           creates that omit one — land on the workflow's <strong>human-gate label</strong>: the
-          lowest <code className="bg-slate-800 rounded px-1 font-mono">sort_order</code>{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">agent_ignore</code> label (falling back
-          to the first label if none is marked <code className="bg-slate-800 rounded px-1 font-mono">agent_ignore</code>),
+          lowest <code className="bg-surface-sunken rounded px-1 font-mono">sort_order</code>{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">agent_ignore</code> label (falling back
+          to the first label if none is marked <code className="bg-surface-sunken rounded px-1 font-mono">agent_ignore</code>),
           so a human promotes them before an agent picks them up. There is no reserved label name — in
-          the default workflow this happens to be <code className="bg-slate-800 rounded px-1 font-mono">not_ready</code>.
+          the default workflow this happens to be <code className="bg-surface-sunken rounded px-1 font-mono">not_ready</code>.
         </p>
       </section>
 
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Transitions</h3>
+        <h3 className="text-fg font-semibold">Transitions</h3>
         <ul className="flex flex-col gap-1 list-disc list-inside">
-          <li><code className="bg-slate-800 rounded px-1 font-mono">from</code> / <code className="bg-slate-800 rounded px-1 font-mono">to</code> — source and destination label names</li>
-          <li><code className="bg-slate-800 rounded px-1 font-mono">trigger</code> — <code className="bg-slate-800 rounded px-1 font-mono">agent</code>, <code className="bg-slate-800 rounded px-1 font-mono">human</code>, or <code className="bg-slate-800 rounded px-1 font-mono">both</code>: who is allowed to make this move</li>
-          <li><code className="bg-slate-800 rounded px-1 font-mono">path</code> — <code className="bg-slate-800 rounded px-1 font-mono">success</code> or <code className="bg-slate-800 rounded px-1 font-mono">failure</code>: which outcome this transition represents, used by the Approve/Reject actions</li>
+          <li><code className="bg-surface-sunken rounded px-1 font-mono">from</code> / <code className="bg-surface-sunken rounded px-1 font-mono">to</code> — source and destination label names</li>
+          <li><code className="bg-surface-sunken rounded px-1 font-mono">trigger</code> — <code className="bg-surface-sunken rounded px-1 font-mono">agent</code>, <code className="bg-surface-sunken rounded px-1 font-mono">human</code>, or <code className="bg-surface-sunken rounded px-1 font-mono">both</code>: who is allowed to make this move</li>
+          <li><code className="bg-surface-sunken rounded px-1 font-mono">path</code> — <code className="bg-surface-sunken rounded px-1 font-mono">success</code> or <code className="bg-surface-sunken rounded px-1 font-mono">failure</code>: which outcome this transition represents, used by the Approve/Reject actions</li>
         </ul>
         <p>Only transitions you define are allowed — a task can never skip to a label with no matching transition.</p>
       </section>
 
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">YAML Example</h3>
-        <pre className="bg-slate-800 rounded p-3 font-mono text-xs text-slate-200 overflow-x-auto whitespace-pre">
+        <h3 className="text-fg font-semibold">YAML Example</h3>
+        <pre className="bg-surface-sunken rounded p-3 font-mono text-xs text-fg overflow-x-auto whitespace-pre">
 {EXAMPLE_WORKFLOW_YAML}
         </pre>
       </section>
 
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-fg-subtle">
         For the full reference — including the default workflow, Approve/Reject semantics, and engine
-        rules — see <code className="bg-slate-800 rounded px-1 font-mono">docs/workflows.md</code> in the repo.
+        rules — see <code className="bg-surface-sunken rounded px-1 font-mono">docs/workflows.md</code> in the repo.
       </p>
     </>
   )
@@ -92,14 +92,14 @@ export function DashboardHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Overview</h3>
+        <h3 className="text-fg font-semibold">Overview</h3>
         <p>
           This is the at-a-glance summary of the active workflow: how many tasks sit on each
           label, which agents are currently running, and which tasks are waiting on you.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Needs you</h3>
+        <h3 className="text-fg font-semibold">Needs you</h3>
         <p>
           When anything is waiting on you, a &ldquo;Needs you (N)&rdquo; card links to the Inbox.
           The Inbox groups it into Decide (approve or request changes), Answer (the agent asked
@@ -108,7 +108,7 @@ export function DashboardHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Visualize tasks</h3>
+        <h3 className="text-fg font-semibold">Visualize tasks</h3>
         <p>
           A fun, non-essential toggle that renders the label counts as an office floor, a robot
           crew, or a factory assembly line instead of plain count chips. Purely cosmetic — it has
@@ -123,33 +123,33 @@ export function UsageHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Claude usage</h3>
+        <h3 className="text-fg font-semibold">Claude usage</h3>
         <p>
           Live utilization of your Claude account's 5-hour and weekly rate-limit windows, as
-          reported by the <code className="bg-slate-800 rounded px-1 font-mono">claude</code>{' '}
+          reported by the <code className="bg-surface-sunken rounded px-1 font-mono">claude</code>{' '}
           CLI provider. Only shown when at least one run has reported this data.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Cost estimates</h3>
+        <h3 className="text-fg font-semibold">Cost estimates</h3>
         <p>
           Per-provider and per-model cost breakdowns, sourced differently per provider. The{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">claude</code> and{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">opencode</code> CLIs report their
+          <code className="bg-surface-sunken rounded px-1 font-mono">claude</code> and{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">opencode</code> CLIs report their
           own authoritative cost (which may be legitimately $0 under a subscription plan). The{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code> provider has no
+          <code className="bg-surface-sunken rounded px-1 font-mono">codex_cli</code> provider has no
           cost figure of their own, so their tokens are priced from the table you configure on the{' '}
           <strong>Pricing</strong> page instead. The{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">qwen_code</code> CLI reports tokens
+          <code className="bg-surface-sunken rounded px-1 font-mono">qwen_code</code> CLI reports tokens
           but no cost at all, so its runs always show $0 here. A run whose model isn't in the
           pricing table is flagged "cost unknown" rather than silently shown as $0.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Global spend ceiling</h3>
+        <h3 className="text-fg font-semibold">Global spend ceiling</h3>
         <p>
-          If <code className="bg-slate-800 rounded px-1 font-mono">MAX_DAILY_COST_USD</code> and/or{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">MAX_MONTHLY_COST_USD</code> are set
+          If <code className="bg-surface-sunken rounded px-1 font-mono">MAX_DAILY_COST_USD</code> and/or{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">MAX_MONTHLY_COST_USD</code> are set
           on the server, this section shows spend-vs-cap bars and a burn-rate forecast for the
           current day/month. Crossing a cap <strong>halts new dispatch</strong> — runs already in
           flight are left to finish, but no new agent run will start until spend drops back under
@@ -164,7 +164,7 @@ export function PerformanceHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Breaking down by version</h3>
+        <h3 className="text-fg font-semibold">Breaking down by version</h3>
         <p>
           Use <strong>Break down by</strong> to split each agent config's rows by config version
           (every behavioural edit to the config is a new version, and runs are tagged with the
@@ -174,7 +174,7 @@ export function PerformanceHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Outcome quality</h3>
+        <h3 className="text-fg font-semibold">Outcome quality</h3>
         <p>
           <strong>Success rate measures whether a run exited cleanly — it does not measure whether
           the work stuck.</strong> A config with a high success rate but a high rework rate finishes
@@ -210,14 +210,27 @@ export function PerformanceHelp() {
           whether a config's numbers hold up on a specific codebase, since aggregate numbers can
           hide a config that's excellent on one repo and poor on another.
         </p>
+        <p>
+          <strong>Attribution:</strong> “Tasks done” and every rate derived from it attribute a task
+          to its <em>last</em> run's agent config, except rework's numerator, which is attributed to
+          whichever run caused the bounce-back.
+        </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Agent config performance</h3>
+        <h3 className="text-fg font-semibold">Agent config performance</h3>
         <p>
           Aggregated stats per agent config: number of runs, success rate, average/P90 run
           duration, and average runs per task. Success rate is still useful for spotting a flaky
           or crashing config, but it's a weaker signal than the outcome-quality metrics above —
           use it alongside them, not instead of them.
+        </p>
+        <p>
+          Success rate shows completed/failed/waiting-human counts. “Avg runs/task” counts{' '}
+          <code>agent_runs</code> rows per done task (dispatch/retry cycles), not the internal LLM
+          turns within a run that “Max turns” caps; each done task's credit is split across every
+          config that contributed a run. The retry snapshot is attributed entirely to a task's last
+          run's config and reflects its current retry counter, which resets to 0 on success or
+          escalation to a human; it is not a lifetime count.
         </p>
       </section>
     </>
@@ -228,7 +241,7 @@ export function BoardHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Columns &amp; cards</h3>
+        <h3 className="text-fg font-semibold">Columns &amp; cards</h3>
         <p>
           Each column is a workflow <strong>label</strong>. Dragging a card to another column
           attempts the matching <strong>transition</strong> — only moves defined in the active
@@ -237,7 +250,7 @@ export function BoardHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Fitting the board</h3>
+        <h3 className="text-fg font-semibold">Fitting the board</h3>
         <p>
           Empty columns shrink to a narrow strip (hover or drag over one to expand it), and
           terminal columns like Done start collapsed to a count — click to expand; your choice is
@@ -246,18 +259,18 @@ export function BoardHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Agents pick up work automatically</h3>
+        <h3 className="text-fg font-semibold">Agents pick up work automatically</h3>
         <p>
           Any label with an agent-triggered transition is watched by the dispatcher: once a task
-          lands there (and the label isn't marked <code className="bg-slate-800 rounded px-1 font-mono">agent_ignore</code>),
+          lands there (and the label isn't marked <code className="bg-surface-sunken rounded px-1 font-mono">agent_ignore</code>),
           an agent run is created automatically using the agent config bound to that label. Human
           gated columns wait for you to Approve/Reject instead.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Filters &amp; bulk actions</h3>
+        <h3 className="text-fg font-semibold">Filters &amp; bulk actions</h3>
         <p>
-          Use the search box and repo/type/git-state filters to narrow the board. The 🗄{' '}
+          Use the search box and repo/type/git-state filters to narrow the board. The{' '}
           <strong>Archived</strong> toggle switches between the normal board and archived tasks.
           Select multiple cards (shift-click for a range) to pause, resume, archive/unarchive
           (unarchive only shows while the Archived toggle is on), or move them together via the
@@ -265,7 +278,7 @@ export function BoardHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Creating a task</h3>
+        <h3 className="text-fg font-semibold">Creating a task</h3>
         <p>
           Use "+ Add Task" on the board to open the new-task form. You choose the repo, workflow,
           type, and optionally start from a saved template (see the <strong>Templates</strong>{' '}
@@ -280,7 +293,7 @@ export function ChatHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">What this is</h3>
+        <h3 className="text-fg font-semibold">What this is</h3>
         <p>
           An interactive terminal session with an AI provider, running against a repo of your
           choice — useful for ad-hoc exploration, debugging, or one-off requests outside the
@@ -289,14 +302,14 @@ export function ChatHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Starting a session</h3>
+        <h3 className="text-fg font-semibold">Starting a session</h3>
         <p>
           Pick a repo and a provider config in "New terminal", then start chatting. Each session
           keeps its own scrollback and can be resumed later from the session list on the left.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">On mobile</h3>
+        <h3 className="text-fg font-semibold">On mobile</h3>
         <p>
           A key bar sits under the terminal with the keys a phone keyboard lacks — Esc, Tab,
           Shift+Tab (mode switching in the Claude CLI), arrows, Home/End and page up/down. Scroll
@@ -312,7 +325,7 @@ export function AgentsHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Experiments</h3>
+        <h3 className="text-fg font-semibold">Experiments</h3>
         <p>
           Try a candidate config on a share (1–90%) of the tasks that newly reach this agent&apos;s
           label while the rest keep the current config. A task keeps its arm for every later run.
@@ -323,7 +336,7 @@ export function AgentsHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">History</h3>
+        <h3 className="text-fg font-semibold">History</h3>
         <p>
           Each behavioural change (prompt, provider, fallbacks, ladder, effort, limits, permissions,
           plugins/MCP, command lists) is saved as a numbered version with its author and an optional
@@ -333,7 +346,7 @@ export function AgentsHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">What an agent config is</h3>
+        <h3 className="text-fg font-semibold">What an agent config is</h3>
         <p>
           An agent config binds a set of workflow <strong>labels</strong> to a{' '}
           <strong>provider config</strong> (see the Providers page) plus its own settings: system
@@ -343,64 +356,64 @@ export function AgentsHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Labels &amp; transitions</h3>
+        <h3 className="text-fg font-semibold">Labels &amp; transitions</h3>
         <p>
           The labels you assign here must exist in a workflow, and only labels reachable by an{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">agent</code>-triggered transition
+          <code className="bg-surface-sunken rounded px-1 font-mono">agent</code>-triggered transition
           actually get picked up automatically — configure the workflow's transitions on the{' '}
           <strong>Workflows</strong> page.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Budgets, subtasks &amp; effort</h3>
+        <h3 className="text-fg font-semibold">Budgets, subtasks &amp; effort</h3>
         <p>
-          <code className="bg-slate-800 rounded px-1 font-mono">max_cost_usd</code> sets a per-task
+          <code className="bg-surface-sunken rounded px-1 font-mono">max_cost_usd</code> sets a per-task
           spending cap, cumulative across all of a task's runs (pre-dispatch guard on every provider; a mid-run kill switch too, on
           providers that support it — see the <strong>Pricing</strong> page's help). Enabling{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">subtasks_enabled</code> lets the
-          agent split its work into child tasks via the <code className="bg-slate-800 rounded px-1 font-mono">create_subtask</code>{' '}
-          MCP tool, up to <code className="bg-slate-800 rounded px-1 font-mono">max_subtasks</code>.{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">effort</code> is a reasoning-effort
+          <code className="bg-surface-sunken rounded px-1 font-mono">subtasks_enabled</code> lets the
+          agent split its work into child tasks via the <code className="bg-surface-sunken rounded px-1 font-mono">create_subtask</code>{' '}
+          MCP tool, up to <code className="bg-surface-sunken rounded px-1 font-mono">max_subtasks</code>.{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">effort</code> is a reasoning-effort
           hint that's silently ignored on providers that don't support it.
         </p>
         <p>
           Support for all of these — plus turn limits and the command allow/deny lists — varies a
           lot by provider (e.g. the command{' '}
           <strong>allowlist doesn't effectively restrict</strong>{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">claude</code> — use the denylist
-          there instead, and <code className="bg-slate-800 rounded px-1 font-mono">opencode</code>'s
+          <code className="bg-surface-sunken rounded px-1 font-mono">claude</code> — use the denylist
+          there instead, and <code className="bg-surface-sunken rounded px-1 font-mono">opencode</code>'s
           allow/deny lists and turn cap rely on its own unverified permission/config semantics).
           The form surfaces inline warnings when a setting won't do what you'd expect for the
           selected provider; see the Capability Matrix in{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">docs/agents.md</code> for the full
+          <code className="bg-surface-sunken rounded px-1 font-mono">docs/agents.md</code> for the full
           picture.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Templates</h3>
+        <h3 className="text-fg font-semibold">Templates</h3>
         <p>
           Use "Templates" in the sidebar to start from a pre-filled config (planner, coder,
           reviewer, etc.) instead of building one from scratch.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Permission mode (claude)</h3>
+        <h3 className="text-fg font-semibold">Permission mode (claude)</h3>
         <p>
-          Controls which <code className="bg-slate-800 rounded px-1 font-mono">--permission-mode</code>{' '}
+          Controls which <code className="bg-surface-sunken rounded px-1 font-mono">--permission-mode</code>{' '}
           the claude CLI runs under for this agent's task runs. Leaving it unset keeps the CLI's own
-          default (currently <code className="bg-slate-800 rounded px-1 font-mono">auto</code>) — a
+          default (currently <code className="bg-surface-sunken rounded px-1 font-mono">auto</code>) — a
           cloud safety classifier that can transiently deny harmless commands (e.g.{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">gofmt</code>) when that classifier is
-          unavailable. <code className="bg-slate-800 rounded px-1 font-mono">bypassPermissions</code>{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">gofmt</code>) when that classifier is
+          unavailable. <code className="bg-surface-sunken rounded px-1 font-mono">bypassPermissions</code>{' '}
           skips approval prompts entirely, which is useful for unattended runs.
         </p>
         <p>
           The command denylist stays enforced in every mode, including{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">bypassPermissions</code> — verified
+          <code className="bg-surface-sunken rounded px-1 font-mono">bypassPermissions</code> — verified
           against a live claude CLI, a denylisted command is still refused even with approval prompts
           bypassed. It is still a guardrail, not a sandbox: it matches command prefixes, so an agent
-          can get around it with <code className="bg-slate-800 rounded px-1 font-mono">sh -c</code>,{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">env</code>, an interpreter or a
+          can get around it with <code className="bg-surface-sunken rounded px-1 font-mono">sh -c</code>,{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">env</code>, an interpreter or a
           script, and it won't contain an untrusted or prompt-injected agent.
         </p>
       </section>
@@ -412,7 +425,7 @@ export function ProvidersHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">What a provider config is</h3>
+        <h3 className="text-fg font-semibold">What a provider config is</h3>
         <p>
           A provider config is the reusable provider/model/credentials triple — which provider CLI
           or API to use, which model, and the environment variables (e.g. an API key) needed to
@@ -421,20 +434,20 @@ export function ProvidersHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Provider types</h3>
+        <h3 className="text-fg font-semibold">Provider types</h3>
         <ul className="flex flex-col gap-1 list-disc list-inside">
-          <li><code className="bg-slate-800 rounded px-1 font-mono">claude</code> — the Claude Code CLI, authenticated via its own login/session</li>
-          <li><code className="bg-slate-800 rounded px-1 font-mono">qwen_code</code>, <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code>, <code className="bg-slate-800 rounded px-1 font-mono">opencode</code> — other CLI-based providers</li>
+          <li><code className="bg-surface-sunken rounded px-1 font-mono">claude</code> — the Claude Code CLI, authenticated via its own login/session</li>
+          <li><code className="bg-surface-sunken rounded px-1 font-mono">qwen_code</code>, <code className="bg-surface-sunken rounded px-1 font-mono">codex_cli</code>, <code className="bg-surface-sunken rounded px-1 font-mono">opencode</code> — other CLI-based providers</li>
         </ul>
         <p>
-          The <code className="bg-slate-800 rounded px-1 font-mono">anthropic</code> and{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">llm</code> providers were{' '}
+          The <code className="bg-surface-sunken rounded px-1 font-mono">anthropic</code> and{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">llm</code> providers were{' '}
           <strong>removed</strong> in v0.17.0. Configs still on them fail at dispatch — switch them to a
           supported provider.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Checking readiness</h3>
+        <h3 className="text-fg font-semibold">Checking readiness</h3>
         <p>
           After saving a config, check the <strong>Health</strong> page to confirm its credentials
           and CLI/API are reachable before assigning it to an agent.
@@ -448,20 +461,20 @@ export function PricingHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">What this configures</h3>
+        <h3 className="text-fg font-semibold">What this configures</h3>
         <p>
           USD price per 1M input/output tokens. It's the sole cost source for the{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code> provider, which
+          <code className="bg-surface-sunken rounded px-1 font-mono">codex_cli</code> provider, which
           reports no cost of its own. The{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">claude</code> and{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">opencode</code> CLIs report their
+          <code className="bg-surface-sunken rounded px-1 font-mono">claude</code> and{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">opencode</code> CLIs report their
           own authoritative final cost and never read this table for that. However,{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">claude</code> and{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">qwen_code</code> both use this table
+          <code className="bg-surface-sunken rounded px-1 font-mono">claude</code> and{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">qwen_code</code> both use this table
           for their <strong>mid-run cost watchdog</strong> — the kill switch that cancels a run once
           projected spend crosses its budget. If their model isn't priced here, that watchdog is a
           silent no-op (only the pre-dispatch guard still applies) even though the final reported
-          cost for <code className="bg-slate-800 rounded px-1 font-mono">claude</code> is unaffected.
+          cost for <code className="bg-surface-sunken rounded px-1 font-mono">claude</code> is unaffected.
         </p>
         <p>
           The optional <strong>cached</strong> and <strong>cache write</strong> $/1M columns price
@@ -471,7 +484,7 @@ export function PricingHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Fallback behavior</h3>
+        <h3 className="text-fg font-semibold">Fallback behavior</h3>
         <p>
           A model with no row here falls back to an internal, approximate hardcoded table. A run
           whose model matches neither is flagged "cost unknown" in its run history rather than
@@ -486,22 +499,22 @@ export function ReposHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Registering a repo</h3>
+        <h3 className="text-fg font-semibold">Registering a repo</h3>
         <p>
           A repo is a local directory path that agents run against — their working directory is
-          set to this path. If <code className="bg-slate-800 rounded px-1 font-mono">REPO_BASE_DIR</code>{' '}
+          set to this path. If <code className="bg-surface-sunken rounded px-1 font-mono">REPO_BASE_DIR</code>{' '}
           is set on the server, only paths inside it can be registered.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Lessons</h3>
+        <h3 className="text-fg font-semibold">Lessons</h3>
         <p>
           The <strong>Lessons</strong> button on a repo opens short notes (max 300 characters)
           that are shown to future agent runs on that repo. Add, edit, retire or delete them there.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Skills</h3>
+        <h3 className="text-fg font-semibold">Skills</h3>
         <p>
           <strong>Edit</strong> a repo and pick <strong>Skills</strong> to attach library skills repo-wide:
           they are copied into the worktree for every agent run on this repo. Manage the library under
@@ -509,50 +522,50 @@ export function ReposHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Agent runtime (toolchain pins)</h3>
+        <h3 className="text-fg font-semibold">Agent runtime (toolchain pins)</h3>
         <p>
           The <strong>Agent runtime</strong> section pins the language versions agent runs use for
           this repo (go, node, python, rust, ruby, java, godot), installed on demand via{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">mise</code> and cached across repos.
+          <code className="bg-surface-sunken rounded px-1 font-mono">mise</code> and cached across repos.
           Leave it empty and nothing changes — runs use the server image's built-in toolchain
           exactly as before. If a pinned toolchain can't be installed, the task escalates to{' '}
           <em>Waiting for human</em> instead of silently running on the wrong version.
         </p>
         <p>
           <strong>Detect from repo</strong> (edit form only) scans the repo root and its immediate
-          subdirectories for version-pin files (<code className="bg-slate-800 rounded px-1 font-mono">go.mod</code>,{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">.nvmrc</code>,{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">.python-version</code>, …) and
+          subdirectories for version-pin files (<code className="bg-surface-sunken rounded px-1 font-mono">go.mod</code>,{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">.nvmrc</code>,{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">.python-version</code>, …) and
           pre-fills suggestions — it never saves on its own. It only reads dedicated version-pin
           files, so a node project without an{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">.nvmrc</code>/<code className="bg-slate-800 rounded px-1 font-mono">.node-version</code>{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">.nvmrc</code>/<code className="bg-surface-sunken rounded px-1 font-mono">.node-version</code>{' '}
           detects nothing for node: add one, or type the version manually. Pins apply to task runs
           and chat sessions alike; the agent CLI itself always runs on the app's bundled Node.js.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">GitHub integration</h3>
+        <h3 className="text-fg font-semibold">GitHub integration</h3>
         <p>
-          Set a <code className="bg-slate-800 rounded px-1 font-mono">remote_url</code> pointing at
+          Set a <code className="bg-surface-sunken rounded px-1 font-mono">remote_url</code> pointing at
           GitHub to enable PR auto-open on a workflow's{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">create_pr</code> label, issue import,
-          and PR-review auto-transition. These need <code className="bg-slate-800 rounded px-1 font-mono">gh</code>{' '}
-          auth (<code className="bg-slate-800 rounded px-1 font-mono">gh auth login</code> or{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">GITHUB_TOKEN</code>) — check the{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">create_pr</code> label, issue import,
+          and PR-review auto-transition. These need <code className="bg-surface-sunken rounded px-1 font-mono">gh</code>{' '}
+          auth (<code className="bg-surface-sunken rounded px-1 font-mono">gh auth login</code> or{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">GITHUB_TOKEN</code>) — check the{' '}
           <strong>Health</strong> page to confirm it's configured.
         </p>
         <p>
-          <code className="bg-slate-800 rounded px-1 font-mono">issue_writeback_enabled</code> posts
+          <code className="bg-surface-sunken rounded px-1 font-mono">issue_writeback_enabled</code> posts
           the task's status back as a comment on the source GitHub issue (under{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">issue_writeback_label</code> if set).{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">pr_review_auto_transition_enabled</code>{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">issue_writeback_label</code> if set).{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">pr_review_auto_transition_enabled</code>{' '}
           lets review comments left on an agent-opened PR auto-transition the task back for rework
-          instead of waiting for a human to move it. <code className="bg-slate-800 rounded px-1 font-mono">max_concurrent_runs</code>{' '}
+          instead of waiting for a human to move it. <code className="bg-surface-sunken rounded px-1 font-mono">max_concurrent_runs</code>{' '}
           caps how many agent runs this repo allows at once, regardless of how many tasks are ready.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Issue sync</h3>
+        <h3 className="text-fg font-semibold">Issue sync</h3>
         <p>
           Turning on "Import GitHub Issues" periodically creates board tasks from open issues
           (optionally filtered to one label) in the repo's assigned workflow — and keeps them in
@@ -569,9 +582,9 @@ export function ReposHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Keeping tasks in sync (update policy)</h3>
+        <h3 className="text-fg font-semibold">Keeping tasks in sync (update policy)</h3>
         <p>
-          <code className="bg-slate-800 rounded px-1 font-mono">issue_sync_update_policy</code>{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">issue_sync_update_policy</code>{' '}
           controls when upstream edits are allowed to overwrite the task:
         </p>
         <ul className="flex flex-col gap-1 list-disc list-inside">
@@ -581,15 +594,15 @@ export function ReposHelp() {
         </ul>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Closed or unlabeled issue action</h3>
+        <h3 className="text-fg font-semibold">Closed or unlabeled issue action</h3>
         <p>
-          <code className="bg-slate-800 rounded px-1 font-mono">issue_sync_gone_action</code>{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">issue_sync_gone_action</code>{' '}
           decides what happens when the source issue closes or stops matching the label filter:
         </p>
         <ul className="flex flex-col gap-1 list-disc list-inside">
           <li><strong>flag</strong> (default) — just marks the task so you can see it needs a look; no other action taken.</li>
           <li><strong>archive</strong> — also archives the task.</li>
-          <li><strong>move</strong> — also moves the task to <code className="bg-slate-800 rounded px-1 font-mono">issue_sync_gone_label</code>.</li>
+          <li><strong>move</strong> — also moves the task to <code className="bg-surface-sunken rounded px-1 font-mono">issue_sync_gone_label</code>.</li>
         </ul>
         <p>
           A task with a currently running agent is always just flagged, never archived or moved —
@@ -597,9 +610,9 @@ export function ReposHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Issue comment sync</h3>
+        <h3 className="text-fg font-semibold">Issue comment sync</h3>
         <p>
-          <code className="bg-slate-800 rounded px-1 font-mono">issue_comment_sync_enabled</code>{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">issue_comment_sync_enabled</code>{' '}
           (off by default) ingests the source issue's comment thread onto the task, so the
           pre-work discussion isn't invisible to the agent. Only comments from people with write
           access to the repo are ingested, and this app's own write-back comments are always
@@ -616,7 +629,7 @@ export function TemplatesHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">What templates are for</h3>
+        <h3 className="text-fg font-semibold">What templates are for</h3>
         <p>
           A template is a reusable title/description/type preset for recurring shapes of work
           (e.g. "Upgrade dependency"). It pre-fills the "New Task" form so you don't retype the
@@ -624,7 +637,7 @@ export function TemplatesHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Recurring schedules</h3>
+        <h3 className="text-fg font-semibold">Recurring schedules</h3>
         <p>
           A template can also be attached to a cron schedule against a repo, so a new task is
           created automatically on that schedule — no human has to click "New Task". Deleting a
@@ -639,7 +652,7 @@ export function IntakeRulesHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">What intake rules are for</h3>
+        <h3 className="text-fg font-semibold">What intake rules are for</h3>
         <p>
           A rule matches an incoming imported issue or a firing schedule (source, repo, labels,
           title/body pattern, issue author association) and applies shaping to the task it
@@ -649,7 +662,7 @@ export function IntakeRulesHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">The auto-start safety gate</h3>
+        <h3 className="text-fg font-semibold">The auto-start safety gate</h3>
         <p>
           Imported issues land on the workflow's human-review gate label by default, so a person
           promotes them before an agent ever runs — the mitigation for untrusted imported issue
@@ -660,7 +673,7 @@ export function IntakeRulesHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">issue_sync_label is deprecated</h3>
+        <h3 className="text-fg font-semibold">issue_sync_label is deprecated</h3>
         <p>
           The old per-repo "only import issues with this label" setting still controls which
           issues are fetched for one more release, but an intake rule with a matching
@@ -669,7 +682,7 @@ export function IntakeRulesHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Preview</h3>
+        <h3 className="text-fg font-semibold">Preview</h3>
         <p>
           "Preview matches" checks a rule (saved or still being edited) against the repo's most
           recently imported tasks, using the exact same matching logic the importer and
@@ -684,7 +697,7 @@ export function TaskDetailHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">The three tabs</h3>
+        <h3 className="text-fg font-semibold">The three tabs</h3>
         <p>
           <strong>Overview</strong> — title/description, metadata (label, type, branch, git
           state, PR link, priority, cost budget), attachments, run history, label history,
@@ -696,7 +709,7 @@ export function TaskDetailHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Review layout</h3>
+        <h3 className="text-fg font-semibold">Review layout</h3>
         <p>
           On wide screens (1280px and up), a task waiting at a human gate shows{' '}
           <strong>Approve</strong> / <strong>Request changes</strong> in the header, with the
@@ -707,14 +720,14 @@ export function TaskDetailHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Details</h3>
+        <h3 className="text-fg font-semibold">Details</h3>
         <p>
           Dependencies, force move, label history and source comments live under the collapsed{' '}
           <strong>Details</strong> toggle. Force move bypasses the workflow's rules for a stuck task.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Run history &amp; retries</h3>
+        <h3 className="text-fg font-semibold">Run history &amp; retries</h3>
         <p>
           Every dispatch of this task is its own <strong>run</strong>, shown oldest-first. A
           failed or escalated run doesn't erase progress — the task's next run reuses context
@@ -723,17 +736,17 @@ export function TaskDetailHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Approve / Reject</h3>
+        <h3 className="text-fg font-semibold">Approve / Reject</h3>
         <p>
           Shown when the task is waiting on a human-triggered transition. <strong>Approve</strong>{' '}
-          moves the task forward on its <code className="bg-slate-800 rounded px-1 font-mono">success</code>{' '}
+          moves the task forward on its <code className="bg-surface-sunken rounded px-1 font-mono">success</code>{' '}
           path. <strong>Reject</strong> requires a note explaining what's wrong and moves the task
-          on its <code className="bg-slate-800 rounded px-1 font-mono">failure</code> path — the
+          on its <code className="bg-surface-sunken rounded px-1 font-mono">failure</code> path — the
           note is injected into the next run's prompt as feedback.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Diff review comments</h3>
+        <h3 className="text-fg font-semibold">Diff review comments</h3>
         <p>
           Leave an inline comment on a line in the Diff tab to flag something for the agent. Open
           comments are passed to the next run as context it's expected to address; resolving one
@@ -742,10 +755,10 @@ export function TaskDetailHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Subtasks &amp; dependencies</h3>
+        <h3 className="text-fg font-semibold">Subtasks &amp; dependencies</h3>
         <p>
           If the assigned agent config has subtasks enabled, it can split this task into children
-          via the <code className="bg-slate-800 rounded px-1 font-mono">create_subtask</code> MCP
+          via the <code className="bg-surface-sunken rounded px-1 font-mono">create_subtask</code> MCP
           tool — shown in the Subtasks panel. Dependencies let a task declare it must wait on
           another task reaching a terminal label before the dispatcher will pick it up.
         </p>
@@ -758,10 +771,10 @@ export function HealthHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">What this checks</h3>
+        <h3 className="text-fg font-semibold">What this checks</h3>
         <p>
-          Provider readiness — the <code className="bg-slate-800 rounded px-1 font-mono">claude</code>{' '}
-          and <code className="bg-slate-800 rounded px-1 font-mono">codex_cli</code> CLI logins,
+          Provider readiness — the <code className="bg-surface-sunken rounded px-1 font-mono">claude</code>{' '}
+          and <code className="bg-surface-sunken rounded px-1 font-mono">codex_cli</code> CLI logins,
           and any leftover configs on removed providers — plus
           supporting infrastructure: GitHub auth for PRs/issue sync, the configured repo base
           directory, the MCP sidecar the task-editor tools depend on, automatic local backups,
@@ -776,7 +789,7 @@ export function HealthHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Fixing a red/yellow row</h3>
+        <h3 className="text-fg font-semibold">Fixing a red/yellow row</h3>
         <p>
           Follow the message shown on the row — it usually points at a missing credential, an
           unauthenticated CLI, or a misconfigured path. Re-run "Refresh" after fixing it to

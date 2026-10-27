@@ -1,3 +1,5 @@
+import { TriangleAlert, X } from 'lucide-react'
+import Icon from '../ui/Icon'
 import type { Dispatch, ReactNode, SetStateAction } from 'react'
 import { Link } from 'react-router-dom'
 import type { AgentConfig, ClaudeOptions, ProviderConfig, Skill } from '../../api/client'
@@ -107,23 +109,23 @@ export default function AgentConfigForm({
   )
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
+    <div className="flex-1 min-w-0">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">
-          <h2 className="text-base font-semibold text-slate-100">
+          <h2 className="text-base font-semibold text-fg">
             {selected ? `Edit: ${selected.name}` : 'New Agent Config'}
           </h2>
           {helpButton}
         </div>
         {selected && (
           <div className="flex items-center gap-2">
-            <span className={`text-xs ${isEnabled ? 'text-green-400' : 'text-slate-500'}`}>
+            <span className={`text-xs ${isEnabled ? 'text-green-400' : 'text-fg-subtle'}`}>
               {isEnabled ? 'Active' : 'Disabled'}
             </span>
             <button
               onClick={onToggleEnabled}
               disabled={saving}
-              className={`relative w-9 h-5 rounded-full transition-colors ${isEnabled ? 'bg-green-600' : 'bg-slate-700'} disabled:opacity-50`}
+              className={`relative w-9 h-5 rounded-full transition-colors ${isEnabled ? 'bg-green-600' : 'bg-border'} disabled:opacity-50`}
             >
               <span className={`absolute left-0 top-1/2 w-4 h-4 rounded-full bg-white shadow transition-transform -translate-y-1/2 ${isEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
             </button>
@@ -132,8 +134,8 @@ export default function AgentConfigForm({
       </div>
 
       {providerStr && labelTransitionsCap.support !== 'full' && (
-        <div className="max-w-2xl mb-5 px-3 py-2 rounded border border-amber-700/50 bg-amber-950/30 text-xs text-amber-300">
-          ⚠️ The <span className="font-mono">{providerStr}</span> provider cannot signal workflow transitions via
+        <div className="max-w-2xl mb-5 px-3 py-2 rounded border border-amber-700/50 bg-amber-950/30 text-xs text-warning">
+          <Icon icon={TriangleAlert} size="sm" className="inline -mt-0.5 mr-1" />The <span className="font-mono">{providerStr}</span> provider cannot signal workflow transitions via
           MCP tools — tasks handled by this agent may not move to the next label automatically (it relies on a
           text <span className="font-mono">OUTCOME: success/failure</span> marker). See{' '}
           <a
@@ -168,8 +170,8 @@ export default function AgentConfigForm({
               <option key={pc.id} value={pc.id}>{pc.name} ({pc.provider}{pc.model ? `/${pc.model}` : ''})</option>
             ))}
           </select>
-          <p className="mt-1 text-xs text-slate-500">
-            <Link to="/settings/providers" className="text-indigo-400 hover:text-indigo-300">Manage provider configs →</Link>
+          <p className="mt-1 text-xs text-fg-subtle">
+            <Link to="/settings/providers" className="text-accent-fg hover:text-accent-fg">Manage provider configs →</Link>
           </p>
         </Field>
 
@@ -183,14 +185,14 @@ export default function AgentConfigForm({
               {fallbackIds.map((id, i) => {
                 const pc = providerConfigs.find((p) => p.id === id)
                 return (
-                  <li key={id} className="flex items-center gap-2 text-xs text-slate-300">
-                    <span className="w-5 text-slate-500">{i + 1}.</span>
+                  <li key={id} className="flex items-center gap-2 text-xs text-fg-muted">
+                    <span className="w-5 text-fg-subtle">{i + 1}.</span>
                     <span className="flex-1 truncate">
                       {pc ? `${pc.name} (${pc.provider}${pc.model ? `/${pc.model}` : ''})` : `Unknown provider config ${id}`}
                     </span>
-                    <button type="button" onClick={() => moveFallback(i, -1)} disabled={i === 0} className="px-1 text-slate-400 hover:text-slate-200 disabled:opacity-30" aria-label={`Move ${pc?.name ?? id} up`}>↑</button>
-                    <button type="button" onClick={() => moveFallback(i, 1)} disabled={i === fallbackIds.length - 1} className="px-1 text-slate-400 hover:text-slate-200 disabled:opacity-30" aria-label={`Move ${pc?.name ?? id} down`}>↓</button>
-                    <button type="button" onClick={() => setFallbacks(fallbackIds.filter((x) => x !== id))} className="px-1 text-slate-400 hover:text-red-400" aria-label={`Remove ${pc?.name ?? id}`}>✕</button>
+                    <button type="button" onClick={() => moveFallback(i, -1)} disabled={i === 0} className="px-1 text-fg-muted hover:text-fg disabled:opacity-30" aria-label={`Move ${pc?.name ?? id} up`}>↑</button>
+                    <button type="button" onClick={() => moveFallback(i, 1)} disabled={i === fallbackIds.length - 1} className="px-1 text-fg-muted hover:text-fg disabled:opacity-30" aria-label={`Move ${pc?.name ?? id} down`}>↓</button>
+                    <button type="button" onClick={() => setFallbacks(fallbackIds.filter((x) => x !== id))} className="px-1 text-fg-muted hover:text-danger" aria-label={`Remove ${pc?.name ?? id}`}><Icon icon={X} size="sm" /></button>
                   </li>
                 )
               })}
@@ -210,11 +212,11 @@ export default function AgentConfigForm({
           </select>
         </Field>
 
-        <details className="sm:col-span-2 rounded border border-slate-700 px-3 py-2" open={ladder.length > 0 || (skillIds?.length ?? 0) > 0}>
-          <summary className="cursor-pointer text-sm text-slate-300">Advanced</summary>
+        <details className="sm:col-span-2 rounded border border-border px-3 py-2" open={ladder.length > 0 || (skillIds?.length ?? 0) > 0}>
+          <summary className="cursor-pointer text-sm text-fg-muted">Advanced</summary>
           <div className="mt-3">
-            <p className="text-sm font-medium text-slate-200">Escalate on failure</p>
-            <p className="mb-2 text-xs text-slate-500">
+            <p className="text-sm font-medium text-fg">Escalate on failure</p>
+            <p className="mb-2 text-xs text-fg-subtle">
               Rung 0 is the provider and effort above. After N failed attempts or review bounce-backs on this stage, the task runs on rung N (capped at the last rung). Resets when the stage is freshly entered or a human acts.
             </p>
             {ladder.length > 0 && (
@@ -224,9 +226,9 @@ export default function AgentConfigForm({
                   const rungProvider = pc?.provider ?? ''
                   const rungEffortCap = getCapability(rungProvider, 'effort')
                   return (
-                    <li key={i} className="text-xs text-slate-300">
+                    <li key={i} className="text-xs text-fg-muted">
                       <div className="flex items-center gap-2">
-                        <span className="w-14 text-slate-500">Rung {i + 1}</span>
+                        <span className="w-14 text-fg-subtle">Rung {i + 1}</span>
                         <select value={r.provider_config_id} onChange={(e) => updateRung(i, { provider_config_id: e.target.value })} className="input flex-1" aria-label={`Rung ${i + 1} provider`}>
                           {!pc && <option value={r.provider_config_id}>Unknown provider config {r.provider_config_id}</option>}
                           {providerConfigs.map((p) => (
@@ -241,12 +243,12 @@ export default function AgentConfigForm({
                           <option value="xhigh">Extra high</option>
                           <option value="max">Max</option>
                         </select>
-                        <button type="button" onClick={() => moveRung(i, -1)} disabled={i === 0} className="px-1 text-slate-400 hover:text-slate-200 disabled:opacity-30" aria-label={`Move rung ${i + 1} up`}>↑</button>
-                        <button type="button" onClick={() => moveRung(i, 1)} disabled={i === ladder.length - 1} className="px-1 text-slate-400 hover:text-slate-200 disabled:opacity-30" aria-label={`Move rung ${i + 1} down`}>↓</button>
-                        <button type="button" onClick={() => setLadder(ladder.filter((_, k) => k !== i))} className="px-1 text-slate-400 hover:text-red-400" aria-label={`Remove rung ${i + 1}`}>✕</button>
+                        <button type="button" onClick={() => moveRung(i, -1)} disabled={i === 0} className="px-1 text-fg-muted hover:text-fg disabled:opacity-30" aria-label={`Move rung ${i + 1} up`}>↑</button>
+                        <button type="button" onClick={() => moveRung(i, 1)} disabled={i === ladder.length - 1} className="px-1 text-fg-muted hover:text-fg disabled:opacity-30" aria-label={`Move rung ${i + 1} down`}>↓</button>
+                        <button type="button" onClick={() => setLadder(ladder.filter((_, k) => k !== i))} className="px-1 text-fg-muted hover:text-danger" aria-label={`Remove rung ${i + 1}`}><Icon icon={X} size="sm" /></button>
                       </div>
                       {r.effort && rungProvider && rungEffortCap.support !== 'full' && (
-                        <p className="mt-1 ml-16 text-xs text-amber-400">⚠️ {rungEffortCap.note ?? `Effort is not supported for the ${rungProvider} provider — this setting will be ignored.`}</p>
+                        <p className="mt-1 ml-16 text-xs text-warning"><Icon icon={TriangleAlert} size="sm" className="inline -mt-0.5 mr-1" />{rungEffortCap.note ?? `Effort is not supported for the ${rungProvider} provider — this setting will be ignored.`}</p>
                       )}
                     </li>
                   )
@@ -257,35 +259,35 @@ export default function AgentConfigForm({
               type="button"
               onClick={() => setLadder([...ladder, { provider_config_id: form.provider_config_id, effort: '' }])}
               disabled={!form.provider_config_id || ladder.length >= 10}
-              className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-40"
+              className="text-xs text-accent-fg hover:text-accent-fg disabled:opacity-40"
             >
               Add rung
             </button>
           </div>
 
-          <div className="mt-4 border-t border-slate-700 pt-3">
-            <p className="text-sm font-medium text-slate-200">Skills</p>
-            <p className="text-xs text-slate-500 mb-2">
+          <div className="mt-4 border-t border-border pt-3">
+            <p className="text-sm font-medium text-fg">Skills</p>
+            <p className="text-xs text-fg-subtle mb-2">
               Enabled skills attached here, plus the repo's skills, are copied into the worktree at run start.
             </p>
             <SkillPicker skills={skills ?? []} selected={skillIds ?? []} onChange={(ids) => onSkillIdsChange?.(ids)} />
             {providerStr && skillsCap.support !== 'full' && (
-              <p className="mt-1 text-xs text-amber-400">
-                ⚠️ {skillsCap.note ?? `The ${providerStr} provider has no skills support — attached skills won't be copied for this agent.`}
+              <p className="mt-1 text-xs text-warning">
+                <Icon icon={TriangleAlert} size="sm" className="inline -mt-0.5 mr-1" />{skillsCap.note ?? `The ${providerStr} provider has no skills support — attached skills won't be copied for this agent.`}
               </p>
             )}
           </div>
         </details>
 
         {listGaps.length > 0 && (
-          <div role="alert" className="sm:col-span-2 px-3 py-2 rounded border border-amber-700/50 bg-amber-950/30 text-xs text-amber-300">
-            <p className="mb-1">⚠️ Some of this agent's settings won't fully apply when a task falls back to:</p>
+          <div role="alert" className="sm:col-span-2 px-3 py-2 rounded border border-amber-700/50 bg-amber-950/30 text-xs text-warning">
+            <p className="mb-1"><Icon icon={TriangleAlert} size="sm" className="inline -mt-0.5 mr-1" />Some of this agent's settings won't fully apply when a task falls back to:</p>
             <ul className="list-disc pl-5 space-y-0.5">
               {listGaps.map((g) => (
                 <li key={`${g.provider}:${g.setting}`}>
                   <span className="font-mono">{g.provider}</span>: {g.setting}{' '}
                   {g.support === 'none' ? 'is not supported' : 'is only partly supported'}
-                  {g.note ? <span className="text-amber-400/80"> — {g.note}</span> : null}
+                  {g.note ? <span className="text-warning/80"> — {g.note}</span> : null}
                 </li>
               ))}
             </ul>
@@ -342,8 +344,8 @@ export default function AgentConfigForm({
             max={200}
           />
           {form.max_turns > 0 && providerStr && maxTurnsCap.support !== 'full' && (
-            <p className="mt-1 text-xs text-amber-400">
-              ⚠️ {maxTurnsCap.note ?? `Max turns is not enforced for the ${providerStr} provider.`}
+            <p className="mt-1 text-xs text-warning">
+              <Icon icon={TriangleAlert} size="sm" className="inline -mt-0.5 mr-1" />{maxTurnsCap.note ?? `Max turns is not enforced for the ${providerStr} provider.`}
             </p>
           )}
         </Field>
@@ -362,8 +364,8 @@ export default function AgentConfigForm({
             <option value="max">Max</option>
           </select>
           {form.effort && providerStr && effortCap.support !== 'full' && (
-            <p className="mt-1 text-xs text-amber-400">
-              ⚠️ {effortCap.note ?? `Effort is not supported for the ${providerStr} provider — this setting will be ignored.`}
+            <p className="mt-1 text-xs text-warning">
+              <Icon icon={TriangleAlert} size="sm" className="inline -mt-0.5 mr-1" />{effortCap.note ?? `Effort is not supported for the ${providerStr} provider — this setting will be ignored.`}
             </p>
           )}
         </Field>
@@ -382,22 +384,22 @@ export default function AgentConfigForm({
               <option value="bypassPermissions">bypassPermissions — skip approval prompts entirely</option>
             </select>
             {form.permission_mode === 'auto' && (
-              <p className="mt-1 text-xs text-amber-400">
-                ⚠️ This mode depends on a cloud safety classifier, which can transiently deny harmless commands
+              <p className="mt-1 text-xs text-warning">
+                <Icon icon={TriangleAlert} size="sm" className="inline -mt-0.5 mr-1" />This mode depends on a cloud safety classifier, which can transiently deny harmless commands
                 when the classifier is unavailable.
               </p>
             )}
             {form.permission_mode === 'bypassPermissions' && (
-              <p className="mt-1 text-xs text-amber-400">
-                ⚠️ This mode skips approval prompts entirely for this agent&apos;s runs.
+              <p className="mt-1 text-xs text-warning">
+                <Icon icon={TriangleAlert} size="sm" className="inline -mt-0.5 mr-1" />This mode skips approval prompts entirely for this agent&apos;s runs.
                 {(() => { try { return JSON.parse(form.command_denylist ?? '[]').length > 0 } catch { return false } })() && (
                   <> Your command_denylist is still enforced under this mode (verified empirically) — it is not bypassed.</>
                 )}
               </p>
             )}
             {form.permission_mode && providerStr && permissionModeCap.support !== 'full' && (
-              <p className="mt-1 text-xs text-amber-400">
-                ⚠️ {permissionModeCap.note ?? `Permission mode is not supported for the ${providerStr} provider — this setting will be ignored.`}
+              <p className="mt-1 text-xs text-warning">
+                <Icon icon={TriangleAlert} size="sm" className="inline -mt-0.5 mr-1" />{permissionModeCap.note ?? `Permission mode is not supported for the ${providerStr} provider — this setting will be ignored.`}
               </p>
             )}
           </Field>
@@ -444,19 +446,19 @@ export default function AgentConfigForm({
             min={0}
           />
           {form.max_cost_usd > 0 && providerStr && costTrackingCap.support !== 'full' && (
-            <p className="mt-1 text-xs text-amber-400">
-              ⚠️ {costTrackingCap.note ?? `Cost is not reliably tracked for the ${providerStr} provider — this budget cap may not fire.`}
+            <p className="mt-1 text-xs text-warning">
+              <Icon icon={TriangleAlert} size="sm" className="inline -mt-0.5 mr-1" />{costTrackingCap.note ?? `Cost is not reliably tracked for the ${providerStr} provider — this budget cap may not fire.`}
             </p>
           )}
           {form.max_cost_usd > 0 && providerStr && costTrackingCap.support === 'full' && costWatchdogCap.support !== 'full' && (
-            <p className="mt-1 text-xs text-amber-400">
-              ⚠️ {costWatchdogCap.note ?? `No mid-run cost kill switch for the ${providerStr} provider — this budget cap only prevents the next dispatch, not an in-flight run.`}
+            <p className="mt-1 text-xs text-warning">
+              <Icon icon={TriangleAlert} size="sm" className="inline -mt-0.5 mr-1" />{costWatchdogCap.note ?? `No mid-run cost kill switch for the ${providerStr} provider — this budget cap only prevents the next dispatch, not an in-flight run.`}
             </p>
           )}
         </Field>
 
         <Field label="Resume sessions" hint="Claude provider only: re-runs on the same task continue the previous run's session (full prior context) instead of starting cold. Turn off for stages that should review with fresh eyes.">
-          <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+          <label className="flex items-center gap-2 text-sm text-fg-muted cursor-pointer">
             <input
               type="checkbox"
               checked={form.resume_sessions ?? true}
@@ -465,8 +467,8 @@ export default function AgentConfigForm({
             Resume previous session on re-runs
           </label>
           {(form.resume_sessions ?? true) && providerStr && sessionResumeCap.support !== 'full' && (
-            <p className="mt-1 text-xs text-amber-400">
-              ⚠️ {sessionResumeCap.note
+            <p className="mt-1 text-xs text-warning">
+              <Icon icon={TriangleAlert} size="sm" className="inline -mt-0.5 mr-1" />{sessionResumeCap.note
                 ? `Session resume is not fully supported for the ${providerStr} provider: ${sessionResumeCap.note}`
                 : `Session resume is not supported for the ${providerStr} provider.`}
             </p>
@@ -474,7 +476,7 @@ export default function AgentConfigForm({
         </Field>
 
         <Field label="Subtasks" hint="claude/qwen_code/codex_cli only: expose the create_subtask tool so this agent (typically the planner) can decompose its task into child tasks. Children branch off the parent's branch and merge back automatically. Off by default.">
-          <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+          <label className="flex items-center gap-2 text-sm text-fg-muted cursor-pointer">
             <input
               type="checkbox"
               checked={form.subtasks_enabled ?? false}
@@ -483,19 +485,19 @@ export default function AgentConfigForm({
             Allow this agent to create subtasks
           </label>
           {form.subtasks_enabled && providerStr && subtasksCap.support !== 'full' && (
-            <p className="mt-1 text-xs text-amber-400">
-              ⚠️ Subtasks require the create_subtask MCP tool, not available on the {providerStr} provider.
+            <p className="mt-1 text-xs text-warning">
+              <Icon icon={TriangleAlert} size="sm" className="inline -mt-0.5 mr-1" />Subtasks require the create_subtask MCP tool, not available on the {providerStr} provider.
             </p>
           )}
           {form.subtasks_enabled && (
-            <label className="flex items-center gap-2 text-xs text-slate-400 mt-2">
+            <label className="flex items-center gap-2 text-xs text-fg-muted mt-2">
               Max subtasks per task
               <input
                 type="number"
                 min={1}
                 value={form.max_subtasks ?? 10}
                 onChange={(e) => setForm((f) => ({ ...f, max_subtasks: Number(e.target.value) }))}
-                className="w-20 bg-slate-800 border border-slate-600 rounded px-2 py-1 text-slate-100"
+                className="w-20 bg-surface-sunken border border-border rounded px-2 py-1 text-fg"
               />
             </label>
           )}
@@ -511,7 +513,7 @@ export default function AgentConfigForm({
           />
         ) : providerStr && mcpCap.support !== 'full' ? (
           <Field label="Plugins / MCP servers" className="sm:col-span-2">
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-fg-subtle">
               MCP servers / plugins are not supported by the {providerStr} provider.
             </p>
           </Field>
@@ -528,13 +530,13 @@ export default function AgentConfigForm({
 
       {selected && setNote && (
         <div className="mt-6">
-          <label className="block text-xs text-slate-400 mb-1" htmlFor="agent-change-note">Change note (optional)</label>
+          <label className="block text-xs text-fg-muted mb-1" htmlFor="agent-change-note">Change note (optional)</label>
           <input
             id="agent-change-note"
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder="What changed and why? Recorded in History"
-            className="w-full rounded bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-slate-200"
+            className="w-full rounded bg-surface-raised border border-border px-3 py-2 text-sm text-fg"
           />
         </div>
       )}
@@ -543,7 +545,7 @@ export default function AgentConfigForm({
         <button
           onClick={onSave}
           disabled={saving || !form.name.trim() || !form.provider_config_id}
-          className="px-5 py-2 text-sm font-medium rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
+          className="px-5 py-2 text-sm font-medium rounded bg-accent hover:bg-accent/90 text-on-accent disabled:opacity-50"
         >
           {saving ? 'Saving…' : selected ? 'Update' : 'Create'}
         </button>
@@ -551,7 +553,7 @@ export default function AgentConfigForm({
           <button
             onClick={onDelete}
             disabled={deleting}
-            className="px-5 py-2 text-sm font-medium rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-50"
+            className="px-5 py-2 text-sm font-medium rounded bg-danger-solid hover:bg-danger-solid/90 text-on-accent disabled:opacity-50"
           >
             {deleting ? 'Deleting…' : 'Delete'}
           </button>

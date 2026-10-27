@@ -1,3 +1,5 @@
+import { Check, Circle, X } from 'lucide-react'
+import Icon from './ui/Icon'
 import { humanizeLabelName } from '../lib/labelDisplay'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -99,42 +101,43 @@ export default function DependenciesPanel({
   const blocking = deps?.blocking ?? []
 
   return (
-    <div className="border-t border-slate-800 pt-3">
-      <p className="text-xs text-slate-500 mb-2">Dependencies</p>
+    <div className="border-t border-border pt-3">
+      <p className="text-xs text-fg-subtle mb-2">Dependencies</p>
 
       {/* Blockers */}
       <div className="mb-3">
-        <p className="text-[11px] uppercase tracking-wide text-slate-600 mb-1">Blocked by</p>
+        <p className="text-[11px] uppercase tracking-wide text-fg-subtle mb-1">Blocked by</p>
         {blockedBy.length === 0 ? (
-          <p className="text-xs text-slate-600">No blockers — nothing is gating this task.</p>
+          <p className="text-xs text-fg-subtle">No blockers — nothing is gating this task.</p>
         ) : (
           <ul className="flex flex-col gap-1">
             {blockedBy.map((b) => (
               <li
                 key={b.task_id}
-                className="flex items-center gap-2 text-xs bg-slate-800 rounded px-2 py-1"
+                className="flex items-center gap-2 text-xs bg-surface-sunken rounded px-2 py-1"
               >
                 <span
                   title={b.satisfied ? 'Satisfied' : 'Waiting — blocker not yet terminal'}
-                  className={b.satisfied ? 'text-emerald-400' : 'text-amber-400'}
+                  className={b.satisfied ? 'text-success' : 'text-warning'}
                 >
-                  {b.satisfied ? '✓' : '○'}
+                  <Icon icon={b.satisfied ? Check : Circle} size="sm" />
                 </span>
                 <button
                   onClick={() => navigate(`/tasks/${b.task_id}`)}
-                  className="text-slate-300 hover:text-indigo-300 truncate text-left flex-1"
+                  className="text-fg-muted hover:text-accent-fg truncate text-left flex-1"
                   title={b.title}
                 >
                   {b.title}
                 </button>
-                <span className="text-slate-500 shrink-0">{humanizeLabelName(b.label)}</span>
+                <span className="text-fg-subtle shrink-0">{humanizeLabelName(b.label)}</span>
                 <button
                   onClick={() => remove(b.task_id)}
                   disabled={busy}
-                  className="text-slate-600 hover:text-red-400 disabled:opacity-50 shrink-0"
+                  className="text-fg-subtle hover:text-danger disabled:opacity-50 shrink-0"
                   title="Remove dependency"
+                  aria-label="Remove dependency"
                 >
-                  ✕
+                  <Icon icon={X} size="sm" />
                 </button>
               </li>
             ))}
@@ -148,7 +151,7 @@ export default function DependenciesPanel({
             onFocus={loadCandidates}
             onClick={loadCandidates}
             onChange={(e) => setSelected(e.target.value)}
-            className="flex-1 text-xs bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200 focus:outline-none focus:border-indigo-400"
+            className="flex-1 text-xs bg-surface-sunken border border-border rounded px-2 py-1 text-fg focus:outline-none focus:border-indigo-400"
           >
             <option value="">Add a blocker…</option>
             {options.map((o) => (
@@ -160,32 +163,32 @@ export default function DependenciesPanel({
           <button
             onClick={add}
             disabled={busy || !selected}
-            className="text-xs px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
+            className="text-xs px-2 py-1 rounded bg-accent hover:bg-accent/90 text-on-accent disabled:opacity-50"
           >
             Add
           </button>
         </div>
-        {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
+        {error && <p className="text-xs text-danger mt-1">{error}</p>}
       </div>
 
       {/* Dependents */}
       {blocking.length > 0 && (
         <div>
-          <p className="text-[11px] uppercase tracking-wide text-slate-600 mb-1">Blocking</p>
+          <p className="text-[11px] uppercase tracking-wide text-fg-subtle mb-1">Blocking</p>
           <ul className="flex flex-col gap-1">
             {blocking.map((d) => (
               <li
                 key={d.task_id}
-                className="flex items-center gap-2 text-xs bg-slate-800 rounded px-2 py-1"
+                className="flex items-center gap-2 text-xs bg-surface-sunken rounded px-2 py-1"
               >
                 <button
                   onClick={() => navigate(`/tasks/${d.task_id}`)}
-                  className="text-slate-300 hover:text-indigo-300 truncate text-left flex-1"
+                  className="text-fg-muted hover:text-accent-fg truncate text-left flex-1"
                   title={d.title}
                 >
                   {d.title}
                 </button>
-                <span className="text-slate-500 shrink-0">{humanizeLabelName(d.label)}</span>
+                <span className="text-fg-subtle shrink-0">{humanizeLabelName(d.label)}</span>
               </li>
             ))}
           </ul>

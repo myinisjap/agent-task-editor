@@ -1,3 +1,5 @@
+import { X } from 'lucide-react'
+import Icon from '../ui/Icon'
 import { useEffect, useRef } from 'react'
 
 /** Minimal auto-dismissing toast, fixed above the mobile bottom tab bar. */
@@ -21,11 +23,11 @@ export default function Toast({
     <div
       role="status"
       aria-live="polite"
-      className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-50 max-w-[90vw] flex items-center gap-3 rounded-lg bg-emerald-900 border border-emerald-700 text-emerald-100 text-sm px-4 py-2 shadow-lg"
+      className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-50 max-w-[90vw] flex items-center gap-3 rounded-lg bg-success-soft border border-success/40 text-success text-sm px-4 py-2 shadow-lg"
     >
       <span className="break-words">{message}</span>
-      <button onClick={onDismiss} aria-label="Dismiss" className="text-emerald-300 hover:text-emerald-50">
-        ×
+      <button onClick={onDismiss} aria-label="Dismiss" className="text-success hover:text-fg">
+        <Icon icon={X} size="sm" />
       </button>
     </div>
   )

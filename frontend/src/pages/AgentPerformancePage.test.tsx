@@ -104,6 +104,13 @@ beforeEach(() => {
 })
 
 describe('AgentPerformancePage', () => {
+  it('puts column definitions in header title hints', async () => {
+    render(<AgentPerformancePage />)
+    await waitFor(() => expect(screen.getAllByText('worker').length).toBeGreaterThan(0))
+    expect(screen.getByText('Rework rate')).toHaveAttribute('title', expect.stringContaining('bounce-back'))
+    expect(screen.getByText('Retries')).toHaveAttribute('title', expect.stringContaining('retry counter'))
+  })
+
   it('renders outcome-quality metrics ahead of the legacy success-rate table', async () => {
     render(<AgentPerformancePage />)
 

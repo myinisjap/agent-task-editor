@@ -1,3 +1,5 @@
+import { Check, Circle } from 'lucide-react'
+import Icon from '../ui/Icon'
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useHealthStore } from '../../stores/health'
@@ -112,12 +114,12 @@ export default function OnboardingChecklist() {
   const firstIncompleteKey = steps.find((s) => !s.complete)?.key
 
   return (
-    <div className="mb-4 border border-slate-700 bg-slate-800/60 rounded-lg p-4">
+    <div className="mb-4 border border-border bg-surface-sunken/60 rounded-lg p-4">
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-semibold text-slate-200">Get started</h2>
+        <h2 className="text-sm font-semibold text-fg">Get started</h2>
         <button
           onClick={dismiss}
-          className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+          className="text-xs text-fg-subtle hover:text-fg-muted transition-colors"
         >
           Dismiss
         </button>
@@ -128,14 +130,14 @@ export default function OnboardingChecklist() {
           return (
             <li key={step.key} className="text-sm">
               <div className="flex items-center gap-2">
-                <span className={step.complete ? 'text-green-400' : 'text-slate-600'}>
-                  {step.complete ? '✓' : '○'}
+                <span className={step.complete ? 'text-green-400' : 'text-fg-subtle'}>
+                  <Icon icon={step.complete ? Check : Circle} size="sm" />
                 </span>
-                <span className={step.complete ? 'text-slate-500 line-through' : isNext ? 'text-slate-100 font-medium' : 'text-slate-300'}>
+                <span className={step.complete ? 'text-fg-subtle line-through' : isNext ? 'text-fg font-medium' : 'text-fg-muted'}>
                   {step.label}
                 </span>
                 {!step.complete && (
-                  <Link to={step.to} className="text-xs text-indigo-400 hover:text-indigo-300">
+                  <Link to={step.to} className="text-xs text-accent-fg hover:text-accent-fg">
                     {step.linkLabel}
                   </Link>
                 )}
@@ -148,9 +150,9 @@ export default function OnboardingChecklist() {
         })}
       </ul>
       {issueCount > 0 && (
-        <p data-testid="onboarding-health-summary" className="mt-3 text-xs text-slate-400">
+        <p data-testid="onboarding-health-summary" className="mt-3 text-xs text-fg-muted">
           {issueCount} setup {issueCount === 1 ? 'issue' : 'issues'} ·{' '}
-          <Link to="/settings/health" className="text-indigo-400 hover:text-indigo-300 underline">
+          <Link to="/settings/health" className="text-accent-fg hover:text-accent-fg underline">
             View health
           </Link>
         </p>

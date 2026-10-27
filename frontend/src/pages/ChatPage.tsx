@@ -1,3 +1,5 @@
+import { X } from 'lucide-react'
+import { Button, Icon, controlClasses } from '../components/ui'
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Terminal } from '@xterm/xterm'
@@ -78,17 +80,17 @@ export default function ChatPage() {
           Mobile: full width, hidden once a chat is open. Desktop: fixed rail. */}
       <div
         data-testid="chat-sidebar"
-        className={`${active ? 'hidden md:flex' : 'flex'} w-full md:w-64 shrink-0 border-r border-slate-800 flex-col min-h-0 bg-slate-900`}
+        className={`${active ? 'hidden md:flex' : 'flex'} w-full md:w-64 shrink-0 border-r border-border flex-col min-h-0 bg-surface-raised`}
       >
-        <div className="p-3 border-b border-slate-800 space-y-2">
+        <div className="p-3 border-b border-border space-y-2">
           <div className="flex items-center justify-between">
-            <div className="text-slate-200 font-semibold text-sm">New terminal</div>
+            <div className="text-fg font-semibold text-sm">New terminal</div>
             <HelpButton onClick={() => setShowHelp(true)} title="About Chat" />
           </div>
           <select
             value={newRepo}
             onChange={(e) => setNewRepo(e.target.value)}
-            className="w-full text-base md:text-xs rounded bg-slate-800 border-slate-700 text-slate-200 px-2 py-2 md:py-1"
+            className={`${controlClasses} !text-base md:!text-xs !px-2 !py-2 md:!py-1`}
           >
             {repos.length === 0 && <option value="">No repos configured</option>}
             {repos.map((r) => (
@@ -98,7 +100,7 @@ export default function ChatPage() {
           <select
             value={newProviderConfigId}
             onChange={(e) => setNewProviderConfigId(e.target.value)}
-            className="w-full text-base md:text-xs rounded bg-slate-800 border-slate-700 text-slate-200 px-2 py-2 md:py-1"
+            className={`${controlClasses} !text-base md:!text-xs !px-2 !py-2 md:!py-1`}
           >
             {providerConfigs.length === 0 && <option value="">No provider configs</option>}
             {providerConfigs.map((pc) => (
@@ -106,17 +108,19 @@ export default function ChatPage() {
             ))}
           </select>
           {providerConfigs.length === 0 && (
-            <p className="text-[11px] text-slate-500">
-              <Link to="/settings/providers" className="text-indigo-400 hover:text-indigo-300">Create a provider config →</Link> before starting a terminal.
+            <p className="text-[11px] text-fg-subtle">
+              <Link to="/settings/providers" className="text-accent-fg hover:underline">Create a provider config →</Link> before starting a terminal.
             </p>
           )}
-          <button
+          <Button
+            variant="primary"
+            size="sm"
+            className="w-full"
             onClick={createSession}
             disabled={!newRepo || !newProviderConfigId}
-            className="w-full text-xs px-2 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
           >
             Start terminal
-          </button>
+          </Button>
         </div>
         <div className="flex-1 overflow-y-auto">
           {sessions.map((s) => {
@@ -126,26 +130,26 @@ export default function ChatPage() {
               <div
                 key={s.id}
                 onClick={() => setActiveId(s.id)}
-                className={`group px-3 py-3 md:py-2 cursor-pointer border-b border-slate-800/50 flex items-start justify-between gap-2 ${
-                  s.id === activeId ? 'bg-slate-800' : 'hover:bg-slate-800/50'
+                className={`group px-3 py-3 md:py-2 cursor-pointer border-b border-border/50 flex items-start justify-between gap-2 ${
+                  s.id === activeId ? 'bg-surface-sunken' : 'hover:bg-surface-sunken/50'
                 }`}
               >
                 <div className="min-w-0">
-                  <div className="text-slate-200 text-xs truncate">{s.title || repo?.name || 'Chat'}</div>
-                  <div className="text-slate-500 text-[11px] truncate">{pc?.provider ?? ''}{repo ? ` · ${repo.name}` : ''}</div>
+                  <div className="text-fg text-xs truncate">{s.title || repo?.name || 'Chat'}</div>
+                  <div className="text-fg-subtle text-[11px] truncate">{pc?.provider ?? ''}{repo ? ` · ${repo.name}` : ''}</div>
                 </div>
                 <button
                   onClick={(e) => { e.stopPropagation(); deleteSession(s.id) }}
                   aria-label="Delete chat"
-                  className="opacity-100 md:opacity-0 md:group-hover:opacity-100 text-slate-500 hover:text-red-400 text-sm px-1"
+                  className="opacity-100 md:opacity-0 md:group-hover:opacity-100 text-fg-subtle hover:text-danger text-sm px-1"
                 >
-                  ✕
+                  <Icon icon={X} size="md" />
                 </button>
               </div>
             )
           })}
           {sessions.length === 0 && (
-            <p className="text-slate-600 text-xs px-3 py-3">No terminals yet</p>
+            <p className="text-fg-subtle text-xs px-3 py-3">No terminals yet</p>
           )}
         </div>
       </div>
@@ -154,11 +158,11 @@ export default function ChatPage() {
       <div className={`${active ? 'flex' : 'hidden md:flex'} flex-1 flex-col min-w-0 min-h-0`}>
         {active ? (
           <>
-            <div className="px-4 py-2 border-b border-slate-800 text-slate-400 text-xs flex items-center gap-2">
+            <div className="px-4 py-2 border-b border-border text-fg-muted text-xs flex items-center gap-2">
               <button
                 onClick={() => setActiveId(null)}
                 aria-label="Back to chats"
-                className="md:hidden text-slate-400 hover:text-slate-100 -ml-1 pr-1"
+                className="md:hidden text-fg-muted hover:text-fg -ml-1 pr-1"
               >
                 ‹ Chats
               </button>
@@ -172,7 +176,7 @@ export default function ChatPage() {
                   onClick={() => changeFont(-1)}
                   disabled={fontSize <= MIN_FONT}
                   aria-label="Smaller text"
-                  className="px-2 py-0.5 rounded border border-slate-700 text-slate-300 disabled:opacity-40"
+                  className="px-2 py-0.5 rounded border border-border text-fg-muted disabled:opacity-40"
                 >
                   A−
                 </button>
@@ -181,7 +185,7 @@ export default function ChatPage() {
                   onClick={() => changeFont(1)}
                   disabled={fontSize >= MAX_FONT}
                   aria-label="Larger text"
-                  className="px-2 py-0.5 rounded border border-slate-700 text-slate-300 disabled:opacity-40"
+                  className="px-2 py-0.5 rounded border border-border text-fg-muted disabled:opacity-40"
                 >
                   A+
                 </button>
@@ -191,7 +195,7 @@ export default function ChatPage() {
             <TerminalView key={active.id} sessionId={active.id} fontSize={fontSize} />
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-slate-600 text-sm">
+          <div className="flex-1 flex items-center justify-center text-fg-subtle text-sm">
             Select a terminal or start a new one.
           </div>
         )}
@@ -486,12 +490,12 @@ function TerminalView({ sessionId, fontSize }: { sessionId: string; fontSize: nu
   return (
     <>
       <div className="relative flex-1 min-h-0 flex flex-col">
-        <div ref={containerRef} className="flex-1 min-h-0 bg-slate-900 p-4 touch-none md:touch-manipulation" />
+        <div ref={containerRef} className="flex-1 min-h-0 bg-surface-raised p-4 touch-none md:touch-manipulation" />
         {showJump && (
           <button
             type="button"
             onClick={() => scrollToBottomRef.current()}
-            className="absolute bottom-3 right-3 px-3 py-1.5 rounded-full bg-indigo-600 text-white text-xs shadow-lg"
+            className="absolute bottom-3 right-3 px-3 py-1.5 rounded-full bg-accent text-on-accent text-xs shadow-lg"
           >
             Jump to latest ↓
           </button>

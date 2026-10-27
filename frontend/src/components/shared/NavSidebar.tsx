@@ -1,3 +1,5 @@
+import type { LucideIcon } from 'lucide-react'
+import { Bell, BellOff, ChartColumn, ChevronRight, CircleDollarSign, FolderGit2, Inbox, LayoutDashboard, MessageSquare, Moon, Settings, SquareKanban, Sun, Workflow, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { useThemeStore } from '../../stores/theme'
@@ -11,25 +13,25 @@ import { useInboxSync } from '../../lib/useInboxSync'
 import { useInboxCount } from '../../stores/inbox'
 import { useCommandPaletteStore } from '../../stores/commandPalette'
 import { shortcutHint, shortcutKeys, formatKeys, isMacPlatform } from '../../lib/shortcuts'
-import { Badge, Button } from '../ui'
+import { Badge, Button, Icon } from '../ui'
 
 interface NavGroup {
   key: string
   label: string
-  links: { to: string; label: string; end?: boolean }[]
+  links: { to: string; label: string; icon: LucideIcon; end?: boolean }[]
 }
 
 // Primary destinations, always visible. Workflow + Agents live under Pipeline;
 // Providers, Pricing, Intake Rules, Templates and Health live under Settings
 // (as URL-backed tabs). The Overview dashboard stays reachable but is
 // deliberately demoted into the collapsible Insights group.
-const inboxLink = { to: '/inbox', label: 'Inbox' }
+const inboxLink = { to: '/inbox', label: 'Inbox', icon: Inbox }
 const primaryLinks = [
-  { to: '/board', label: 'Board' },
-  { to: '/chat', label: 'Chat' },
-  { to: '/pipeline', label: 'Pipeline' },
-  { to: '/repos', label: 'Repos' },
-  { to: '/settings', label: 'Settings' },
+  { to: '/board', label: 'Board', icon: SquareKanban },
+  { to: '/chat', label: 'Chat', icon: MessageSquare },
+  { to: '/pipeline', label: 'Pipeline', icon: Workflow },
+  { to: '/repos', label: 'Repos', icon: FolderGit2 },
+  { to: '/settings', label: 'Settings', icon: Settings },
 ]
 
 const NAV_SHORTCUT: Record<string, string> = { '/board': 'go-board', '/pipeline': 'go-pipeline', '/settings': 'go-settings' }
@@ -39,9 +41,9 @@ const groups: NavGroup[] = [
     key: 'insights',
     label: 'Insights',
     links: [
-      { to: '/dashboard', label: 'Overview', end: true },
-      { to: '/dashboard/usage', label: 'Cost & Usage' },
-      { to: '/dashboard/performance', label: 'Performance' },
+      { to: '/dashboard', label: 'Overview', icon: LayoutDashboard, end: true },
+      { to: '/dashboard/usage', label: 'Cost & Usage', icon: CircleDollarSign },
+      { to: '/dashboard/performance', label: 'Performance', icon: ChartColumn },
     ],
   },
 ]
@@ -141,7 +143,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
   }
 
   const linkClassName = ({ isActive }: { isActive: boolean }) =>
-    `px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+    `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
       isActive
         ? 'bg-surface-sunken text-fg'
         : 'text-fg-muted hover:text-fg hover:bg-surface-sunken'
@@ -174,7 +176,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
             aria-label="Close menu"
             className="md:hidden text-fg-muted hover:text-fg p-1 rounded"
           >
-            ✕
+            <Icon icon={X} size="md" />
           </button>
         </div>
 
@@ -196,6 +198,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
             onClick={() => setIsOpen(false)}
             className={linkClassName}
           >
+            <Icon icon={inboxLink.icon} size="md" />
             {inboxLink.label}
             {inboxCount > 0 && (
               <Badge
@@ -211,7 +214,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
             )}
           </NavLink>
 
-          {primaryLinks.map(({ to, label }) => (
+          {primaryLinks.map(({ to, label, icon }) => (
             <NavLink
               key={to}
               to={to}
@@ -219,6 +222,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
               onClick={() => setIsOpen(false)}
               className={linkClassName}
             >
+              <Icon icon={icon} size="md" />
               {label}
               {to === '/settings' && healthSeverity && (
                 <span
@@ -249,16 +253,11 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
                   <span>
                     {group.label}
                   </span>
-                  <span
-                    aria-hidden="true"
-                    className={`transition-transform duration-150 ${isGroupOpen ? 'rotate-90' : ''}`}
-                  >
-                    ▸
-                  </span>
+                  <Icon icon={ChevronRight} size="sm" className={`transition-transform duration-150 ${isGroupOpen ? 'rotate-90' : ''}`} />
                 </button>
                 {isGroupOpen && (
                   <div id={panelId} className="flex flex-col gap-1 pl-1">
-                    {group.links.map(({ to, label, end }) => (
+                    {group.links.map(({ to, label, icon, end }) => (
                       <NavLink
                         key={to}
                         to={to}
@@ -266,6 +265,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
                         onClick={() => setIsOpen(false)}
                         className={linkClassName}
                       >
+                        <Icon icon={icon} size="md" />
                         {label}
                       </NavLink>
                     ))}
@@ -292,7 +292,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
             title={NOTIFICATIONS_UNAVAILABLE[notificationsUnavailable].title}
             className="mt-auto flex items-center gap-2 px-3 py-2 text-sm font-medium text-fg-subtle shrink-0"
           >
-            <span aria-hidden="true">🔕</span>
+            <Icon icon={BellOff} size="md" />
             <span>{NOTIFICATIONS_UNAVAILABLE[notificationsUnavailable].label}</span>
           </div>
         ) : notificationsPermission === 'denied' ? (
@@ -321,7 +321,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
               aria-controls="notifications-blocked-help"
               className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-warning hover:bg-surface-sunken transition-colors"
             >
-              <span aria-hidden="true">🔕</span>
+              <Icon icon={BellOff} size="md" />
               <span>Notifications blocked</span>
               <span className="text-xs underline">How to fix</span>
             </button>
@@ -333,7 +333,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
             title={notificationsEnabled ? 'Disable notifications' : 'Get notified in your browser when a task needs a human'}
             className="mt-auto flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-fg-muted hover:text-fg hover:bg-surface-sunken transition-colors shrink-0"
           >
-            <span aria-hidden="true">{notificationsEnabled ? '🔔' : '🔕'}</span>
+            <Icon icon={notificationsEnabled ? Bell : BellOff} size="md" />
             <span>
               {notificationsEnabled ? 'Notifications on' : 'Enable notifications'}
             </span>
@@ -346,7 +346,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
           title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
           className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-fg-muted hover:text-fg hover:bg-surface-sunken transition-colors shrink-0"
         >
-          <span aria-hidden="true">{theme === 'dark' ? '☀️' : '🌙'}</span>
+          <Icon icon={theme === 'dark' ? Sun : Moon} size="md" />
           <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
         </button>
       </aside>

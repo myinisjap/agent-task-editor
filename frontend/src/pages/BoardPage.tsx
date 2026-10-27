@@ -1,3 +1,4 @@
+import { Archive, ArchiveRestore, Layers, LayoutGrid, Pause, Play, Rows3 } from 'lucide-react'
 import { labelDisplayName } from '../lib/labelDisplay'
 import { useAgentsStore } from '../stores/agents'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -11,7 +12,7 @@ import OnboardingChecklist from '../components/board/OnboardingChecklist'
 import { api, type BulkAction, type Task, type TaskCost } from '../api/client'
 import { wsClient } from '../api/ws'
 import HelpModal from '../components/shared/HelpModal'
-import HelpButton from '../components/shared/HelpButton'
+import { Button, Icon, PageFrame } from '../components/ui'
 import { BoardHelp } from '../components/shared/pageHelp'
 import { useDebouncedCallback } from '../lib/useDebouncedCallback'
 import { useIsMobile } from '../lib/useIsMobile'
@@ -414,16 +415,20 @@ export default function BoardPage() {
     }
   }
 
-  const selectCls = 'bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer'
+  const selectCls = 'bg-surface-sunken border border-border rounded px-2 py-1 text-xs text-fg-muted focus:outline-none focus:ring-1 focus:ring-accent cursor-pointer'
 
   return (
-    <div className="p-6 h-full flex flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-4">
-        <h1 className="text-xl font-semibold text-slate-100">Board</h1>
+    <PageFrame
+      title="Board"
+      width="full"
+      fill
+      headerClassName="mb-4"
+      help={{ onClick: () => setShowHelp(true), title: 'About the board' }}
+      actions={
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           {workflows.length > 0 && (
             <div className="flex items-center gap-1.5">
-              <span className="text-xs text-slate-500 whitespace-nowrap">Workflow:</span>
+              <span className="text-xs text-fg-subtle whitespace-nowrap">Workflow:</span>
               <select
                 value={workflow?.id ?? ''}
                 onChange={(e) => setSelectedId(e.target.value)}
@@ -437,37 +442,31 @@ export default function BoardPage() {
               </select>
             </div>
           )}
-          <button
+          <Button
+            size="sm"
             onClick={toggleCondensed}
+            aria-pressed={condensed}
             title={condensed ? 'Switch to expanded view' : 'Switch to condensed view'}
-            className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md border transition-colors ${
-              condensed
-                ? 'bg-indigo-600 border-indigo-500 text-indigo-100 hover:bg-indigo-600'
-                : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
-            }`}
+            className={condensed ? '!bg-accent/15 !border-accent !text-accent-fg' : ''}
           >
-            <span>{condensed ? '⊟' : '⊞'}</span>
-            <span>{condensed ? 'Expanded' : 'Condensed'}</span>
-          </button>
+            <Icon icon={condensed ? Rows3 : LayoutGrid} size="sm" />
+            {condensed ? 'Expanded' : 'Condensed'}
+          </Button>
           {!isMobile && (
-            <button
+            <Button
+              size="sm"
               onClick={() => setFilterParam('group', groupByRepo ? '' : 'repo')}
               aria-pressed={groupByRepo}
               title={groupByRepo ? 'Show a single board' : 'Group the board into one swimlane per repo'}
-              className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md border transition-colors ${
-                groupByRepo
-                  ? 'bg-indigo-600 border-indigo-500 text-indigo-100 hover:bg-indigo-600'
-                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
-              }`}
+              className={groupByRepo ? '!bg-accent/15 !border-accent !text-accent-fg' : ''}
             >
-              <span>☰</span>
-              <span>Group by repo</span>
-            </button>
+              <Icon icon={Layers} size="sm" />
+              Group by repo
+            </Button>
           )}
-          <HelpButton onClick={() => setShowHelp(true)} title="About the board" />
         </div>
-      </div>
-
+      }
+    >
       {showHelp && (
         <HelpModal title="About the Board" onClose={() => setShowHelp(false)}>
           <BoardHelp />
@@ -485,7 +484,7 @@ export default function BoardPage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search tasks…"
-          className="bg-slate-800 border border-slate-700 rounded px-2.5 py-1 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 w-48"
+          className="bg-surface-sunken border border-border rounded px-2.5 py-1 text-xs text-fg placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-accent w-48"
         />
         <select value={filterRepo} onChange={(e) => setFilterRepo(e.target.value)} className={selectCls}>
           <option value="">All repos</option>
@@ -505,28 +504,27 @@ export default function BoardPage() {
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
-        <button
+        <Button
+          size="sm"
           onClick={() => setShowArchived(!showArchived)}
-          className={`text-xs px-2.5 py-1 rounded border transition-colors ${
-            showArchived
-              ? 'bg-indigo-600 border-indigo-500 text-indigo-100 hover:bg-indigo-600'
-              : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
-          }`}
+          aria-pressed={showArchived}
+          className={showArchived ? '!bg-accent/15 !border-accent !text-accent-fg' : ''}
           title="Show archived tasks on the board"
         >
-          🗄 Archived
-        </button>
+          <Icon icon={Archive} size="sm" />
+          Archived
+        </Button>
         {hasFilters && (
           <button
             onClick={clearFilters}
-            className="text-xs px-2 py-1 text-slate-500 hover:text-slate-300 transition-colors"
+            className="text-xs px-2 py-1 text-fg-subtle hover:text-fg-muted transition-colors"
           >
             Clear filters
           </button>
         )}
         {filteredCost > 0 && (
           <span
-            className="text-xs px-2.5 py-1 rounded border border-slate-700 bg-slate-800 text-slate-300"
+            className="text-xs px-2.5 py-1 rounded border border-border bg-surface-sunken text-fg-muted"
             title="Sum of recorded run cost across the currently-visible (filtered) tasks"
           >
             Filtered cost: ${filteredCost.toFixed(2)}
@@ -536,8 +534,8 @@ export default function BoardPage() {
 
       {/* Bulk action toolbar — appears while cards are selected */}
       {selectedIds.size > 0 && (
-        <div className="flex flex-wrap items-center gap-2 mb-4 px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg">
-          <span className="text-xs font-medium text-slate-300">{selectedIds.size} selected</span>
+        <div className="flex flex-wrap items-center gap-2 mb-4 px-3 py-2 bg-surface-sunken/80 border border-border rounded-lg">
+          <span className="text-xs font-medium text-fg-muted">{selectedIds.size} selected</span>
           <select
             defaultValue=""
             disabled={bulkBusy}
@@ -554,20 +552,20 @@ export default function BoardPage() {
               <option key={l.id} value={l.name}>{labelDisplayName(l)}</option>
             ))}
           </select>
-          <button disabled={bulkBusy} onClick={() => runBulk('pause')} className="text-xs px-2.5 py-1 rounded border bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-500 disabled:opacity-50 transition-colors">⏸ Pause</button>
-          <button disabled={bulkBusy} onClick={() => runBulk('resume')} className="text-xs px-2.5 py-1 rounded border bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-500 disabled:opacity-50 transition-colors">▶ Resume</button>
-          <button disabled={bulkBusy} onClick={() => runBulk('archive')} className="text-xs px-2.5 py-1 rounded border bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-500 disabled:opacity-50 transition-colors">🗄 Archive</button>
+          <Button size="sm" disabled={bulkBusy} onClick={() => runBulk('pause')}><Icon icon={Pause} size="sm" />Pause</Button>
+          <Button size="sm" disabled={bulkBusy} onClick={() => runBulk('resume')}><Icon icon={Play} size="sm" />Resume</Button>
+          <Button size="sm" disabled={bulkBusy} onClick={() => runBulk('archive')}><Icon icon={Archive} size="sm" />Archive</Button>
           {showArchived && (
-            <button disabled={bulkBusy} onClick={() => runBulk('unarchive')} className="text-xs px-2.5 py-1 rounded border bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-500 disabled:opacity-50 transition-colors">↩ Unarchive</button>
+            <Button size="sm" disabled={bulkBusy} onClick={() => runBulk('unarchive')}><Icon icon={ArchiveRestore} size="sm" />Unarchive</Button>
           )}
           <button
             disabled={bulkBusy}
             onClick={() => { setSelectedIds(new Set()); setBulkError('') }}
-            className="text-xs px-2 py-1 text-slate-500 hover:text-slate-300 transition-colors ml-auto"
+            className="text-xs px-2 py-1 text-fg-subtle hover:text-fg-muted transition-colors ml-auto"
           >
             Clear selection
           </button>
-          {bulkError && <span className="text-xs text-red-400 w-full">{bulkError}</span>}
+          {bulkError && <span className="text-xs text-danger w-full">{bulkError}</span>}
         </div>
       )}
 
@@ -584,9 +582,9 @@ export default function BoardPage() {
       )}
 
       {loading ? (
-        <div className="text-slate-400 text-sm">Loading…</div>
+        <div className="text-fg-muted text-sm">Loading…</div>
       ) : labels.length === 0 ? (
-        <div className="text-slate-500 text-sm">
+        <div className="text-fg-subtle text-sm">
           No workflow configured. Add a repo and workflow first.
         </div>
       ) : (
@@ -609,6 +607,6 @@ export default function BoardPage() {
           />
         </div>
       )}
-    </div>
+    </PageFrame>
   )
 }
