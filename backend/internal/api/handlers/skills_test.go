@@ -179,6 +179,16 @@ func TestSkills_AttachToAgentAndRepo(t *testing.T) {
 		if w := e.do(t, "PUT", base, "application/json", b); w.Code != http.StatusBadRequest {
 			t.Errorf("unknown id: %d", w.Code)
 		}
+		w = e.do(t, "GET", "/skills", "", nil)
+		var all []map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &all)
+		key, want := "agent_config_ids", ac.ID
+		if strings.HasPrefix(base, "/repos/") {
+			key, want = "repo_ids", repoID
+		}
+		if ids, _ := all[0][key].([]any); len(ids) != 1 || ids[0] != want {
+			t.Errorf("GET /skills %s = %v", key, all[0][key])
+		}
 		// Detach by replacing with an empty set.
 		b, _ = json.Marshal(map[string]any{"skill_ids": []string{}})
 		e.do(t, "PUT", base, "application/json", b)

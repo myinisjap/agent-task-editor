@@ -60,3 +60,16 @@ checked against the CLI versions pinned in `backend/Dockerfile`:
 Capability support per provider is tracked in
 `frontend/src/lib/providerCapabilities.ts` (the "Skills library" row of the
 [agents.md](agents.md) matrix).
+
+## Managing skills in the UI
+
+- **Settings → Skills** (`/settings/skills`): lists every skill with its
+  description, an enabled toggle and where it is attached (agents and repos).
+  Add a skill by pasting a SKILL.md or uploading a zip (max 1 MB); **View**
+  shows SKILL.md and the file list; **Delete** asks for an in-page confirmation
+  and also detaches the skill. The "attached to" data comes from the
+  `agent_config_ids` / `repo_ids` fields on `GET /skills`.
+- **Pipeline → Agents → agent config → Advanced → Skills**: attach skills to one
+  agent. An amber note appears if the agent's provider has no skills support.
+- **Repos → Edit → Skills**: attach skills repo-wide (every run on that repo).
+  The create form has no picker; attach after creating the repo.

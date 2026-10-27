@@ -315,3 +315,41 @@ describe('AgentConfigForm escalation ladder', () => {
     expect(screen.getByLabelText('Remove rung 2')).toBeInTheDocument()
   })
 })
+
+describe('AgentConfigForm — Skills', () => {
+  const skill = { id: 's1', name: 'alpha', description: '', enabled: true, created_at: '', updated_at: '' }
+  const renderForm = (provider: string, onSkillIdsChange = vi.fn()) =>
+    render(
+      <MemoryRouter>
+        <AgentConfigForm
+          selected={null}
+          form={baseForm()}
+          setForm={vi.fn()}
+          availableLabels={[]}
+          providerConfigs={[providerConfig('pc-1', provider)]}
+          claudeOptions={null}
+          saving={false}
+          deleting={false}
+          onSave={vi.fn()}
+          onDelete={vi.fn()}
+          onToggleEnabled={vi.fn()}
+          skills={[skill]}
+          skillIds={[]}
+          onSkillIdsChange={onSkillIdsChange}
+        />
+      </MemoryRouter>,
+    )
+
+  it('renders the picker and reports changes', () => {
+    const onChange = vi.fn()
+    renderForm('claude', onChange)
+    fireEvent.click(screen.getByRole('button', { name: 'alpha' }))
+    expect(onChange).toHaveBeenCalledWith(['s1'])
+    expect(screen.queryByText(/no skills support/)).toBeNull()
+  })
+
+  it('warns when the provider lacks skills support', () => {
+    renderForm('anthropic')
+    expect(screen.getByText(/anthropic provider has no skills support/)).toBeInTheDocument()
+  })
+})

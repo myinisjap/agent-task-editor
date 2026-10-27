@@ -114,6 +114,33 @@ func (q *Queries) GetSkill(ctx context.Context, id string) (Skill, error) {
 	return i, err
 }
 
+const listAgentConfigSkillLinks = `-- name: ListAgentConfigSkillLinks :many
+SELECT agent_config_id, skill_id FROM agent_config_skills
+`
+
+func (q *Queries) ListAgentConfigSkillLinks(ctx context.Context) ([]AgentConfigSkill, error) {
+	rows, err := q.db.QueryContext(ctx, listAgentConfigSkillLinks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AgentConfigSkill
+	for rows.Next() {
+		var i AgentConfigSkill
+		if err := rows.Scan(&i.AgentConfigID, &i.SkillID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAgentConfigSkills = `-- name: ListAgentConfigSkills :many
 SELECT s.id, s.name, s.description, s.enabled, s.created_at, s.updated_at
 FROM skills s JOIN agent_config_skills a ON a.skill_id = s.id
@@ -182,6 +209,33 @@ func (q *Queries) ListEnabledSkillsForRun(ctx context.Context, arg ListEnabledSk
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRepoSkillLinks = `-- name: ListRepoSkillLinks :many
+SELECT repo_id, skill_id FROM repo_skills
+`
+
+func (q *Queries) ListRepoSkillLinks(ctx context.Context) ([]RepoSkill, error) {
+	rows, err := q.db.QueryContext(ctx, listRepoSkillLinks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RepoSkill
+	for rows.Next() {
+		var i RepoSkill
+		if err := rows.Scan(&i.RepoID, &i.SkillID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
