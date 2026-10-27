@@ -12,6 +12,39 @@ function mergeBadge(status?: string) {
   return null
 }
 
+export type SubtaskStatus = 'running' | 'done' | 'awaiting release' | 'blocked' | 'queued'
+
+// subtaskStatus derives a child's run/blocked status for display.
+export function subtaskStatus(child: Task, labels: WorkflowLabel[]): SubtaskStatus {
+  const label = labels.find((l) => l.name === child.label)
+  if (child.active_run_status) return 'running'
+  if (label?.is_terminal) return 'done'
+  if (label?.agent_ignore) return 'awaiting release'
+  if (child.block_reason?.code === 'dependency') return 'blocked'
+  return 'queued'
+}
+
+const statusColor: Record<SubtaskStatus, string> = {
+  running: 'text-sky-400',
+  done: 'text-emerald-400',
+  'awaiting release': 'text-slate-400',
+  blocked: 'text-amber-400',
+  queued: 'text-slate-300',
+}
+
+function scopeChips(scope?: string[]) {
+  if (!scope || scope.length === 0) return <span className="text-[10px] text-slate-600">no scope</span>
+  return (
+    <span className="flex flex-wrap gap-1">
+      {scope.map((g) => (
+        <code key={g} className="text-[10px] px-1 rounded bg-slate-900 text-slate-400">
+          {g}
+        </code>
+      ))}
+    </span>
+  )
+}
+
 // SubtasksPanel shows a task's subtask relationships (Mechanism 2): for a child,
 // a link to its parent plus its merge-back status; for a parent, the list of
 // children with a bulk "release" action to move gated children into the flow.
@@ -83,6 +116,10 @@ export default function SubtasksPanel({
             <span>Merge-back:</span>
             {mergeBadge(task.merge_status) ?? <span className="text-[10px] text-slate-500">not yet merged</span>}
           </div>
+          <div className="mt-1 flex items-center gap-2 text-slate-500">
+            <span>Scope:</span>
+            {scopeChips(task.file_scope)}
+          </div>
         </div>
       )}
 
@@ -91,6 +128,8 @@ export default function SubtasksPanel({
           <div className="flex items-center justify-between mb-1">
             <p className="text-[11px] uppercase tracking-wide text-slate-600">
               Children ({children.filter((c) => mergeIsDone(c)).length}/{children.length})
+              {task.integration_status === 'pending' && <span className="ml-2 normal-case text-amber-400">integration pending</span>}
+              {task.integration_status === 'done' && <span className="ml-2 normal-case text-emerald-400">integrated</span>}
             </p>
             {gatedChildren.length > 0 && releaseTarget && (
               <button
@@ -105,7 +144,8 @@ export default function SubtasksPanel({
           </div>
           <ul className="flex flex-col gap-1">
             {children.map((c) => (
-              <li key={c.id} className="flex items-center gap-2 text-xs bg-slate-800 rounded px-2 py-1">
+              <li key={c.id} className="flex flex-col gap-1 text-xs bg-slate-800 rounded px-2 py-1">
+                <div className="flex items-center gap-2">
                 <button
                   onClick={() => navigate(`/tasks/${c.id}`)}
                   className="text-slate-300 hover:text-indigo-300 truncate text-left flex-1"
@@ -114,7 +154,12 @@ export default function SubtasksPanel({
                   {c.title}
                 </button>
                 <span className="text-slate-500 shrink-0">{c.label}</span>
+                <span data-testid="subtask-status" className={`shrink-0 text-[10px] ${statusColor[subtaskStatus(c, labels)]}`}>
+                  {subtaskStatus(c, labels)}
+                </span>
                 {mergeBadge(c.merge_status)}
+                </div>
+                {scopeChips(c.file_scope)}
               </li>
             ))}
           </ul>

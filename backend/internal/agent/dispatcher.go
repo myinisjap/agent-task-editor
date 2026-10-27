@@ -985,11 +985,20 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		return "", fmt.Errorf("%w: %q", ErrProviderUnavailable, agentCfg.Provider)
 	}
 
+	var fileScope []string
+	if fo, ferr := d.q.GetTaskFanout(ctx, t.ID); ferr == nil {
+		fileScope = splitFileScope(fo.FileScope)
+	}
+
 	// If this is a parent with subtasks that conflicted on merge-back, hand the
 	// work agent the conflict context so it resolves the merges on this branch.
+	var subtaskIntegration *string
 	var subtaskConflicts *string
 	if d.Subtasks != nil {
-		subtaskConflicts = d.Subtasks.BuildConflictContext(ctx, t.ID)
+		subtaskIntegration = d.Subtasks.BuildIntegrationContext(ctx, t.ID, repo.VerifyCommand)
+		if subtaskIntegration == nil {
+			subtaskConflicts = d.Subtasks.BuildConflictContext(ctx, t.ID)
+		}
 	}
 
 	// Cost-budget plumbing for the provider's mid-run kill switch (see
@@ -1017,7 +1026,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		SelectLessons: d.lessonSelector(t, log),
 		Input: RunInput{
 			RunID:                runID,
-			Task:                 Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Branch: t.Branch, ParentID: derefStr(t.ParentTaskID), RepoPath: repo.Path, Attachments: attachmentRels},
+			Task:                 Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Branch: t.Branch, ParentID: derefStr(t.ParentTaskID), FileScope: fileScope, RepoPath: repo.Path, Attachments: attachmentRels},
 			AgentConfig:          agentCfg,
 			RepoPath:             workDir,
 			RepoRemoteURL:        derefStr(repo.RemoteUrl),
@@ -1032,6 +1041,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			ResumeSessionCostUSD: resumeSessionCostUSD,
 			HumanReply:           opts.humanReply,
 			SubtaskConflicts:     subtaskConflicts,
+			SubtaskIntegration:   subtaskIntegration,
 			CostBudgetUSD:        costBudgetUSD,
 			CostSpentUSD:         costSpentUSD,
 			CostWarnRatio:        d.resolveCostWarnRatio(ctx),

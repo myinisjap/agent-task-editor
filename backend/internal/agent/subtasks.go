@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 
@@ -20,9 +21,9 @@ import (
 // back into the parent's branch (a plain merge commit); the child's worktree and
 // local branch are then removed. Children never push to origin or open PRs — the
 // parent's branch is the only outward-facing artifact. Once every child is
-// terminal and merged cleanly, the parent auto-advances along its agent-success
-// transition. A conflicting merge-back is flagged and handed to the parent's
-// work agent to resolve.
+// terminal and merged (or conflicted), the parent is marked integration_status=
+// pending and the dispatcher runs its agent with an integration brief; a
+// conflicting merge-back is flagged and resolved by that run.
 type SubtaskCoordinator struct {
 	q      *gen.Queries
 	engine *workflow.Engine
@@ -110,10 +111,11 @@ func (c *SubtaskCoordinator) OnChildTerminal(ctx context.Context, child gen.Task
 // any merge_conflict children resolved (a successful work run performed and
 // committed the merges the conflict context asked for) and flushes children
 // whose merge-back was deferred because the parent had a run in flight. It does
-// NOT auto-advance the parent — the parent's own run already produced its
-// transition; auto-advance is driven only by a child reaching terminal.
+// NOT itself advance the parent. It re-evaluates readiness (flushed merges may
+// complete the set) and, when an integration run (integration_status=pending)
+// ended with a successful outcome and no conflicts remain, marks it done.
 // A no-op for tasks that aren't parents. Returns whether anything changed.
-func (c *SubtaskCoordinator) AfterParentRun(ctx context.Context, parentID, repoPath string, runSucceeded bool) bool {
+func (c *SubtaskCoordinator) AfterParentRun(ctx context.Context, parentID, repoPath string, runSucceeded, outcomeSuccess bool) bool {
 	lock := c.parentLock(parentID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -126,6 +128,7 @@ func (c *SubtaskCoordinator) AfterParentRun(ctx context.Context, parentID, repoP
 	if err != nil || len(children) == 0 {
 		return false
 	}
+	wasPending := c.integrationStatus(ctx, parentID) == "pending"
 	changed := false
 	for _, child := range children {
 		switch {
@@ -148,6 +151,21 @@ func (c *SubtaskCoordinator) AfterParentRun(ctx context.Context, parentID, repoP
 			changed = true
 		}
 	}
+	if wasPending && outcomeSuccess {
+		fresh, _ := c.q.ListSubtasks(ctx, &parentID)
+		conflict := false
+		for _, ch := range fresh {
+			if ch.Archived == 0 && ch.MergeStatus == "merge_conflict" {
+				conflict = true
+			}
+		}
+		if !conflict {
+			c.setIntegration(ctx, parentID, "done")
+			c.publishUpdated(parentID)
+			changed = true
+		}
+	}
+	c.evaluateParent(ctx, parentID, repoPath)
 	return changed
 }
 
@@ -157,7 +175,14 @@ func (c *SubtaskCoordinator) AfterParentRun(ctx context.Context, parentID, repoP
 // commit/merge on the same repo.
 func (c *SubtaskCoordinator) mergeChild(ctx context.Context, repoPath string, parent, child gen.Task) {
 	log := slog.With("component", "subtasks", "task_id", child.ID, "parent_id", parent.ID)
-	if child.Branch == "" || parent.Branch == "" {
+	if child.Branch == "" {
+		// The child reached terminal without ever running: nothing to merge.
+		c.setMerge(ctx, child.ID, "merged")
+		c.publishUpdated(child.ID, parent.ID)
+		return
+	}
+	if parent.Branch == "" {
+		log.Warn("subtasks: parent has no branch; cannot merge child")
 		return
 	}
 
@@ -207,10 +232,18 @@ func (c *SubtaskCoordinator) mergeChild(ctx context.Context, repoPath string, pa
 	}
 }
 
-// evaluateParent auto-advances the parent once all children are terminal and
-// merged cleanly. Degrades gracefully (leaves the parent for a human / the next
-// dispatch) when the parent is paused, has a run in flight, has an unresolved
-// conflict, or has no agent-success transition from its current label.
+// evaluateParent decides what happens once the children settle. "Ready" means
+// every non-archived child is terminal AND its merge-back has finished (merged
+// or merge_conflict). A child that is terminal but not yet merged (its merge is
+// queued behind this parent's lock) is not ready: the merge that completes it
+// re-runs this check.
+//
+// When ready, the parent is marked integration_status=pending and, if its current
+// label is agent-dispatchable, left for the dispatcher to run an integration
+// pass (conflicts included). On an agent_ignore label no agent would ever run,
+// so the old behaviour is kept as a fallback: auto-advance along the
+// agent-success transition (only when there are no conflicts).
+// Callers hold the per-parent lock.
 func (c *SubtaskCoordinator) evaluateParent(ctx context.Context, parentID, repoPath string) {
 	log := slog.With("component", "subtasks", "parent_id", parentID)
 	children, err := c.q.ListSubtasks(ctx, &parentID)
@@ -223,19 +256,16 @@ func (c *SubtaskCoordinator) evaluateParent(ctx context.Context, parentID, repoP
 	}
 	terminal := terminalLabelSet(labels)
 
-	// The parent auto-advances only when every child is done AND its work has
-	// merged back cleanly. An archived child was deliberately dropped — it doesn't
-	// block the parent and needs no merge. A child that is terminal but not yet
-	// merged (its merge-back is still queued behind this parent's lock) is NOT
-	// "done" yet, so we wait: the merge that completes it will re-run this check.
-	// Requiring merged (not just terminal) also prevents a double auto-advance
-	// when two children finish near-simultaneously.
-	anyConflict := false
+	anyConflict, anyLive := false, false
 	for _, ch := range children {
 		if ch.Archived != 0 {
 			continue
 		}
+		anyLive = true
 		if ch.MergeStatus == "merge_conflict" {
+			if !terminal[ch.Label] {
+				return
+			}
 			anyConflict = true
 			continue
 		}
@@ -243,15 +273,24 @@ func (c *SubtaskCoordinator) evaluateParent(ctx context.Context, parentID, repoP
 			return // still waiting on a child to finish and merge back
 		}
 	}
-	if anyConflict {
-		// The parent becomes dispatch-eligible (edges satisfied since the
-		// conflicting children are terminal); the dispatcher hands its work agent
-		// the conflict context to resolve on the parent branch.
+	if !anyLive {
 		return
 	}
 
 	parent, err := c.q.GetTask(ctx, parentID)
 	if err != nil {
+		return
+	}
+	if c.dispatchableLabel(ctx, parent, labels) {
+		if c.integrationStatus(ctx, parentID) == "" {
+			c.setIntegration(ctx, parentID, "pending")
+			c.publishUpdated(parentID)
+		}
+		return
+	}
+
+	// Fallback: no agent will run on this label; auto-advance.
+	if anyConflict {
 		return
 	}
 	if parent.Paused != 0 || parent.ActiveAgentRunID != nil {
@@ -264,6 +303,131 @@ func (c *SubtaskCoordinator) evaluateParent(ctx context.Context, parentID, repoP
 	if err := c.engine.Transition(ctx, parentID, target, workflow.TriggerSubtasksComplete, "", "all subtasks complete"); err != nil {
 		log.Warn("subtasks: auto-advance parent", "to", target, "err", err)
 	}
+}
+
+// dispatchableLabel mirrors ListAgentPickupTasks: the label is not agent_ignore
+// and an agent/both transition starts from it.
+func (c *SubtaskCoordinator) dispatchableLabel(ctx context.Context, parent gen.Task, labels []gen.WorkflowLabel) bool {
+	for _, l := range labels {
+		if l.Name == parent.Label && l.AgentIgnore != 0 {
+			return false
+		}
+	}
+	// An agent must actually be configured for the label, else nothing would ever
+	// run the integration pass.
+	configs, cerr := c.q.ListAgentConfigs(ctx)
+	if cerr != nil || len(matchConfigs(configs, parent.Label)) == 0 {
+		return false
+	}
+	transitions, err := c.q.ListWorkflowTransitions(ctx, parent.WorkflowID)
+	if err != nil {
+		return false
+	}
+	for _, t := range transitions {
+		if t.FromLabel == parent.Label && (t.TriggerType == "agent" || t.TriggerType == "both") {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *SubtaskCoordinator) integrationStatus(ctx context.Context, taskID string) string {
+	fo, err := c.q.GetTaskFanout(ctx, taskID)
+	if err != nil {
+		return ""
+	}
+	return fo.IntegrationStatus
+}
+
+func (c *SubtaskCoordinator) setIntegration(ctx context.Context, taskID, status string) {
+	if err := c.q.SetTaskIntegrationStatus(ctx, gen.SetTaskIntegrationStatusParams{TaskID: taskID, IntegrationStatus: status}); err != nil {
+		slog.Warn("subtasks: set integration status", "component", "subtasks", "task_id", taskID, "err", err)
+	}
+}
+
+const (
+	integrationNotesCap = 1500
+	integrationStatMax  = 60
+)
+
+// BuildIntegrationContext renders the integration brief for a parent whose
+// subtasks have all finished, or nil when the parent's integration_status is
+// not "pending". It includes any merge conflicts the run must resolve.
+func (c *SubtaskCoordinator) BuildIntegrationContext(ctx context.Context, parentID, verifyCommand string) *string {
+	if c.integrationStatus(ctx, parentID) != "pending" {
+		return nil
+	}
+	parent, err := c.q.GetTask(ctx, parentID)
+	if err != nil {
+		return nil
+	}
+	children, err := c.q.ListSubtasks(ctx, &parentID)
+	if err != nil || len(children) == 0 {
+		return nil
+	}
+	slices.Reverse(children) // newest-first from ListSubtasks; present oldest first
+	fanout := map[string]string{}
+	for _, ch := range children {
+		if fo, ferr := c.q.GetTaskFanout(ctx, ch.ID); ferr == nil {
+			fanout[ch.ID] = fo.FileScope
+		}
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "All subtasks of this task have finished. Each subtask branch was merged into this task's branch (%s) as it finished, in completion order; a merge that conflicted was aborted and is listed below for you to resolve.\n\n", parent.Branch)
+	for i, ch := range children {
+		state := "merged"
+		switch {
+		case ch.Archived != 0:
+			state = "archived: skipped"
+		case ch.MergeStatus == "merge_conflict":
+			state = "CONFLICT"
+		case ch.MergeStatus != "merged":
+			state = ch.MergeStatus
+		}
+		fmt.Fprintf(&b, "%d. %q (%s) — label %s, merge %s\n", i+1, ch.Title, short8(ch.ID), ch.Label, state)
+		scope := splitFileScope(fanout[ch.ID])
+		if len(scope) == 0 {
+			b.WriteString("   Scope: none declared\n")
+		} else {
+			fmt.Fprintf(&b, "   Scope: %s\n", strings.Join(scope, ", "))
+		}
+		switch {
+		case ch.Archived != 0:
+		case ch.MergeStatus == "merge_conflict":
+			fmt.Fprintf(&b, "   Branch: %s — conflicts when merged into this branch. Run `git merge %s`, resolve the conflicts, and commit.\n", ch.Branch, ch.Branch)
+		case ch.Branch != "":
+			fmt.Fprintf(&b, "   Branch: %s (merged and deleted)\n", ch.Branch)
+		default:
+			b.WriteString("   Branch: none (the subtask never ran)\n")
+		}
+		if notes := strings.TrimSpace(ch.AgentNotes); notes != "" {
+			notes = strings.ReplaceAll(notes, sourceCommentsEndMarkerForNotes, "")
+			if len(notes) > integrationNotesCap {
+				notes = notes[:integrationNotesCap] + "…(truncated)"
+			}
+			b.WriteString("   Notes:\n")
+			for _, l := range strings.Split(notes, "\n") {
+				b.WriteString("     " + l + "\n")
+			}
+		}
+	}
+	if parent.WorktreePath != "" && parent.BaseRef != "" && gitcmd.DirExists(parent.WorktreePath) {
+		if stat := diffStatAgainstBase(ctx, parent.WorktreePath, parent.BaseRef, parent.Branch, integrationStatMax); stat != "" {
+			b.WriteString("\nMerged result (git diff --stat against the base):\n" + stat + "\n")
+		}
+	}
+	verify := "the repo's test/verify commands"
+	if strings.TrimSpace(verifyCommand) != "" {
+		verify = "`" + strings.TrimSpace(verifyCommand) + "`"
+	}
+	fmt.Fprintf(&b, "\nYour job now:\n"+
+		"1. Resolve any CONFLICT entries above first.\n"+
+		"2. Check the combined change for consistency across subtasks (duplicated helpers, mismatched interfaces, missing wiring, docs/CHANGELOG).\n"+
+		"3. Run %s and fix any failures.\n"+
+		"4. Commit, then signal_complete. ate runs the verify command again after you succeed.\n", verify)
+	s := b.String()
+	return &s
 }
 
 // agentSuccessTarget returns the destination of the agent (or both) transition

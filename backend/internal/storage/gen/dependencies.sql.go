@@ -23,7 +23,8 @@ type CreateTaskDependencyParams struct {
 
 // Peer task dependency edges. A task is "blocked" by an edge until the
 // depended-on task reaches a terminal label (workflow_labels.is_terminal != 0)
-// or is archived. Blocked-ness is derived at read time, never stored.
+// or is archived (a blocker that is a subtask must also have finished merging
+// back: merge_status merged or merge_conflict). Blocked-ness is derived at read time, never stored.
 func (q *Queries) CreateTaskDependency(ctx context.Context, arg CreateTaskDependencyParams) error {
 	_, err := q.db.ExecContext(ctx, createTaskDependency, arg.TaskID, arg.DependsOnTaskID)
 	return err
@@ -75,6 +76,7 @@ SELECT
             WHERE wl.workflow_id = dt.workflow_id
               AND wl.name = dt.label
               AND wl.is_terminal != 0
+              AND (dt.parent_task_id IS NULL OR dt.merge_status IN ('merged', 'merge_conflict'))
         ) THEN 1
         ELSE 0
     END AS satisfied
@@ -136,6 +138,7 @@ SELECT
               WHERE wl.workflow_id = dt.workflow_id
                 AND wl.name = dt.label
                 AND wl.is_terminal != 0
+                AND (dt.parent_task_id IS NULL OR dt.merge_status IN ('merged', 'merge_conflict'))
           )
     ) AS blocked_by_count,
     (
@@ -194,6 +197,7 @@ SELECT
               WHERE wl.workflow_id = dt.workflow_id
                 AND wl.name = dt.label
                 AND wl.is_terminal != 0
+                AND (dt.parent_task_id IS NULL OR dt.merge_status IN ('merged', 'merge_conflict'))
           )
     ) AS blocked_by_count,
     (
@@ -311,6 +315,7 @@ WHERE d.task_id IN (/*SLICE:task_ids*/?)
       WHERE wl.workflow_id = dt.workflow_id
         AND wl.name = dt.label
         AND wl.is_terminal != 0
+        AND (dt.parent_task_id IS NULL OR dt.merge_status IN ('merged', 'merge_conflict'))
   )
 ORDER BY d.task_id, dt.created_at ASC
 `

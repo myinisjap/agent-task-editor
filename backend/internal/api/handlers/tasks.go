@@ -153,10 +153,12 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		runStatuses := h.activeRunStatusMap(r.Context(), ids)
 		effects := h.sideEffectMap(r.Context(), ids)
 		pendings := h.sourcePendingMap(r.Context(), ids)
+		fanouts := h.fanoutMap(r.Context(), ids)
 		resp := toTaskResponses(children)
 		for i := range resp {
 			resp[i] = applySideEffects(resp[i], effects)
 			resp[i] = applySourcePending(resp[i], pendings)
+			resp[i] = applyFanout(resp[i], fanouts)
 			resp[i] = applyActiveRunStatus(applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons), runStatuses)
 		}
 		JSON(w, http.StatusOK, resp)
@@ -190,11 +192,13 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	blockReasons := h.blockReasonMap(r.Context(), tasks)
 	runStatuses := h.activeRunStatusMap(r.Context(), ids)
 	effects := h.sideEffectMap(r.Context(), ids)
+	fanouts := h.fanoutMap(r.Context(), ids)
 	pendings := h.sourcePendingMap(r.Context(), ids)
 	resp := toTaskResponses(tasks)
 	for i := range resp {
 		resp[i] = applySideEffects(resp[i], effects)
 		resp[i] = applySourcePending(resp[i], pendings)
+		resp[i] = applyFanout(resp[i], fanouts)
 		resp[i] = applyActiveRunStatus(applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons), runStatuses)
 	}
 	JSON(w, http.StatusOK, resp)
@@ -418,6 +422,7 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	ids := []string{task.ID}
 	resp := applyDepCounts(toTaskResponse(task), h.dependencyCountMap(r.Context(), ids))
 	resp = applyRollup(resp, h.subtaskRollupMap(r.Context(), ids))
+	resp = applyFanout(resp, h.fanoutMap(r.Context(), ids))
 	resp = applyQueuePosition(resp, h.queuePositionMap(r.Context()))
 	resp = applyBlockReason(resp, h.blockReasonMap(r.Context(), []gen.Task{task}))
 	resp = applyActiveRunStatus(resp, h.activeRunStatusMap(r.Context(), ids))

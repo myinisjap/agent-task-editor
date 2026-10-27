@@ -21,11 +21,13 @@ triggers the "Release" workflow the same way.
 
 ### Added
 
+- **Planner fan-out.** `create_subtask` takes an optional `file_scope` (globs): it is stated in the subtask's prompt and files changed outside it are listed as a warning in the subtask's notes after its run. Subtasks whose scopes overlap a sibling's automatically depend on it (run sequentially) and the tool result says so. Once all subtasks are merged back the parent gets an integration run (prompt lists each subtask, scope, branch, notes and the merged diff stat; the repo verify command runs as usual) instead of auto-advancing. New `task_fanout` table (migration 074); `file_scope`/`integration_status` on tasks. Docs: planner guidance on when to fan out (3+ independent parts on disjoint files).
 - **Repo lessons.** Short, human-curated per-repo (or global) lessons stored in `repo_lessons` and managed via `GET/POST /repos/{id}/lessons`, `GET/POST /lessons`, `PATCH/DELETE /lessons/{id}`. Active lessons matching the run's label (and, when set, the task's changed files) are injected into agent prompts under `REPO LESSONS`, capped at 15 lessons / about 2,000 characters. UI comes in a follow-up. Task runs keep Claude Code auto-memory off via `--bare` (now covered by a test and documented).
 - Escalation ladder: agent configs can define `escalation_ladder` rungs (provider config + effort) used after consecutive failures / review bounce-backs on that stage; the rung is recorded on each run, shown in Task Detail, and summarized on Agent Performance. Empty by default (no behaviour change).
 
 ### Fixed
 
+- **Parents no longer auto-advance to testing when subtasks finish** (they get an integration run on their current label; agent_ignore parents keep the old behaviour), and a parent or overlap-serialized sibling can no longer be dispatched between a subtask reaching a terminal label and its branch being merged back (subtask blockers now count as satisfied only once merged).
 - **opencode command denylist now always beats an overlapping allowlist entry.** The `permission.bash` block was serialised as a Go map (keys sorted alphabetically) but opencode applies the last matching rule, so a deny like `rm *` could be overridden by an allow like `rm tmp/*`. Rules are now emitted in a fixed order: `*` first, then allow, then deny.
 
 - **Stale review feedback no longer follows every later run.** Feedback from a failed run, a failed verify, a PR review or a rejection is now dropped once a run that received it completes successfully, instead of being copied onto every later run (it showed up as `FEEDBACK FROM PRIOR REVIEW` long after it was fixed). Retries after a transient error and replies to a run waiting on a human still see it.

@@ -245,7 +245,8 @@ without babysitting the board.
   confirmation, and the task stays un-dispatched (and visibly muted with a
   "blocked by N" badge) until the block clears.
 - **Satisfied = terminal or archived.** A blocker satisfies its edge once it
-  reaches a label with `is_terminal = true`, **or** is archived. Archiving is the
+  reaches a label with `is_terminal = true`, **or** is archived. (A blocker that
+  is a subtask must also have finished merging back; see [Subtasks](#subtasks-agent-driven-decomposition).) Archiving is the
   existing "this is over" gesture; treating an archived blocker as forever-blocking
   would create an invisible deadlock. (Un-archiving makes the edge unmet again.)
 - **Derived, never stored.** "Blocked" is computed at read time from the blocker's
@@ -256,8 +257,8 @@ without babysitting the board.
   rejected, since such an edge could never satisfy.
 - **Not parent/child.** A dependency is a peer relationship with no automation: a
   dependent task always has its own work, and simply becomes dispatch-eligible on
-  its current label once its blockers finish. (Parent/child subtask decomposition
-  is a separate, future mechanism.)
+  its current label once its blockers finish. (Agent-driven parent/child decomposition is covered under
+  [Subtasks](#subtasks-agent-driven-decomposition).)
 
 Manage dependencies from a task's detail page (the Dependencies section) or via
 `GET/POST /tasks/{id}/dependencies` and `DELETE /tasks/{id}/dependencies/{dep_id}`.
@@ -292,14 +293,65 @@ leaving prose in `agent_notes`. Subtasks build on the dependency gate above.
   satisfied and the parent becomes dispatch-eligible; the dispatcher hands the
   parent's `work` agent the conflict context to resolve the merge on the parent
   branch. A human can also resolve it manually.
-- **Auto-advance.** Once every child is terminal and merged cleanly, the parent
-  advances along its agent-success transition (`work → testing` in the seed
-  workflow), recorded in `task_label_history` with the `subtasks_complete`
-  trigger. If the parent is paused, has a run in flight, or has no agent-success
-  transition, the auto-advance is skipped and the parent is simply left
-  unblocked for a human or the next dispatch to drive.
+- **File scopes and the overlap guard.** `create_subtask` takes an optional
+  `file_scope` (repo-relative globs, e.g. `backend/internal/foo/**`). The scope
+  is stored and shown in the subtask's prompt ("only change files matching …; if
+  you must go outside it, explain in your notes"). After the subtask's work run a
+  deterministic check lists any changed files outside the scope in the subtask's
+  notes under `FILE SCOPE WARNING` (a warning, never a failure). When a new
+  subtask's scope **overlaps** a sibling's, it automatically **depends on that
+  sibling**, so the two run sequentially, and the tool result says so. Overlap is
+  deliberately conservative (a false positive only serializes two subtasks): equal
+  globs, a literal file inside the other glob, or a shared literal directory
+  prefix. A basename-only pattern such as `*.go` overlaps everything, so use
+  directory-rooted globs. A subtask with **no** scope is treated as unknown and
+  gets no overlap check; planners should give every subtask a scope. Finished
+  (terminal) and archived siblings are skipped.
+- **Stricter "satisfied" for subtask blockers.** A blocker that is itself a
+  subtask satisfies an edge only once it is archived, or is on a terminal label
+  **and** its merge-back has finished (`merge_status` `merged` or
+  `merge_conflict`). This closes a race where a parent (or an overlap-serialized
+  sibling) could be dispatched after the child went terminal but before its
+  branch was merged, so it never saw the child's work. It applies to every edge
+  whose blocker is a subtask, including human-added ones.
+- **How branches combine.** Each subtask branch is merged into the parent branch
+  as soon as that subtask reaches a terminal label — one merge at a time, in
+  completion order, under a per-parent lock. A conflicting merge is aborted, the
+  child is flagged `merge_conflict`, and resolving it goes to the parent's work
+  agent during the integration run.
+- **Integration run (replaces auto-advance).** Once every non-archived child is
+  terminal and merged (or conflicted), the parent is marked
+  `integration_status = pending` and is **not** auto-advanced. The dispatcher runs
+  the parent's agent on its current label (normally `work`) with a **SUBTASK
+  INTEGRATION** prompt section: each subtask with its label, scope, branch and
+  notes, the `git diff --stat` of the merged result, any conflicts to resolve, and
+  instructions to check cross-subtask consistency and run the repo verify command.
+  The usual verify command runs again after the agent signals success; on success
+  `integration_status = done` and the normal agent-success transition moves the
+  parent on (`work → testing`). A failed verify keeps it `pending`, so the rework
+  run gets the integration brief again. Adding a new subtask resets the status.
+  **Fallback:** if the parent sits on an `agent_ignore` label, or no agent is
+  configured for its label (so nothing would ever run), the old behaviour is kept:
+  with no conflicts the parent auto-advances along its agent-success transition,
+  recorded with the `subtasks_complete` trigger.
 
 Manage subtasks from a task's detail page (the Subtasks section) or via
 `POST /tasks/{id}/subtasks` and `GET /tasks?parent_id=`. Task responses carry
 `parent_task_id`, `merge_status`, and derived `subtask_total`/`subtask_done`/
-`subtask_conflicts`.
+`subtask_conflicts`, plus `file_scope` and (for parents) `integration_status`.
+
+### Planner prompt guidance
+
+Fan out only when it pays off: **3 or more independent parts that touch disjoint
+files.** Two parts, or parts sharing files, should stay one task (overlapping
+scopes serialize, which loses the benefit). This guidance is not applied to
+existing agent configs; copy it into a planner's system prompt if you want it:
+
+```text
+Decide whether to fan out. If the work splits into 3 or more independent parts
+that touch disjoint files, call create_subtask once per part with a clear
+description and a directory-rooted file_scope (for example
+"backend/internal/foo/**"). Give every subtask a file_scope. Subtasks whose
+scopes overlap run one after another. Otherwise do not fan out: write a single
+plan for the whole task.
+```
