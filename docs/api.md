@@ -215,6 +215,19 @@ Get the task's accumulated changes — the diff of its per-task branch against t
 
 Returns `{ "branch": "...", "diff": "..." }`. `diff` is empty until an agent has been dispatched and a branch provisioned. When the task reaches a terminal label and the worktree is torn down, the diff is computed against the main repo clone (branch is preserved).
 
+### `GET /tasks/{id}/review-brief`
+Deterministic review brief for a task waiting on a human (see
+[workflows.md § Review brief](workflows.md#review-brief)). Returns `human_gate`,
+`changed` (`files`, `additions`, `deletions`, `top_files`), `risk_flags`
+(`[{code, reason, files}]`; codes `migration`, `auth_or_security`,
+`dependencies`, `tests_removed`, `ci_config`, `large_change`,
+`outside_plan_scope`), `verification` (latest verify result with `output_tail`,
+or `null`), `runs` (`total`, `failed`, `rework_loops`, `cost_usd`,
+`cost_unknown`), `agent_summary` (latest `store_info`, else the tail of
+`agent_notes`; or `null`), `diff_available` (false without a resolvable
+branch), `truncated` and `computed_at`. Works for any task, `404` if unknown.
+No LLM calls; flags are advisory.
+
 ### `GET /tasks/{id}/review-comments`
 List all inline diff review comments on the task (open and resolved), ordered oldest-first.
 
@@ -1096,6 +1109,9 @@ primary `reason`; precedence is `waiting_human` > `pr_conflict` > `human_gate`.
   outbound transition and at least one human transition (same rule as
   `workflow.IsHumanGateLabel`), with no pending/running run. `agent_ignore`
   backlog labels (e.g. `not_ready`) are not gates here.
+  Gate items may carry `risk_flags` (an array of review-brief flag codes, see
+  [`GET /tasks/{id}/review-brief`](#get-tasksidreview-brief)); it is omitted when
+  the branch diff is unavailable or no flag fired.
 
 Archived tasks are excluded; paused tasks are excluded except for
 `waiting_human`. The Dashboard queue, the board's "Needs you" badge and the

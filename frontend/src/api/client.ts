@@ -35,6 +35,9 @@ export type ReviewComment = Schemas['ReviewComment']
 export type TaskSourceComment = Schemas['TaskSourceComment']
 export type AgentRun = Schemas['AgentRun']
 export type RunVerification = Schemas['RunVerification']
+export type ReviewBrief = Schemas['ReviewBrief']
+export type RiskFlag = Schemas['RiskFlag']
+export type RiskFlagCode = Schemas['RiskFlagCode']
 // Named *Entry historically; the schema is TaskLabelHistory.
 export type TaskLabelHistoryEntry = Schemas['TaskLabelHistory']
 export type AgentLog = Schemas['AgentLog']
@@ -305,6 +308,9 @@ export const api = {
     // verifications returns the task's repo verify-command results, newest
     // first (empty when no verify command has run).
     verifications: (id: string) => request<RunVerification[]>(`/tasks/${id}/verifications`),
+    // reviewBrief is the deterministic risk-flag/verification summary for a
+    // task waiting on a human (GET /tasks/{id}/review-brief).
+    reviewBrief: (id: string) => request<ReviewBrief>(`/tasks/${id}/review-brief`),
     getRun: (id: string, runId: string) => request<AgentRun>(`/tasks/${id}/runs/${runId}`),
     // listLabelHistory returns the task's label-transition audit trail
     // (oldest first), including the resolved actor for human transitions.

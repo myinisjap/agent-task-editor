@@ -44,6 +44,112 @@ components:
           type: string
           format: date-time
           description: When the task started needing a human; the list is sorted by this ascending.
+        risk_flags:
+          type: array
+          items: { $ref: "#/components/schemas/RiskFlagCode" }
+          description: >-
+            Review-brief flag codes; present only for human_gate items whose
+            branch diff could be computed and raised at least one flag.
+    RiskFlagCode:
+      type: string
+      enum: [migration, auth_or_security, dependencies, tests_removed, ci_config, large_change, outside_plan_scope]
+      description: >-
+        Deterministic, advisory risk flag computed from the task's branch diff.
+        migration - a migrations/ path, a .sql file named like schema, or DDL
+        (CREATE/ALTER/DROP TABLE|INDEX|VIEW|TRIGGER) in a .sql file.
+        auth_or_security - path contains auth, oauth, token, secret, middleware,
+        crypto, password, credential, jwt, csrf, cors, permission, security or
+        session, or a .env* file. dependencies - manifests/lockfiles
+        (go.mod, package.json, requirements*.txt, Cargo.*, ...) or a Dockerfile
+        FROM change. tests_removed - a test file deleted, net test functions
+        removed, or skip/only markers added. ci_config - .github/workflows,
+        .gitea/workflows or .gitlab-ci.yml. large_change - more than 800
+        changed lines (lockfiles/generated excluded) or more than 25 files.
+        outside_plan_scope - the plan in agent_notes lists files and the diff
+        touches others (skipped when the plan has no file list).
+    RiskFlag:
+      type: object
+      required: [code, reason, files]
+      properties:
+        code: { $ref: "#/components/schemas/RiskFlagCode" }
+        reason: { type: string, description: Human-readable explanation of why the flag fired. }
+        files:
+          type: array
+          items: { type: string }
+          description: Offending files (at most 10); empty for large_change.
+    ReviewBrief:
+      type: object
+      description: >-
+        Deterministic summary shown above the diff when a task is waiting on a
+        human. No LLM is involved; flags are advisory and never approve anything.
+      required: [human_gate, changed, risk_flags, verification, runs, agent_summary, diff_available, truncated, computed_at]
+      properties:
+        human_gate:
+          type: boolean
+          description: Whether the task's label is currently a human gate.
+        changed:
+          type: object
+          required: [files, additions, deletions, top_files]
+          properties:
+            files: { type: integer }
+            additions: { type: integer }
+            deletions: { type: integer }
+            top_files:
+              type: array
+              description: Up to 10 files with the most churn.
+              items:
+                type: object
+                required: [path, status, additions, deletions]
+                properties:
+                  path: { type: string }
+                  status: { type: string, enum: [added, modified, deleted, renamed] }
+                  additions: { type: integer }
+                  deletions: { type: integer }
+        risk_flags:
+          type: array
+          items: { $ref: "#/components/schemas/RiskFlag" }
+        verification:
+          nullable: true
+          description: Latest verify-command result; null when none ran.
+          type: object
+          required: [status, command, exit_code, duration_ms, output_tail, truncated, created_at]
+          properties:
+            status: { type: string }
+            command: { type: string }
+            exit_code: { type: integer, nullable: true }
+            duration_ms: { type: integer }
+            output_tail: { type: string, description: Last ~20 lines (at most 2000 chars) of output. }
+            truncated: { type: boolean }
+            created_at: { type: string, format: date-time }
+        runs:
+          type: object
+          required: [total, failed, rework_loops, cost_usd, cost_unknown]
+          properties:
+            total: { type: integer }
+            failed: { type: integer }
+            rework_loops: { type: integer, description: Transitions into a label the task already visited. }
+            cost_usd: { type: number }
+            cost_unknown: { type: boolean, description: True when some run's cost could not be priced. }
+        agent_summary:
+          nullable: true
+          description: >-
+            Latest store_info from a run (first 1500 chars), else the tail of
+            agent_notes; null when both are empty.
+          type: object
+          required: [source, run_id, agent_name, text, truncated]
+          properties:
+            source: { type: string, enum: [stored_info, agent_notes] }
+            run_id: { type: string }
+            agent_name: { type: string }
+            text: { type: string }
+            truncated: { type: boolean }
+        diff_available:
+          type: boolean
+          description: False when the task has no branch or it cannot be resolved.
+        truncated:
+          type: boolean
+          description: The diff exceeded the size limit; numbers are best effort.
+        computed_at: { type: string, format: date-time }
     ProviderConfig:
       type: object
       description: >
@@ -3017,6 +3123,27 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/RunVerification" } }
+
+  /tasks/{id}/review-brief:
+    get:
+      summary: Review brief for a task
+      description: >
+        Deterministic risk flags, change summary, latest verification, run/rework/cost
+        totals and the latest agent summary. Diff-derived parts are cached per
+        branch head. Advisory only; no LLM calls.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The review brief.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewBrief" }
+        "404":
+          description: Task not found.
 
   /tasks/{id}/runs/{run_id}:
     get:

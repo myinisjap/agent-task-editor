@@ -13,7 +13,8 @@ One file per resource group. All handlers receive a `*gen.Queries` for database 
 | `uploads.go` | `UploadsHandler.ServeFile` — serves stored attachment files by task/filename (path-traversal-checked via `isSafePathComponent`). Sets `nosniff` + `Content-Disposition: inline` and `Content-Type` from `contentTypeForStoredExt`, not `http.ServeFile` inference (ADR 0030) | — |
 | `task_bulk.go` | `TasksHandler` (pause/archive toggles + bulk action) | — |
 | `task_runs.go` | `TasksHandler` (run list/get/logs/cancel/reply) | `agent` (error sentinels) |
-| `task_pr.go` | `TasksHandler` (diff/pr/pr-url/github-status/git-state) | `prflow`, `forge` |
+| `task_pr.go` | `TasksHandler` (diff/pr/pr-url/github-status/git-state); Diff delegates to `reviewbrief` | `prflow`, `forge`, `reviewbrief` |
+| `review_brief.go` | `ReviewBriefHandler` (GET /tasks/{id}/review-brief) | `reviewbrief`, `needsme` |
 | `workflows.go` | `WorkflowsHandler` | `gen.Queries`, `*sql.DB` (for YAML import transactions) |
 | `agents.go` | `AgentsHandler` | `gen.Queries` |
 | `providers.go` | `ProviderConfigsHandler` — CRUD for Provider Configs (provider/model/env), the entity `agent_configs`/`chat_sessions` reference by `provider_config_id` | `gen.Queries` |

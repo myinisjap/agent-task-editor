@@ -10,6 +10,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
+	"github.com/myinisjap/agent-task-editor/backend/internal/reviewbrief"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -84,6 +85,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	repoBaseDir, uploadDir := deps.RepoBaseDir, deps.UploadDir
 	dispatcherLiveness := deps.DispatcherLiveness
 	q := gen.New(db.SQL())
+	briefCache := reviewbrief.NewCache()
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, deps.Canceller, deps.ReplyDispatcher, deps.BlockReasons)
 	tasksH.SetPublisher(hub)
@@ -213,6 +215,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Patch("/tasks/{id}/notes", tasksH.UpdateNotes)
 			r.Post("/tasks/{id}/rerun", tasksH.Rerun)
 			r.Get("/tasks/{id}/diff", tasksH.Diff)
+			r.Get("/tasks/{id}/review-brief", handlers.NewReviewBriefHandler(q, briefCache).Get)
 			r.Get("/tasks/{id}/pr-url", tasksH.PRURL)
 			r.Post("/tasks/{id}/pr", tasksH.CreatePR)
 			r.Post("/tasks/{id}/side-effects/retry", tasksH.RetrySideEffects)
@@ -372,7 +375,9 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Post("/repos/{id}/runtime/detect", reposH.Detect)
 
 			// Dashboard
-			r.Get("/needs-me", handlers.NewNeedsMeHandler(q).List)
+			needsMeH := handlers.NewNeedsMeHandler(q)
+			needsMeH.SetBriefCache(briefCache)
+			r.Get("/needs-me", needsMeH.List)
 			r.Get("/dashboard", dashH.Get)
 			r.Get("/dashboard/cost-by-task", dashH.CostByTask)
 			r.Get("/dashboard/outcome-quality", outcomeQualityH.Get)

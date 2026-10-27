@@ -71,6 +71,18 @@ describe('InboxPage', () => {
     await waitFor(() => expect(screen.getByTestId('inbox-empty')).toBeInTheDocument())
   })
 
+  it('shows risk flag chips on human-gate rows that have them', async () => {
+    m.needsMe.mockResolvedValue([
+      { ...gateItem, risk_flags: ['migration', 'tests_removed'] },
+      { ...gateItem, task_id: 't2', task_title: 'Plain' },
+    ])
+    renderPage()
+    await screen.findByText('Ship it')
+    expect(screen.getAllByTestId('risk-flag-chips')).toHaveLength(1)
+    expect(screen.getByTestId('risk-flag-migration')).toHaveTextContent('Migration')
+    expect(screen.getByTestId('risk-flag-tests_removed')).toHaveTextContent('Tests removed')
+  })
+
   it('retries a failed side effect', async () => {
     m.list.mockResolvedValue({
       items: [{ id: 't2', title: 'PR task', side_effects: [{ kind: 'create_pr', status: 'failed', attempts: 5, next_at: '2026-01-01T00:00:00Z', last_error: 'boom' }] }],
