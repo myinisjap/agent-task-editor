@@ -34,6 +34,7 @@ triggers the "Release" workflow the same way.
 
 ### Fixed
 
+- **Board card titles no longer get crushed by status badges.** The title now has its own line (up to 3 lines) and badges wrap in a row below it, in both expanded and condensed modes and on phones. A waiting task now shows one "needs you" badge carrying the escalation reason, instead of both the escalation badge and a separate "Needs you" badge.
 - **Parents no longer auto-advance to testing when subtasks finish** (they get an integration run on their current label; agent_ignore parents keep the old behaviour), and a parent or overlap-serialized sibling can no longer be dispatched between a subtask reaching a terminal label and its branch being merged back (subtask blockers now count as satisfied only once merged).
 - **opencode command denylist now always beats an overlapping allowlist entry.** The `permission.bash` block was serialised as a Go map (keys sorted alphabetically) but opencode applies the last matching rule, so a deny like `rm *` could be overridden by an allow like `rm tmp/*`. Rules are now emitted in a fixed order: `*` first, then allow, then deny.
 
