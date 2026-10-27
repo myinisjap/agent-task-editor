@@ -594,7 +594,7 @@ export default function TaskDetailPage() {
 
             <HumanDecisionsList decisions={humanDecisions} onRemember={canRemember ? setRememberText : undefined} />
 
-            <LabelHistoryList history={labelHistory} onRemember={canRemember ? setRememberText : undefined} />
+            <LabelHistoryList history={labelHistory} labels={workflow?.labels} onRemember={canRemember ? setRememberText : undefined} />
 
             <SourceCommentsList comments={sourceComments} />
           </div>

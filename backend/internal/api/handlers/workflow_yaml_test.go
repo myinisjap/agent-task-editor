@@ -1,6 +1,9 @@
 package handlers
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestYamlWorkflow_Validate_CreatePR(t *testing.T) {
 	mk := func(createPRLabels ...bool) yamlWorkflow {
@@ -79,5 +82,16 @@ func TestYamlWorkflow_Validate_WipLimit(t *testing.T) {
 				t.Fatalf("validate() err = %v, wantErr = %v", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestYamlWorkflow_Validate_DisplayName(t *testing.T) {
+	ok := yamlWorkflow{Name: "wf", Labels: []yamlLabel{{Name: "a", DisplayName: "Plan review"}}}
+	if err := ok.validate(); err != nil {
+		t.Fatalf("valid display name rejected: %v", err)
+	}
+	long := yamlWorkflow{Name: "wf", Labels: []yamlLabel{{Name: "a", DisplayName: strings.Repeat("x", 65)}}}
+	if err := long.validate(); err == nil {
+		t.Fatal("expected error for over-long display name")
 	}
 }

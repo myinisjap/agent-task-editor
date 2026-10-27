@@ -138,7 +138,7 @@ describe('TaskBoard drag-to-move', () => {
       </MemoryRouter>,
     )
 
-    await dragCardToColumn('Move me', 'doing')
+    await dragCardToColumn('Move me', 'Doing')
 
     await waitFor(() => {
       expect(moveLabelMock).toHaveBeenCalledWith('task-1', 'doing')
@@ -160,7 +160,7 @@ describe('TaskBoard drag-to-move', () => {
       </MemoryRouter>,
     )
 
-    await dragCardToColumn('Move me', 'doing')
+    await dragCardToColumn('Move me', 'Doing')
 
     await waitFor(() => {
       expect(moveLabelMock).toHaveBeenCalledWith('task-1', 'doing')
@@ -193,7 +193,7 @@ describe('TaskBoard drag-to-move', () => {
       </MemoryRouter>,
     )
 
-    await dragCardToColumn('Move me', 'doing')
+    await dragCardToColumn('Move me', 'Doing')
 
     await waitFor(() => {
       expect(confirmSpy).toHaveBeenCalled()
@@ -215,7 +215,7 @@ describe('TaskBoard drag-to-move', () => {
       </MemoryRouter>,
     )
 
-    await dragCardToColumn('Move me', 'doing')
+    await dragCardToColumn('Move me', 'Doing')
 
     expect(await screen.findByRole('alert')).toHaveTextContent('a run is currently active on this task')
   })
@@ -232,7 +232,7 @@ describe('TaskBoard drag-to-move', () => {
       </MemoryRouter>,
     )
 
-    await dragCardToColumn('Move me', 'done')
+    await dragCardToColumn('Move me', 'Done')
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/no transition defined/i)
     expect(moveLabelMock).not.toHaveBeenCalled()
