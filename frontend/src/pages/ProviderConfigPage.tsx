@@ -4,7 +4,8 @@ import { useAgentsStore } from '../stores/agents'
 import type { ProviderConfig, ModelList } from '../api/client'
 import ProviderConfigForm, { type FormState } from '../components/providers/ProviderConfigForm'
 import HelpModal from '../components/shared/HelpModal'
-import HelpButton from '../components/shared/HelpButton'
+import { X } from 'lucide-react'
+import { Button, Icon, PageFrame } from '../components/ui'
 import { ProvidersHelp } from '../components/shared/pageHelp'
 
 const EMPTY: FormState = { name: '', provider: 'claude', model: 'sonnet', env: '{}' }
@@ -91,33 +92,27 @@ export default function ProviderConfigPage() {
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden" data-testid="providers-page">
-      <div className="md:hidden flex items-center justify-between px-4 py-2 border-b border-slate-800 bg-slate-950">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-sm text-slate-300 truncate">
-            {selected ? selected.name : 'New provider config'}
-          </span>
-          <HelpButton onClick={() => setShowHelp(true)} title="About providers" />
-        </div>
-        <button
-          onClick={() => setSidebarOpen(true)}
-          className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-300"
-        >
+    <PageFrame
+      title="Providers"
+      testId="providers-page"
+      help={{ onClick: () => setShowHelp(true), title: 'About providers' }}
+      actions={
+        <Button size="sm" className="md:hidden" onClick={() => setSidebarOpen(true)}>
           Configs
-        </button>
-      </div>
-
-      <div className="flex-1 flex overflow-hidden">
+        </Button>
+      }
+    >
+      <div className="flex items-start gap-6">
         {sidebarOpen && (
           <div className="fixed inset-0 bg-black/50 z-30 md:hidden" onClick={() => setSidebarOpen(false)} />
         )}
         <div
-          className={`fixed inset-y-0 left-0 z-40 w-64 max-w-[80vw] bg-slate-950 border-r border-slate-800 overflow-y-auto flex flex-col transition-transform duration-200 ease-in-out
-            md:static md:z-auto md:w-56 md:max-w-none md:translate-x-0
+          className={`fixed inset-y-0 left-0 z-40 w-64 max-w-[80vw] bg-surface border-r border-border overflow-y-auto flex flex-col transition-transform duration-200 ease-in-out
+            md:sticky md:top-0 md:self-start md:max-h-[calc(100vh-8rem)] md:z-auto md:w-56 md:shrink-0 md:max-w-none md:translate-x-0 md:rounded-lg
             ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}
         >
-          <div className="p-4 flex items-center justify-between border-b border-slate-800">
-            <span className="text-sm font-medium text-slate-300">Provider Configs</span>
+          <div className="p-4 flex items-center justify-between border-b border-border">
+            <span className="text-sm font-medium text-fg-muted">Provider Configs</span>
             <div className="flex items-center gap-1.5">
               <button
                 onClick={() => { newConfig(); setSidebarOpen(false) }}
@@ -128,9 +123,9 @@ export default function ProviderConfigPage() {
               <button
                 onClick={() => setSidebarOpen(false)}
                 aria-label="Close configs"
-                className="md:hidden text-slate-400 hover:text-slate-100 p-1 rounded"
+                className="md:hidden text-fg-muted hover:text-fg p-1 rounded"
               >
-                ✕
+                <Icon icon={X} size="md" />
               </button>
             </div>
           </div>
@@ -142,16 +137,16 @@ export default function ProviderConfigPage() {
                 onClick={() => { selectConfig(pc); setSidebarOpen(false) }}
                 className={`w-full text-left text-sm px-3 py-2 rounded ${
                   selected?.id === pc.id
-                    ? 'bg-slate-700 text-slate-100'
-                    : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
+                    ? 'bg-border text-fg'
+                    : 'text-fg-muted hover:bg-surface-sunken hover:text-fg'
                 }`}
               >
                 <div className="truncate">{pc.name}</div>
-                <div className="text-xs text-slate-500 mt-0.5">{pc.provider}{pc.model ? `/${pc.model}` : ''}</div>
+                <div className="text-xs text-fg-subtle mt-0.5">{pc.provider}{pc.model ? `/${pc.model}` : ''}</div>
               </button>
             ))}
             {configs.length === 0 && (
-              <p className="text-xs text-slate-600 px-3 py-4">No provider configs yet</p>
+              <p className="text-xs text-fg-subtle px-3 py-4">No provider configs yet</p>
             )}
           </div>
         </div>
@@ -166,9 +161,6 @@ export default function ProviderConfigPage() {
           deleting={deleting}
           onSave={handleSave}
           onDelete={handleDelete}
-          helpButton={
-            <HelpButton onClick={() => setShowHelp(true)} title="About providers" />
-          }
         />
       </div>
 
@@ -177,6 +169,6 @@ export default function ProviderConfigPage() {
           <ProvidersHelp />
         </HelpModal>
       )}
-    </div>
+    </PageFrame>
   )
 }
