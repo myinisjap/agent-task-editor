@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import ReviewBriefCard from './ReviewBriefCard'
 import { api, type ReviewBrief } from '../../api/client'
 
@@ -32,6 +32,18 @@ describe('ReviewBriefCard', () => {
     expect(screen.getByTestId('brief-verification-badge')).toHaveTextContent('Verification passed')
     expect(screen.getByText(/runs 3 \(1 failed\) · rework loops 2 · \$1\.23 \+ unknown/)).toBeInTheDocument()
     expect(screen.getByText('Changed: stuff')).toBeInTheDocument()
+  })
+
+  it('compact mode shows changed/risks/verified and hides the summary until Full brief', async () => {
+    vi.mocked(api.tasks.reviewBrief).mockResolvedValue(base)
+    render(<ReviewBriefCard taskId="t1" compact />)
+    await waitFor(() => expect(screen.getByTestId('review-brief')).toBeInTheDocument())
+    expect(screen.getByText(/2 files, \+10 −3/)).toBeInTheDocument()
+    expect(screen.getByTestId('risk-flag-migration')).toBeInTheDocument()
+    expect(screen.getByTestId('brief-verification-badge')).toBeInTheDocument()
+    expect(screen.queryByTestId('brief-summary-text')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Full brief' }))
+    expect(screen.getByTestId('brief-summary-text')).toBeInTheDocument()
   })
 
   it('hides the preview strip when hidePreview is set', async () => {

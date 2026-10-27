@@ -6,7 +6,7 @@ import ModalShell from '../shared/ModalShell'
 import { forceMoveTargets } from '../../lib/forceMove'
 
 // ForceMoveControl is the Task Detail escape hatch for a wedged task: a
-// danger-styled "Force move…" button that opens a dialog to move the task to
+// neutral link-style "Force move…" button that opens a dialog to move the task to
 // ANY label of its workflow, bypassing the workflow's transition rules. It is
 // intentionally separate from the normal "Move to…" control, which only offers
 // legal targets. Errors (e.g. 409 while a run is live) render inline.
@@ -55,7 +55,7 @@ export default function ForceMoveControl({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="text-xs px-2 py-1 rounded border border-red-900/70 text-red-300 hover:bg-red-950/50"
+        className="text-xs text-slate-400 hover:text-slate-200 underline-offset-2 hover:underline"
       >
         Force move…
       </button>
