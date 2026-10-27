@@ -990,6 +990,26 @@ func (h *TasksHandler) ListSourceComments(w http.ResponseWriter, r *http.Request
 	JSON(w, http.StatusOK, comments)
 }
 
+// ListHumanDecisions returns the human replies to the task's waiting_human
+// runs (oldest first); question-only rows are excluded.
+// Route: GET /tasks/{id}/human-decisions
+func (h *TasksHandler) ListHumanDecisions(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	if _, err := h.q.GetTask(r.Context(), taskID); err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+	rows, err := h.q.ListTaskHumanDecisions(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if rows == nil {
+		rows = []gen.ListTaskHumanDecisionsRow{}
+	}
+	JSON(w, http.StatusOK, rows)
+}
+
 func handleTransitionError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, workflow.ErrNoTransition):

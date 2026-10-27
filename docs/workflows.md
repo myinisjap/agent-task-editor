@@ -54,6 +54,8 @@ An agent's `signal_complete(outcome="success")` (or the parsed `OUTCOME: success
 
 Only `success` outcomes are verified; a run that reports `failure` is not.
 
+The latest result is also summarised in the [Review brief](#review-brief) shown while a task waits for approval.
+
 ## WIP limits and the dispatcher
 
 Hard WIP limits are enforced at exactly one point: the dispatcher's sweep, right before it would start a new agent run for a task. Before dispatching, it resolves the task's current label's unambiguous agent-triggerable "success" transition target. If that target label has `wip_limit_hard: true` and its current occupancy (non-archived tasks currently on that label, matching what the board column count shows) is `>= wip_limit`, the dispatcher skips this task for the current sweep — no run is started, no error is recorded, and the task's label doesn't change. It's picked up again on a later sweep once the target label has room.
@@ -131,6 +133,30 @@ The `/tasks/{id}/approve` and `/tasks/{id}/reject` endpoints move tasks along hu
 ```
 
 If no matching transition is defined for the current label, the endpoint returns `400`.
+
+## Review brief
+
+When a task sits on a **human-gate** label (no agent-triggerable way out and at least one human transition, the same rule as `GET /needs-me` `human_gate`; `agent_ignore` backlog labels excluded), the Task Detail page shows a compact **Review brief** at the top of the Overview tab and above the diff on the Diff tab, and the Inbox shows the flag chips on the row. It is computed from existing data with **no LLM calls**, and it is **advisory only**: nothing is ever approved or blocked because of a flag.
+
+The brief is served by `GET /tasks/{id}/review-brief`; the Inbox gets flag codes only (`risk_flags` on `/needs-me` items, human-gate items only).
+
+**Risk flags** (computed from the diff of the task's branch against its merge-base, the same diff as the Diff tab; rules live in `backend/internal/reviewbrief/flags.go`). Flags always come out in this order:
+
+| Code | Fires when |
+|---|---|
+| `migration` | a path segment is `migrations`; or a `.sql` file whose name contains `schema`; or a `.sql` file with an added/removed `CREATE\|ALTER\|DROP TABLE\|INDEX\|VIEW\|TRIGGER` line. Plain query files (SELECT/INSERT only) do not fire. |
+| `auth_or_security` | the path contains `auth`, `oauth`, `token`, `secret`, `middleware`, `crypto`, `password`, `credential`, `jwt`, `csrf`, `cors`, `permission`, `security` or `session`, or the file is `.env*`. Substring match, so e.g. `tokenizer.go` is a known false positive. |
+| `dependencies` | `go.mod/sum`, `package.json` and npm/yarn/pnpm/bun lockfiles, `Cargo.*`, `Pipfile*`, `poetry.lock`, `pyproject.toml`, `uv.lock`, `Gemfile*`, `requirements*.txt` (or `.txt` under `requirements/`), or a Dockerfile with an added/removed `FROM` line. |
+| `tests_removed` | a test file was deleted (or renamed to a non-test path); or across test files more test declarations were removed than added (`func Test…`, `it/test/describe(`, `def test_`); or an added line skips/focuses tests (`t.Skip`, `it.skip`/`.only`, `xit`, `fit`, `@pytest.mark.skip`). |
+| `ci_config` | `.github/workflows/**`, `.gitea/workflows/**`, `.gitlab-ci.yml`. |
+| `large_change` | more than 800 changed lines or more than 25 files. Lockfiles and generated files (`frontend/src/api/types.ts`) are excluded from the line count. |
+| `outside_plan_scope` | the plan in the task's `agent_notes` lists file paths (backtick spans or list items containing path-like tokens) and the diff touches other files. Skipped when the plan has no file list. Exempt: `CHANGELOG.md`, the test sibling of a planned file, `frontend/src/api/types.ts` when `openapi.yaml` is planned, `backend/internal/storage/gen/**` when a planned path is under `storage/queries/` or `storage/migrations/`, `go.sum` when `go.mod` is planned, lockfiles when `package.json` is planned. It is a heuristic and prefers under-flagging. |
+
+**Verified** shows the latest verify-command result (status, duration, output tail; see [Verify commands](#verify-commands)), plus the run count (and failures), rework loops (transitions into a label the task already visited, the same definition as the Dashboard's outcome-quality rework rate) and cost so far.
+
+**Agent summary** is the newest run's `store_info` (first 1500 characters), falling back to the tail of the task's `agent_notes`. Reviewer agents are best prompted to end with a fixed-shape `store_info`: **Changed / Risks / Verified / Not checked**.
+
+**Caching**: the diff-derived part is cached in memory per task, keyed on the branch head, base ref head and a hash of `agent_notes`; a cached entry checked in the last 15 seconds is reused without running git. Nothing is stored on the task.
 
 ## Custom Workflows
 

@@ -4,6 +4,7 @@ import { parseDiff, type FileDiff } from '../../lib/parseDiff'
 import type { DiffComment } from '../../lib/diffComments'
 import FileDiffViewer from '../diff/FileDiffViewer'
 import VerificationPanel from './VerificationPanel'
+import ReviewBriefCard from './ReviewBriefCard'
 
 // DiffReviewPane renders the Diff tab: PR link/Create PR/Refresh header plus
 // the file diff viewer wired to review comments. Diff files/loading state are
@@ -20,6 +21,8 @@ export default function DiffReviewPane({
   onRemoveComment,
   onReopenComment,
   verificationRefreshKey,
+  showBrief,
+  briefRefreshKey,
 }: {
   taskId: string | undefined
   prUrl?: string
@@ -30,6 +33,8 @@ export default function DiffReviewPane({
   onRemoveComment: (commentId: string) => void
   onReopenComment: (commentId: string) => void
   verificationRefreshKey?: number
+  showBrief?: boolean
+  briefRefreshKey?: string
 }) {
   const [diffFiles, setDiffFiles] = useState<FileDiff[]>([])
   const [diffLoading, setDiffLoading] = useState(false)
@@ -50,6 +55,11 @@ export default function DiffReviewPane({
 
   return (
     <div className="h-full overflow-y-auto p-4" data-testid="diff-review-pane">
+      {showBrief && (
+        <div className="mb-3">
+          <ReviewBriefCard taskId={taskId} refreshKey={briefRefreshKey} />
+        </div>
+      )}
       <VerificationPanel taskId={taskId} refreshKey={verificationRefreshKey} />
       <div className="flex items-center justify-between mb-3">
         <p className="text-xs text-slate-500">Changes on this task's branch</p>

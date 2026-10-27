@@ -21,6 +21,7 @@ POST /api/v1/intake/{endpoint_id}  IntakeEndpointsHandler.Receive (outside Beare
   tasks/{id}/dependencies/*    DependenciesHandler (dispatch-gating peer task dependencies)
   tasks/{id}/subtasks          SubtasksHandler (create_subtask MCP tool)
   tasks/{id}/review-comments/* ReviewCommentsHandler (inline diff review comments)
+  tasks/{id}/review-brief      ReviewBriefHandler (deterministic risk flags + verification summary; internal/reviewbrief)
   templates/*                  TemplatesHandler
   lessons/*, repos/{id}/lessons LessonsHandler
   uploads/{task_id}/{filename} UploadsHandler (serve attachment images)

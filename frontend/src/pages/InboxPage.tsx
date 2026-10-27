@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode, type MouseEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
+import RiskFlagChips from '../components/shared/RiskFlagChips'
 import { useNeedsMeStore } from '../stores/needsMe'
 import { useInboxStore } from '../stores/inbox'
 import { useHealthStore } from '../stores/health'
@@ -96,6 +97,11 @@ export default function InboxPage() {
             {needsMeReasonLabel(item.reason, item.escalation_reason)}
           </span>
           {item.message && <p className="text-xs text-slate-400 mt-1">{item.message}</p>}
+          {item.risk_flags && item.risk_flags.length > 0 && (
+            <div className="mt-1">
+              <RiskFlagChips codes={item.risk_flags} />
+            </div>
+          )}
         </div>
         <div className="md:shrink-0 flex flex-col items-stretch md:items-end gap-2">
           <span className="text-xs text-slate-500" title={new Date(item.since).toLocaleString()}>
