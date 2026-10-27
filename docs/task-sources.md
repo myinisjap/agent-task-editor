@@ -133,7 +133,7 @@ fixed `target_label` (schedules) — there was no way to say "an issue labeled
 `bug` from repo X should get the triage template, priority 1, and start on
 `work` instead of the gate." Intake rules (`/settings/intake-rules`, "Intake Rules" in
 Settings) close that gap: a small match→apply table evaluated at
-task-creation time for the `issue` and `schedule` sources.
+task-creation time for the `issue`, `schedule` and `webhook` sources (see [Intake webhooks](#intake-webhooks-signed-inbound-events)).
 
 Rules are evaluated **first-match-wins**, in `sort_order` (then `created_at`)
 order — the first *enabled* rule whose match conditions all hold applies, and
@@ -709,3 +709,80 @@ dropped, and bursts of events for one task coalesce into a single refresh
 counts deliveries.
 
 Gitea has no equivalent receiver yet; Gitea repos keep using polling only.
+
+## Intake webhooks (signed inbound events)
+
+Outside systems (CI red on main, an error tracker, a security scanner,
+Dependabot) can create board tasks by POSTing signed JSON events to an
+**intake endpoint**. Create endpoints in Settings → Intake Rules → "Webhook
+endpoints" (or via `/intake-endpoints`, see [api.md](api.md)).
+
+```
+POST /api/v1/intake/<endpoint_id>
+Content-Type: application/json
+X-ATE-Signature-256: sha256=<hex HMAC-SHA256 of the raw body, keyed with the endpoint secret>
+```
+
+The route is outside bearer auth (the sender can't hold your API token); the
+HMAC, compared in constant time, is the authentication.
+
+```bash
+BODY='{"alert":{"title":"CI failed on main","url":"https://ci.example/run/1","id":"run-1"}}'
+SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/^.* //')
+curl -X POST http://localhost:8080/api/v1/intake/<endpoint_id> \
+  -H 'Content-Type: application/json' -H "X-ATE-Signature-256: sha256=$SIG" -d "$BODY"
+```
+
+Responses: `201 {task_id, created}`, `200 {task_id, deduped}`, `400` (bad JSON or
+not an object), `401` (missing/bad signature), `403` (endpoint disabled),
+`404`, `413` (body over 256 KB), `415` (not `application/json`), `422` (no
+workflow resolvable), `429` (rate limit, with `Retry-After`).
+
+### Secret
+
+The secret (`whsec_…`) is generated server-side and shown **once** on create
+(and on "Rotate secret", which invalidates the old one immediately). It is never
+returned by GET/LIST. Because HMAC verification needs the raw key, it is stored
+in plaintext in the database (like provider env secrets), so protect your DB
+and backups accordingly.
+
+### Limits
+
+256 KB body, `application/json` only, and 30 authenticated requests per
+minute per endpoint (fixed one-minute window; requests with a bad signature do
+not use the budget).
+
+### Templates
+
+`title_template`, `description_template` and `dedupe_key_template` use a tiny
+`{{path.to.field}}` substitution (a leading dot, `{{.alert.title}}`, is
+accepted; numeric segments index arrays, e.g. `{{items.0.name}}`). There are no
+functions, conditionals or loops, so templates cannot execute anything.
+Missing fields render as empty; objects/arrays render as compact JSON. Each
+substituted value is capped at 4 KB; the title at 200 characters (newlines are
+flattened), the description at 16 KB, the dedupe key at 512 bytes; templates
+themselves are limited to 4 KB. An empty title falls back to
+`Intake event: <endpoint name>`; an empty description template uses the
+pretty-printed payload.
+
+### Dedupe
+
+If `dedupe_key_template` renders to a non-empty key matching an **open**
+(non-archived, non-terminal-label) task from the same endpoint, no new task is
+created: the event is appended to that task as an untrusted source comment
+(shown to agents inside the same "untrusted external content" fence used for
+imported issue comments). Once the task is archived or reaches a terminal label,
+the next event creates a fresh task.
+
+### Routing and safety
+
+Created tasks have `source = "webhook"` and run through
+[intake routing rules](#intake-routing-rules) with `match_source: webhook`
+(title/body patterns match the rendered title and description; there are no
+labels or author association). Payload text is untrusted, so tasks land on the
+workflow's human-review gate label by default. Only the endpoint's own
+`target_label` (set by an admin, like a schedule's) can start a task on an
+agent-triggerable label. A rule's `apply_target_label` is honored only if it is
+the gate label: webhook events have no author association, so the auto-start
+check always fails closed. Rules may still set priority, cost budget,
+template (type) and workflow.

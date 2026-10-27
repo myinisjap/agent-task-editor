@@ -115,6 +115,22 @@ type CostWarningSetting struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type IntakeEndpoint struct {
+	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
+	RepoID              string     `json:"repo_id"`
+	WorkflowID          *string    `json:"workflow_id"`
+	TargetLabel         string     `json:"target_label"`
+	Secret              string     `json:"secret"`
+	Enabled             bool       `json:"enabled"`
+	TitleTemplate       string     `json:"title_template"`
+	DescriptionTemplate string     `json:"description_template"`
+	DedupeKeyTemplate   string     `json:"dedupe_key_template"`
+	LastReceivedAt      *time.Time `json:"last_received_at"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+}
+
 type IntakeRule struct {
 	ID                string    `json:"id"`
 	Name              string    `json:"name"`

@@ -11,6 +11,7 @@ import {
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
 import { IntakeRulesHelp } from '../components/shared/pageHelp'
+import IntakeEndpointsSection from '../components/settings/IntakeEndpointsSection'
 
 export const inputCls =
   'bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500'
@@ -26,13 +27,14 @@ const MATCH_SOURCES = [
   { value: '', label: 'Any source' },
   { value: 'issue', label: 'Issue import' },
   { value: 'schedule', label: 'Schedule' },
+  { value: 'webhook', label: 'Webhook' },
 ] as const
 
 type RuleForm = {
   name: string
   enabled: boolean
   sort_order: number
-  match_source: '' | 'manual' | 'issue' | 'schedule' | 'subtask'
+  match_source: '' | 'manual' | 'issue' | 'schedule' | 'webhook' | 'subtask'
   match_repo_id: string
   match_labels: string
   match_title_pattern: string
@@ -201,6 +203,8 @@ export default function IntakeRulesPage() {
     // has no equivalent of) would be nonsensical — mirrors the backend's
     // validate() in intake_rules.go.
     if (f.match_source === 'schedule') return false
+    // Webhook events carry no author association, so only the gate label is allowed.
+    if (f.match_source === 'webhook') return !isGateLabel(f)
     return !isGateLabel(f) && !hasTrustedAuthorConstraint(f)
   }
 
@@ -672,6 +676,8 @@ export default function IntakeRulesPage() {
           ))}
         </div>
       )}
+
+      <IntakeEndpointsSection />
     </div>
   )
 }
