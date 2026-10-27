@@ -165,6 +165,16 @@ export function PerformanceHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Breaking down by version</h3>
+        <p>
+          Use <strong>Break down by</strong> to split each agent config's rows by config version
+          (every behavioural edit to the config is a new version, and runs are tagged with the
+          version they were dispatched with), provider config, repo or task type. Rows with fewer
+          than 5 tasks done are greyed out as low-sample. Runs from before version history show as
+          "unversioned".
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">Outcome quality</h3>
         <p>
           <strong>Success rate measures whether a run exited cleanly — it does not measure whether
@@ -293,6 +303,16 @@ export function ChatHelp() {
 export function AgentsHelp() {
   return (
     <>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">History</h3>
+        <p>
+          Each behavioural change (prompt, provider, fallbacks, ladder, effort, limits, permissions,
+          plugins/MCP, command lists) is saved as a numbered version with its author and an optional
+          change note. Renaming, relabelling, enabling or reordering priority does not create a
+          version. Expand a version to see the prompt diff against the previous one, or restore it
+          as a new version.
+        </p>
+      </section>
       <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">What an agent config is</h3>
         <p>

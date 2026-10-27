@@ -5,11 +5,12 @@ import Field from './Field'
 import PluginMcpPicker from './PluginMcpPicker'
 import CommandFilterEditor from './CommandFilterEditor'
 import LabelPicker from './LabelPicker'
+import AgentHistoryPanel from './AgentHistoryPanel'
 import SkillPicker from '../skills/SkillPicker'
 import { getCapability } from '../../lib/providerCapabilities'
 import { providerListGaps } from '../../lib/providerListGaps'
 
-export type FormState = Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config'>
+export type FormState = Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config' | 'current_version'>
 
 export default function AgentConfigForm({
   selected,
@@ -24,6 +25,10 @@ export default function AgentConfigForm({
   onDelete,
   onToggleEnabled,
   helpButton,
+  note = '',
+  setNote,
+  onRestored,
+  historyReloadKey = 0,
   skills,
   skillIds,
   onSkillIdsChange,
@@ -40,6 +45,10 @@ export default function AgentConfigForm({
   onDelete: () => void
   onToggleEnabled: () => void
   helpButton?: ReactNode
+  note?: string
+  setNote?: (n: string) => void
+  onRestored?: (config: AgentConfig) => void
+  historyReloadKey?: number
   skills?: Skill[]
   skillIds?: string[]
   onSkillIdsChange?: (ids: string[]) => void
@@ -516,6 +525,19 @@ export default function AgentConfigForm({
         />
       </div>
 
+      {selected && setNote && (
+        <div className="mt-6">
+          <label className="block text-xs text-slate-400 mb-1" htmlFor="agent-change-note">Change note (optional)</label>
+          <input
+            id="agent-change-note"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="What changed and why? Recorded in History"
+            className="w-full rounded bg-slate-900 border border-slate-700 px-3 py-2 text-sm text-slate-200"
+          />
+        </div>
+      )}
+
       <div className="flex gap-3 mt-6">
         <button
           onClick={onSave}
@@ -534,6 +556,10 @@ export default function AgentConfigForm({
           </button>
         )}
       </div>
+
+      {selected && onRestored && (
+        <AgentHistoryPanel agentId={selected.id} onRestored={onRestored} reloadKey={historyReloadKey} />
+      )}
     </div>
   )
 }

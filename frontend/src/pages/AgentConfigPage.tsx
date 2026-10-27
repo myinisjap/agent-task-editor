@@ -33,6 +33,8 @@ export default function AgentConfigPage() {
   const [bulkSaving, setBulkSaving] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  const [note, setNote] = useState('')
+  const [historyReloadKey, setHistoryReloadKey] = useState(0)
   const [skillIds, setSkillIds] = useState<string[]>([])
   const [allSkills, setAllSkills] = useState<Skill[]>([])
   const selectedIdRef = useRef<string | null>(null)
@@ -53,6 +55,7 @@ export default function AgentConfigPage() {
   }, [form.provider_config_id, providerConfigs]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function selectAgent(a: AgentConfig) {
+    setNote('')
     selectedIdRef.current = a.id
     setSkillIds([])
     api.agents
@@ -86,6 +89,11 @@ export default function AgentConfigPage() {
       command_allowlist: a.command_allowlist ?? '[]',
       command_denylist: a.command_denylist ?? '[]',
     })
+  }
+
+  function handleRestored(config: AgentConfig) {
+    selectAgent(config)
+    fetchAgents()
   }
 
   function newAgent() {
@@ -131,7 +139,7 @@ export default function AgentConfigPage() {
     setSaving(true)
     try {
       if (selected) {
-        const { labelConflict } = await updateAgent(selected.id, { ...form, enabled: !!selected.enabled })
+        const { labelConflict } = await updateAgent(selected.id, { ...form, enabled: !!selected.enabled, note: note.trim() || undefined })
         await saveSkills(selected.id)
         if (labelConflict) {
           alert(`Saved, but this label is also handled by active config "${labelConflict}" — failover will run them in priority order.`)
@@ -143,6 +151,8 @@ export default function AgentConfigPage() {
           alert(`Agent created but started disabled — label conflict with active config "${labelConflict}".`)
         }
       }
+      setNote('')
+      setHistoryReloadKey((k) => k + 1)
       newAgent()
     } catch (e: any) {
       alert(e.message)
@@ -267,6 +277,10 @@ export default function AgentConfigPage() {
           onSave={handleSave}
           onDelete={handleDelete}
           onToggleEnabled={handleToggleEnabled}
+          note={note}
+          setNote={setNote}
+          onRestored={handleRestored}
+          historyReloadKey={historyReloadKey}
           skills={allSkills}
           skillIds={skillIds}
           onSkillIdsChange={setSkillIds}

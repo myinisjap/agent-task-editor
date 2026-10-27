@@ -25,7 +25,7 @@ func setupHealthRouter(t *testing.T, mcpBinary, repoBaseDir string) (http.Handle
 	// *referenced* by an enabled agent config or a chat session (see
 	// HealthHandler.Providers / ListInUseProviders) — not merely by the
 	// existence of a provider_configs row.
-	agentsH := handlers.NewAgentsHandler(q)
+	agentsH := handlers.NewAgentsHandler(q, db.SQL())
 	providersH := handlers.NewProviderConfigsHandler(q)
 	r := chi.NewRouter()
 	r.Post("/agents", agentsH.Create)

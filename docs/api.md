@@ -827,6 +827,12 @@ clears it.
 
 `escalation_ladder` (optional, default `[]`) is an array of `{provider_config_id, effort?, fallback_provider_config_ids?}` rungs; see [agents.md#escalation-ladder](agents.md#escalation-ladder). Unknown provider ids or invalid effort return `400`; omitted on update keeps the stored ladder. Runs carry `ladder_rung` (null when the config has no ladder).
 
+`note` (optional string on create/update) is recorded on the config's new version. Responses carry `current_version` (latest version number, null if none). Behavioural edits write a version (see [agents.md#version-history](agents.md#version-history)); runs carry `agent_config_version` (null for runs from before version history).
+
+- `GET /agents/{id}/versions` — version history, newest first, each with its `snapshot`, `actor_id`, `note`, `created_at`.
+- `GET /agents/{id}/versions/{version}` — one version (`400` non-integer, `404` unknown).
+- `POST /agents/{id}/versions/{version}/restore` — body `{note?}`; applies the snapshot as a new version and returns the updated config (`400` if it references a deleted provider config).
+
 `max_retries`/`retry_backoff_secs` configure auto-retry for *transient*
 provider errors (rate limits, network blips, upstream 5xx) — see
 [agents.md#retry-policy](agents.md#retry-policy). Both are optional on
@@ -1262,6 +1268,8 @@ One row per agent config still present in the database:
   frontend greys these out rather than hiding them, since the raw number
   and its `n` are still informative together.
 - `ladder_rungs` — only for configs whose runs carry a `ladder_rung`: per finishing rung (the rung of the config's last laddered run on each terminal task) `{rung, tasks_done, avg_cost_to_done_usd}`. Independent of the last-run attribution used by `tasks_done`.
+
+**Breakdown.** `?group_by=` accepts `config` (default), `version`, `provider_config`, `repo` or `task_type` (`400` otherwise). Rows are then per (agent config, dimension) and carry `group_key`, `group_value` (`v3` / `unversioned`, provider config or repo name, task type) plus `version` / `provider_config_id` / `repo_id` / `task_type`. Version and provider config come from the run (`agent_runs.agent_config_version`; provider falls back to the config's primary for older runs); repo and task type come from the task. Task-level metrics follow the task's last run, rework follows the run preceding the backward transition, escalation follows each run. Non-config modes only emit groups that have data. Every row has `low_sample` (`tasks_done < 5`).
 
 Computed from a full scan of `task_label_history` and `agent_runs` — both
 grow without bound (log retention prunes `agent_logs`, not these) — so
