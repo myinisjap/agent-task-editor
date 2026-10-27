@@ -26,6 +26,11 @@ export type TaskDependencies = Schemas['TaskDependencies']
 export type TaskTemplate = Schemas['TaskTemplate']
 export type TaskSchedule = Schemas['TaskSchedule']
 export type IntakeRule = Schemas['IntakeRule']
+export type IntakeEndpoint = Schemas['IntakeEndpoint']
+export type IntakeEndpointCreated = Schemas['IntakeEndpointCreated']
+export type IntakeEndpointBody = Schemas['IntakeEndpointBody']
+export type IntakeEndpointTestRequest = Schemas['IntakeEndpointTestRequest']
+export type IntakeEndpointTestResponse = Schemas['IntakeEndpointTestResponse']
 export type BackupSettings = Schemas['BackupSettings']
 export type LogRetentionSettings = Schemas['LogRetentionSettings']
 export type ModelPricing = Schemas['ModelPricing']
@@ -99,7 +104,7 @@ export type IntakeRuleBody = {
   name: string
   enabled?: boolean
   sort_order?: number
-  match_source?: '' | 'manual' | 'issue' | 'schedule' | 'subtask'
+  match_source?: '' | 'manual' | 'issue' | 'schedule' | 'webhook' | 'subtask'
   match_repo_id?: string | null
   match_labels?: string[]
   match_title_pattern?: string
@@ -486,6 +491,19 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ repo_id: repoId, rule, limit }),
       }),
+  },
+  intakeEndpoints: {
+    list: () => request<IntakeEndpoint[]>('/intake-endpoints'),
+    get: (id: string) => request<IntakeEndpoint>(`/intake-endpoints/${id}`),
+    create: (body: IntakeEndpointBody) =>
+      request<IntakeEndpointCreated>('/intake-endpoints', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id: string, body: IntakeEndpointBody) =>
+      request<IntakeEndpoint>(`/intake-endpoints/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    delete: (id: string) => request<void>(`/intake-endpoints/${id}`, { method: 'DELETE' }),
+    rotateSecret: (id: string) =>
+      request<{ secret: string }>(`/intake-endpoints/${id}/rotate-secret`, { method: 'POST', body: '{}' }),
+    test: (id: string, body: IntakeEndpointTestRequest) =>
+      request<IntakeEndpointTestResponse>(`/intake-endpoints/${id}/test`, { method: 'POST', body: JSON.stringify(body) }),
   },
   needsMe: {
     list: () => request<Schemas['NeedsMeResponse']>('/needs-me').then((r) => r.items),

@@ -27,6 +27,7 @@ vi.mock('../api/client', async () => {
         delete: (...args: unknown[]) => deleteMock(...args),
         preview: (...args: unknown[]) => previewMock(...args),
       },
+      intakeEndpoints: { ...actual.api.intakeEndpoints, list: () => Promise.resolve([]) },
       repos: { ...actual.api.repos, list: (...args: unknown[]) => reposListMock(...args) },
       templates: { ...actual.api.templates, list: (...args: unknown[]) => templatesListMock(...args) },
       workflows: { ...actual.api.workflows, list: (...args: unknown[]) => workflowsListMock(...args) },
