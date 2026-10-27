@@ -8,7 +8,8 @@ import DependenciesPanel from '../components/DependenciesPanel'
 import SubtasksPanel from '../components/SubtasksPanel'
 import TaskHeader from '../components/task-detail/TaskHeader'
 import { humanActionsFor, isHumanGateLabel as isStrictHumanGate, humanPathTargetLabel } from '../lib/humanGate'
-import { useIsWideDesktop } from '../lib/useMediaQuery'
+import { useIsPhone, useIsWideDesktop } from '../lib/useMediaQuery'
+import DetailsDisclosure from '../components/task-detail/DetailsDisclosure'
 import ReviewLayout from '../components/task-detail/ReviewLayout'
 import TaskActions from '../components/task-detail/TaskActions'
 import RunHistoryList from '../components/task-detail/RunHistoryList'
@@ -71,6 +72,7 @@ export default function TaskDetailPage() {
   const [verificationKey, setVerificationKey] = useState(0)
   // Must stay above the `if (!task) return` early return (rules of hooks).
   const isWide = useIsWideDesktop()
+  const isPhone = useIsPhone()
   const { configs: agentConfigs, fetch: fetchAgents } = useAgentsStore()
   const { configs: providerConfigs, fetch: fetchProviderConfigs } = useProviderConfigsStore()
   const { diffComments, openComments, refreshComments, handleAddComment, handleRemoveComment, handleReopenComment } = useDiffComments(id)
@@ -542,11 +544,6 @@ export default function TaskDetailPage() {
               onChanged={() => { if (id) api.tasks.get(id).then(setTask).catch(() => {}) }}
             />
 
-            <DependenciesPanel
-              task={task}
-              onChanged={() => { if (id) api.tasks.get(id).then(setTask).catch(() => {}) }}
-            />
-
             {!inReview && (
             <RunHistoryList
               runs={runs}
@@ -564,23 +561,28 @@ export default function TaskDetailPage() {
 
             <SourceUpdateNotice task={task} onChanged={setTask} />
 
-            <ForceMoveControl
-              task={task}
-              labels={workflow?.labels ?? []}
-              onMoved={(updated) => { setTask(updated); refreshRuns(); refreshLabelHistory() }}
-            />
-
             <HumanDecisionsList decisions={humanDecisions} onRemember={canRemember ? setRememberText : undefined} />
 
-            <LabelHistoryList history={labelHistory} labels={workflow?.labels} onRemember={canRemember ? setRememberText : undefined} />
-
-            <SourceCommentsList comments={sourceComments} />
+            <DetailsDisclosure>
+              <DependenciesPanel
+                task={task}
+                onChanged={() => { if (id) api.tasks.get(id).then(setTask).catch(() => {}) }}
+              />
+              <ForceMoveControl
+                task={task}
+                labels={workflow?.labels ?? []}
+                onMoved={(updated) => { setTask(updated); refreshRuns(); refreshLabelHistory() }}
+              />
+              <LabelHistoryList history={labelHistory} labels={workflow?.labels} onRemember={canRemember ? setRememberText : undefined} />
+              <SourceCommentsList comments={sourceComments} />
+            </DetailsDisclosure>
     </>
   )
 
   const onGate = isStrictHumanGate(workflow ?? undefined, task.label)
   // Escalated waiting_human runs need the Reply UI, so they keep the tabbed layout.
-  const useReviewLayout = isWide && onGate && !needsHuman
+  const useReviewLayout = onGate && !needsHuman
+  const reviewVariant: 'desktop' | 'tablet' | 'phone' = isWide ? 'desktop' : isPhone ? 'phone' : 'tablet'
   // Heuristic: plan-review labels (e.g. review-plan) show the plan; all other gates show the diff.
   const reviewMode: 'plan' | 'diff' = /plan/i.test(task.label) ? 'plan' : 'diff'
   const approveTarget = humanPathTargetLabel(workflow ?? undefined, task.label, 'success')
@@ -594,6 +596,7 @@ export default function TaskDetailPage() {
 
   const reviewLayoutNode = (
     <ReviewLayout
+      variant={reviewVariant}
       task={task}
       repoName={rememberRepoName}
       runs={runs}

@@ -9,6 +9,7 @@ import { useWorkflowStore } from '../../stores/workflow'
 import { unstaffedLabelNames } from '../../lib/staffing'
 import TaskCard from './TaskCard'
 import { dropStateClass, type DropState } from './dropState'
+import { columnWidthClass, type ColumnMode } from '../../lib/boardLayout'
 
 const MAX_VISIBLE = 5
 
@@ -27,10 +28,22 @@ type Props = {
   onToggleSelect?: (taskId: string, orderedIds: string[], shiftKey?: boolean) => void
   /** While a card is being dragged: whether this column is a legal drop target. */
   dropState?: DropState
+  /** Desktop width mode; defaults to 'full'. */
+  mode?: ColumnMode
+  /** Expand/collapse a terminal column (persisted by the board). */
+  onToggleCollapsed?: () => void
+  /** Droppable id override (swimlanes prefix ids); the label name travels in data. */
+  dropId?: string
+  /** A card is being dragged somewhere on the board. */
+  dragging?: boolean
 }
 
-export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, costWarnedTaskIds, onAddTask, onDuplicate, isStartingColumn, isTerminal, className, selectedIds, onToggleSelect, dropState }: Props) {
-  const { setNodeRef, isOver } = useDroppable({ id: label.name })
+export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, costWarnedTaskIds, onAddTask, onDuplicate, isStartingColumn, isTerminal, className, selectedIds, onToggleSelect, dropState, mode = 'full', onToggleCollapsed, dropId, dragging }: Props) {
+  const { setNodeRef, isOver } = useDroppable({ id: dropId ?? label.name, data: { label: label.name } })
+  const [hovered, setHovered] = useState(false)
+  const expandedTransient = mode !== 'full' && ((hovered && !dragging) || isOver)
+  const compact = mode !== 'full' && !expandedTransient
+  const displayName = labelDisplayName(label)
   const remove = useTasksStore((s) => s.remove)
   const [expanded, setExpanded] = useState(false)
 
@@ -94,13 +107,33 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
     [onToggleSelect, visibleTasks],
   )
 
+  const toggleBtn = isTerminal && onToggleCollapsed && !compact ? (
+    <button
+      type="button"
+      onClick={onToggleCollapsed}
+      aria-expanded={mode === 'full'}
+      aria-label={`${mode === 'full' ? 'Collapse' : 'Expand'} ${displayName} column`}
+      title={mode === 'full' ? 'Collapse column' : 'Expand column'}
+      className="ml-2 text-xs text-slate-400 hover:text-slate-200"
+    >
+      {mode === 'full' ? '‹' : '›'}
+    </button>
+  ) : null
+
   return (
-    <div className={`flex flex-col shrink-0${className ? ` ${className}` : ' w-72'}`}>
-      <div className="flex items-center justify-between px-3 py-2 mb-2">
-        <span className={`text-sm font-semibold ${isAtOrOverLimit ? (isHardAtOrOverLimit ? 'text-red-300' : 'text-amber-300') : 'text-slate-300'}`}>
-          {labelDisplayName(label)}
-        </span>
-        {unstaffed && (
+    <div
+      data-column-mode={mode}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      className={`flex flex-col shrink-0 transition-[width,flex-basis]${className ? ` ${className}` : ` ${columnWidthClass(mode, expandedTransient)}`}`}
+    >
+      <div className={`flex items-center ${compact ? 'justify-center px-0' : 'justify-between px-3'} py-2 mb-2`}>
+        {!compact && (
+          <span className={`text-sm font-semibold ${isAtOrOverLimit ? (isHardAtOrOverLimit ? 'text-red-300' : 'text-amber-300') : 'text-slate-300'}`}>
+            {displayName}
+          </span>
+        )}
+        {!compact && unstaffed && (
           <span
             data-testid="no-agent-chip"
             title="Tasks in this column are waiting for an agent, but no enabled agent config covers it. Assign one on the Pipeline page."
@@ -109,15 +142,35 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
             No agent assigned
           </span>
         )}
-        <span className={badgeClassName} title={badgeTitle} data-testid="column-count-badge">
+        <span className={compact ? badgeClassName.replace('px-2', 'px-1.5') : badgeClassName} title={badgeTitle} data-testid="column-count-badge">
           {wipLimit != null ? `${tasks.length} / ${wipLimit}` : tasks.length}
         </span>
+        {toggleBtn}
       </div>
       <div
         ref={setNodeRef}
-        className={`flex-1 flex flex-col gap-3 p-2 rounded-lg min-h-[100px] transition-colors ${isOver && dropState !== 'illegal' ? 'bg-slate-700/50' : 'bg-slate-800/30'} ${dropStateClass(dropState)}`}
+        className={`flex-1 flex flex-col ${compact ? 'items-center py-2' : 'gap-3 p-2'} rounded-lg min-h-[100px] transition-colors ${isOver && dropState !== 'illegal' ? 'bg-slate-700/50' : 'bg-slate-800/30'} ${dropStateClass(dropState)}`}
       >
-        {visibleTasks.map((task) => (
+        {compact && (
+          isTerminal && onToggleCollapsed ? (
+            <button
+              type="button"
+              onClick={onToggleCollapsed}
+              aria-expanded={false}
+              aria-label={`Expand ${displayName} column`}
+              title={displayName}
+              style={{ writingMode: 'vertical-rl' }}
+              className="text-sm font-semibold text-slate-400 hover:text-slate-200"
+            >
+              {displayName}
+            </button>
+          ) : (
+            <span title={displayName} style={{ writingMode: 'vertical-rl' }} className="text-sm font-semibold text-slate-400">
+              {displayName}
+            </span>
+          )
+        )}
+        {!compact && visibleTasks.map((task) => (
           <TaskCard
             key={task.id}
             task={task}
@@ -131,10 +184,10 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
             onToggleSelect={onToggleSelect ? handleToggleSelect : undefined}
           />
         ))}
-        {tasks.length === 0 && (
+        {!compact && tasks.length === 0 && (
           <div className="text-center text-slate-600 text-sm py-8">No tasks</div>
         )}
-        {shouldCollapse && (
+        {!compact && shouldCollapse && (
           <button
             onClick={() => setExpanded(!expanded)}
             className="w-full text-xs text-slate-500 hover:text-slate-300 border border-dashed border-slate-700 hover:border-slate-500 rounded-lg py-2 mt-1 transition-colors"
@@ -142,7 +195,7 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
             {expanded ? '▲ Show less' : `▼ Show ${tasks.length - MAX_VISIBLE} more`}
           </button>
         )}
-        {onAddTask && (
+        {!compact && onAddTask && (
           <button
             onClick={onAddTask}
             className="w-full text-sm text-slate-500 hover:text-slate-300 border border-dashed border-slate-700 hover:border-slate-500 rounded-lg py-2 transition-colors"

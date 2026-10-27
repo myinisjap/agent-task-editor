@@ -12,10 +12,10 @@ import { blockReasonLabel, isTransientBlockReason } from '../../lib/blockReason'
 import { formatRelativeCountdown } from '../../lib/format'
 import { canHumanMove } from '../../lib/humanMoves'
 
-export function Row({ label, children }: { label: string; children: React.ReactNode }) {
+export function Row({ label, children, wide = false }: { label: string; children: React.ReactNode; wide?: boolean }) {
   return (
-    <div className="flex items-center gap-2">
-      <span className="text-xs text-slate-500 w-16">{label}</span>
+    <div className={`flex items-center gap-2 min-w-0 ${wide ? 'lg:col-span-2' : ''}`}>
+      <span className="text-xs text-slate-500 w-16 shrink-0">{label}</span>
       {children}
     </div>
   )
@@ -365,8 +365,8 @@ export default function TaskHeader({
         </div>
       )}
 
-      <div className="flex flex-col gap-2">
-        <Row label="Label">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-2 min-w-0">
+        <Row label="Label" wide>
           <span className="text-xs px-2 py-0.5 rounded-full font-medium text-white bg-slate-600">
             {labelDisplayNameByName(task.label, labels)}
           </span>
@@ -399,8 +399,8 @@ export default function TaskHeader({
           </span>
         </Row>
         {task.block_reason?.code === 'dependency' && (
-          <Row label="Blocked">
-            <span className="text-xs text-red-300">See Dependencies below for the blocking task(s).</span>
+          <Row label="Blocked" wide>
+            <span className="text-xs text-red-300">See Dependencies under Details below for the blocking task(s).</span>
           </Row>
         )}
         <Row label="Cost">
@@ -410,7 +410,7 @@ export default function TaskHeader({
           </span>
         </Row>
         {task.side_effects && task.side_effects.length > 0 && (
-          <Row label="Pending work">
+          <Row label="Pending work" wide>
             <SideEffectBadge
               effects={task.side_effects}
               onRetry={() => { void api.tasks.retrySideEffects(task.id).catch(() => {}) }}
@@ -420,7 +420,7 @@ export default function TaskHeader({
         {task.branch && (
           <>
             <Row label="Branch">
-              <span className="text-xs font-mono text-slate-300">{task.branch}</span>
+              <span className="text-xs font-mono text-slate-300 truncate min-w-0" title={task.branch}>{task.branch}</span>
             </Row>
             <Row label="Git">
               <div className="flex items-center gap-2">
@@ -464,11 +464,11 @@ export default function TaskHeader({
                 </button>
               )}
             </Row>
-            <GitHubAuthWarning />
+            <div className="lg:col-span-2"><GitHubAuthWarning /></div>
           </>
         )}
         {task.agent_notes && (
-          <div>
+          <div className="lg:col-span-2">
             <p className="text-xs text-slate-500 mb-1" style={{ minHeight: '1.5em' }}>Agent Notes</p>
             <button
               type="button"

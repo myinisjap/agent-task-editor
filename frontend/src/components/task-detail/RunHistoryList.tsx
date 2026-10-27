@@ -1,4 +1,5 @@
 import { Fragment, useState } from 'react'
+import { formatRunStatus } from '../../lib/format'
 import type { AgentRun, AgentConfig, ProviderConfig } from '../../api/client'
 
 // formatTokenCount renders a token count compactly (e.g. "1.2k") for the
@@ -106,7 +107,7 @@ export default function RunHistoryList({
                         {agentConfigs.find((a) => a.id === run.agent_config_id)?.name}
                       </span>
                     )}
-                    <span className={`shrink-0 ${
+                    <span title={run.status} className={`shrink-0 ${
                       run.status === 'completed'     ? 'text-emerald-400' :
                       run.status === 'running'       ? 'text-yellow-400 animate-pulse' :
                       run.status === 'failed'        ? 'text-red-400' :
@@ -115,7 +116,7 @@ export default function RunHistoryList({
                       // Interrupted by a server restart: not a failure, so neutral grey.
                       run.status === 'interrupted'   ? 'text-slate-400' :
                       'text-slate-500'
-                    }`}>{run.status}</span>
+                    }`}>{formatRunStatus(run.status)}</span>
                     {run.ladder_rung != null && (
                       <span className="text-[11px] text-indigo-300" title="Escalation ladder rung (effort from current agent config)">
                         {ladderLabel(run, agentConfigs, providerConfigs)}

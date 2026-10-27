@@ -39,3 +39,14 @@ describe('RunHistoryList ladder badge', () => {
     expect(screen.queryByText(/^rung /)).not.toBeInTheDocument()
   })
 })
+
+describe('RunHistoryList status words', () => {
+  it('shows readable statuses with the raw value in title', () => {
+    renderRuns([
+      { id: 'run-0000003', agent_config_id: 'a1', status: 'completed' },
+      { id: 'run-0000004', agent_config_id: 'a1', status: 'waiting_human' },
+    ])
+    expect(screen.getByText('Done')).toHaveAttribute('title', 'completed')
+    expect(screen.getByText('Waiting on you')).toHaveAttribute('title', 'waiting_human')
+  })
+})

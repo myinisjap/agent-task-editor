@@ -20,6 +20,10 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Changed
+- **Readable pipeline graph.** Pipeline → Overview and the Workflow tab preview lay the workflow out left-to-right in board column order (failure/rework edges loop above/below), with larger nodes showing the label name, agent + provider/model or Human gate, an amber "No agent" + Assign action, and Opens PR / WIP / Verify badges. Zoom is clamped so text never renders below ~12px; wide graphs pan with a hint instead of shrinking. The canvas follows the light/dark theme; phones get a vertical layout.
+
+- **Board fits the screen.** Empty columns render as narrow vertical strips (still drop targets; they expand on hover/drag-over), terminal columns such as Done start collapsed to a count and remember expand/collapse per workflow, and non-empty columns share the remaining width so a typical board fits at 1440px (horizontal scroll remains for many columns). New desktop "Group by repo" toggle renders one swimlane per repo, kept in the URL (`?group=repo`). Phone layout unchanged.
+
 
 - **Run timeline in the Logs tab.** Each run starts with a summary card (outcome and why, agent and provider/model, duration, cost, files changed, commands and tests with pass/fail, rework loop; a live run shows its current step), followed by steps grouped into collapsible sections (files read, edits, shell commands with exit codes, tests, messages to/from you, errors), with long output truncated behind "Show more" and a closing "Next step" line (Reply / Retry / Open Health…). Debug still shows every raw event.
 - **Inbox as a decision queue.** Inbox sections are now Decide / Answer / Fix setup; Decide rows show the review brief's one-line summary, diff size, cost, verify result, risk flags and preview count (new `GET /needs-me` fields) with Approve and Request changes (note); login/toolchain/budget escalations moved to Fix setup. Overview's own queue is replaced by a "Needs you (N)" link to the Inbox; the nav badge, tab badge, Overview and Inbox heading share one count.
@@ -28,6 +32,8 @@ triggers the "Release" workflow the same way.
 
 - **One quiet, tiered status area.** Only a provider-dispatch pause shows a slim, session-dismissible banner (one line on phones); other health problems show as a counted dot on Settings/Health; advice (backups, `REPO_BASE_DIR`, update checks) lives only on Settings → Health with a per-check "Don't remind me" (API-unauthenticated stays un-snoozable). The Get Started card shows one "N setup issues · View health" line, and "Notifications blocked" in the sidebar now explains how to re-enable notifications.
 - **Decision-first review on Task Detail (desktop).** Tasks waiting at a human gate get a review layout at ≥1280px: header with title, state, repo, cost, run count and Approve ("Approve and open PR" when the next label opens a PR) / Request changes; the diff (with preview strip) or plan in the main pane, logs/details as tabs; and a sticky right rail with the review brief, verification and runs. The review brief now always sits below the task title.
+
+- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
 
 ### Added
 

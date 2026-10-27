@@ -237,6 +237,15 @@ export function BoardHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Fitting the board</h3>
+        <p>
+          Empty columns shrink to a narrow strip (hover or drag over one to expand it), and
+          terminal columns like Done start collapsed to a count — click to expand; your choice is
+          remembered per workflow. <strong>Group by repo</strong> splits the board into one
+          swimlane per repo and is kept in the URL.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">Agents pick up work automatically</h3>
         <p>
           Any label with an agent-triggered transition is watched by the dispatcher: once a task
@@ -692,7 +701,16 @@ export function TaskDetailHelp() {
           On wide screens (1280px and up), a task waiting at a human gate shows{' '}
           <strong>Approve</strong> / <strong>Request changes</strong> in the header, with the
           diff (or the plan, on plan-review labels) beside the review brief, verification and
-          runs. Approve reads "Approve and open PR" when the next label opens a PR.
+          runs. Approve reads "Approve and open PR" when the next label opens a PR. On tablets the
+          brief stacks above the diff; on phones a compact brief sits at the top and
+          Approve / Request changes are pinned at the bottom.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Details</h3>
+        <p>
+          Dependencies, force move, label history and source comments live under the collapsed{' '}
+          <strong>Details</strong> toggle. Force move bypasses the workflow's rules for a stuck task.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
