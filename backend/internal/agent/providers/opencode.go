@@ -641,7 +641,7 @@ func (r *OpencodeRunner) runAttempt(ctx context.Context, input agent.RunInput, l
 		// may reflect an internal CLI error (mirrors qwen.go/claude.go).
 		if err != nil {
 			if res.Outcome != "" {
-				logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("opencode exited with error but had outcome %q — treating as failed", res.Outcome), At: time.Now()}
+				logCh <- agent.LogEntry{Type: agent.LogSystem, Content: exitErrorOutcomeMsg("opencode", res.Outcome), At: time.Now()}
 			}
 			failed := agent.Result{Status: "failed", SessionID: finalSession}
 			priceRun(&failed)
@@ -661,7 +661,7 @@ func (r *OpencodeRunner) runAttempt(ctx context.Context, input agent.RunInput, l
 		// forward on an unverified result. Every other CLI provider now applies
 		// this same override (claude's stricter rule, adopted for parity).
 		if outcome != "" {
-			logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("opencode exited with error but had outcome %q — treating as failed", outcome), At: time.Now()}
+			logCh <- agent.LogEntry{Type: agent.LogSystem, Content: exitErrorOutcomeMsg("opencode", outcome), At: time.Now()}
 		}
 		// Usage/cost must still be persisted here even though the run
 		// failed — money may have been spent before the crash (mirrors

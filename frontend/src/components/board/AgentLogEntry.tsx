@@ -1,9 +1,17 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { resultView, type LogRow } from '../../lib/groupAgentLog'
+import type { LogSeverity } from '../../lib/logEvents'
 
 interface Props {
   row: LogRow
+}
+
+const SEVERITY_STYLE: Record<LogSeverity, { glyph: string; icon: string; text: string; row: string }> = {
+  error: { glyph: '✕', icon: 'text-red-400', text: 'text-red-300', row: 'bg-red-950/20' },
+  warning: { glyph: '◆', icon: 'text-yellow-600', text: 'text-yellow-500', row: '' },
+  info: { glyph: '•', icon: 'text-slate-500', text: 'text-slate-300', row: '' },
+  debug: { glyph: '·', icon: 'text-slate-600', text: 'text-slate-600', row: 'opacity-80' },
 }
 
 const TOOL_ICONS: Record<string, string> = {
@@ -203,17 +211,23 @@ export default function AgentLogEntry({ row }: Props) {
       )
     }
 
-    case 'system_event':
+    case 'system_event': {
+      const sev = SEVERITY_STYLE[parsed.severity]
       return (
-        <div className="flex gap-2 py-1 px-3 my-0.5">
-          <span className="text-yellow-600 shrink-0 text-xs">◆</span>
-          <span className="text-yellow-500 text-xs">{parsed.event}</span>
+        <div
+          data-testid="system-event"
+          data-severity={parsed.severity}
+          className={`flex gap-2 py-1 px-3 my-0.5 ${sev.row}`}
+        >
+          <span className={`${sev.icon} shrink-0 text-xs`}>{sev.glyph}</span>
+          <span className={`${sev.text} text-xs`}>{parsed.event}</span>
           {parsed.detail && (
             <span className="text-slate-500 text-xs ml-1 truncate">{parsed.detail}</span>
           )}
           <Timestamp ts={ts} />
         </div>
       )
+    }
 
     case 'text': {
       const isError = log.type === 'stderr'

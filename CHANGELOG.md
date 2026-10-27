@@ -21,6 +21,10 @@ triggers the "Release" workflow the same way.
 
 ### Changed
 
+- **Readable run logs.** System events in the Logs tab now carry a severity (errors red, warnings amber, info neutral). Internal events (CLI pid, effort, UI invalidate, unknown CLI bookkeeping) only show with Debug on. Log entries get a monotonic `seq` (migration 081, on `AgentLog` and the `agent.log`/replay WebSocket entries) so same-second entries keep their real order (a failure no longer appears above "Session started"). The exit-error/outcome conflict line now reads "Run failed: <cli> exited with an error (it had reported "success")". Escalations in Inbox, Dashboard and Task Detail show a one-line explanation and next step for every reason.
+
+
+- **One quiet, tiered status area.** Only a provider-dispatch pause shows a slim, session-dismissible banner (one line on phones); other health problems show as a counted dot on Settings/Health; advice (backups, `REPO_BASE_DIR`, update checks) lives only on Settings → Health with a per-check "Don't remind me" (API-unauthenticated stays un-snoozable). The Get Started card shows one "N setup issues · View health" line, and "Notifications blocked" in the sidebar now explains how to re-enable notifications.
 - **Decision-first review on Task Detail (desktop).** Tasks waiting at a human gate get a review layout at ≥1280px: header with title, state, repo, cost, run count and Approve ("Approve and open PR" when the next label opens a PR) / Request changes; the diff (with preview strip) or plan in the main pane, logs/details as tabs; and a sticky right rail with the review brief, verification and runs. The review brief now always sits below the task title.
 
 - **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
@@ -40,6 +44,8 @@ triggers the "Release" workflow the same way.
 - Escalation ladder: agent configs can define `escalation_ladder` rungs (provider config + effort) used after consecutive failures / review bounce-backs on that stage; the rung is recorded on each run, shown in Task Detail, and summarized on Agent Performance. Empty by default (no behaviour change).
 
 ### Fixed
+- Light mode: secondary buttons, active nav/tab items, hover link colours and -700/-800 accent buttons no longer show white text on light grey or pastel fills (now `text-slate-50` or -600 fills; amber buttons use dark text).
+- Added an axe `color-contrast` e2e spec (Inbox, Board, Task Detail, Pipeline, Settings → Health, both themes) with an explicit allowlist of known existing violations, plus a static vitest guard against `text-white` on flipping fills.
 
 - **Board card titles no longer get crushed by status badges.** The title now has its own line (up to 3 lines) and badges wrap in a row below it, in both expanded and condensed modes and on phones. A waiting task now shows one "needs you" badge carrying the escalation reason, instead of both the escalation badge and a separate "Needs you" badge.
 - **Parents no longer auto-advance to testing when subtasks finish** (they get an integration run on their current label; agent_ignore parents keep the old behaviour), and a parent or overlap-serialized sibling can no longer be dispatched between a subtask reaching a terminal label and its branch being merged back (subtask blockers now count as satisfied only once merged).

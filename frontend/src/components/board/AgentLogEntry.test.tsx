@@ -94,3 +94,21 @@ describe('AgentLogEntry — merged tool rows', () => {
     expect(screen.getByRole('button')).toBeDisabled()
   })
 })
+
+describe('AgentLogEntry system events', () => {
+  it('styles by severity', () => {
+    const l = logs(
+      ['system', 'Run failed: claude exited with an error (it had reported "success")'],
+      ['system', 'Human reply: ok'],
+    )
+    // logs() JSON-encodes content; undo for plain-text system lines
+    l.forEach((e) => { e.content = JSON.parse(e.content) })
+    const rows = groupLogRows(l, false, false)
+    render(<>{rows.map((r) => <AgentLogEntry key={r.key} row={r} />)}</>)
+    const [err, info] = screen.getAllByTestId('system-event')
+    expect(err.dataset.severity).toBe('error')
+    expect(err.innerHTML).toContain('text-red-')
+    expect(info.dataset.severity).toBe('info')
+    expect(info.innerHTML).not.toContain('text-red-')
+  })
+})

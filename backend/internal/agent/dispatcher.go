@@ -977,6 +977,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			Timestamp:  time.Now(),
 			Type:       "system",
 			Content:    "Human reply: " + *opts.humanReply,
+			Seq:        NextLogSeq(),
 		}); err != nil {
 			log.Warn("dispatcher: record human reply log", "err", err)
 		}

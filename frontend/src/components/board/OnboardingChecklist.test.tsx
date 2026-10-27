@@ -8,6 +8,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import OnboardingChecklist from './OnboardingChecklist'
 import type { AgentConfig, ProviderCheck, ProviderConfig, Repo, Task } from '../../api/client'
+import { useHealthStore } from '../../stores/health'
 import { useReposStore } from '../../stores/repos'
 import { useTasksStore } from '../../stores/tasks'
 import { useProviderConfigsStore } from '../../stores/providerConfigs'
@@ -145,6 +146,7 @@ beforeEach(() => {
   tasksListMock.mockResolvedValue({ items: [], nextCursor: null })
   providerConfigsListMock.mockResolvedValue([])
   agentsListMock.mockResolvedValue([])
+  useHealthStore.setState({ checks: [], paused: [], snoozed: [], loaded: false })
   healthProvidersMock.mockResolvedValue({ checks: [] })
   workflowsListMock.mockResolvedValue([defaultWorkflow()])
 })
@@ -228,7 +230,7 @@ describe('OnboardingChecklist', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('surfaces a failing readiness check inline under its step', async () => {
+  it('shows one health summary line instead of per-step check text', async () => {
     healthProvidersMock.mockResolvedValue({
       checks: [
         check({
@@ -242,8 +244,10 @@ describe('OnboardingChecklist', () => {
 
     renderChecklist()
 
-    expect(await screen.findByText('Claude CLI not authenticated')).toBeInTheDocument()
-    expect(screen.getByText(/Run `claude login`/)).toBeInTheDocument()
+    const line = await screen.findByTestId('onboarding-health-summary')
+    expect(line).toHaveTextContent('1 setup issue · View health')
+    expect(screen.getByRole('link', { name: 'View health' })).toHaveAttribute('href', '/settings/health')
+    expect(screen.queryByText('Claude CLI not authenticated')).not.toBeInTheDocument()
   })
 
   it('dismisses permanently via the Dismiss button', async () => {

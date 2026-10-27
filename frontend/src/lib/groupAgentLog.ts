@@ -79,6 +79,7 @@ export function groupLogRows(logs: AgentLog[], debug: boolean, isRunning: boolea
   for (const log of logs) {
     const parsed = parseLogContent(log.type, log.content, debug)
     if (parsed.kind === 'hidden') continue
+    if (parsed.kind === 'system_event' && parsed.severity === 'debug' && !debug) continue
 
     if (parsed.kind === 'tool_result') {
       const target = parsed.toolUseId ? awaiting.get(parsed.toolUseId) : undefined

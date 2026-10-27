@@ -99,7 +99,7 @@ WHERE id = ?
 RETURNING *;
 
 -- name: ListAgentLogs :many
-SELECT * FROM agent_logs WHERE agent_run_id = ? ORDER BY timestamp ASC;
+SELECT * FROM agent_logs WHERE agent_run_id = ? ORDER BY timestamp ASC, seq ASC, id ASC;
 
 -- name: ListAgentLogsPage :many
 -- Cursor-paginated log fetch, newest first. Returns the most recent entries
@@ -107,7 +107,7 @@ SELECT * FROM agent_logs WHERE agent_run_id = ? ORDER BY timestamp ASC;
 -- oldest entry the caller already has). An empty cursor returns the newest
 -- entries (the tail). Callers reverse the slice for chronological display and
 -- use the oldest returned id as the next cursor to "load earlier". Ordering is
--- (timestamp, id) descending with id as a stable tiebreaker; the cursor
+-- (timestamp, seq, id) descending with seq then id as stable tiebreakers; the cursor
 -- comparison reads the anchor row's own timestamp so it matches the ORDER BY
 -- regardless of timestamp text format. Positional params (?1 run_id, ?2 before
 -- cursor, ?3 limit) are used instead of @named ones to sidestep a byte-offset
@@ -124,9 +124,12 @@ WHERE l.agent_run_id = ?1
   AND (
     ?2 = ''
     OR l.timestamp < (SELECT timestamp FROM agent_logs WHERE id = ?2)
-    OR (l.timestamp = (SELECT timestamp FROM agent_logs WHERE id = ?2) AND l.id < ?2)
+    OR (l.timestamp = (SELECT timestamp FROM agent_logs WHERE id = ?2) AND (
+      l.seq < (SELECT seq FROM agent_logs WHERE id = ?2)
+      OR (l.seq = (SELECT seq FROM agent_logs WHERE id = ?2) AND l.id < ?2)
+    ))
   )
-ORDER BY l.timestamp DESC, l.id DESC
+ORDER BY l.timestamp DESC, l.seq DESC, l.id DESC
 LIMIT ?3;
 
 -- name: CountAgentLogs :one
@@ -138,8 +141,8 @@ SELECT COUNT(*) FROM agent_logs WHERE agent_run_id = ?;
 SELECT COUNT(*) FROM agent_logs;
 
 -- name: CreateAgentLog :exec
-INSERT INTO agent_logs (id, agent_run_id, timestamp, type, content)
-VALUES (?, ?, ?, ?, ?);
+INSERT INTO agent_logs (id, agent_run_id, timestamp, type, content, seq)
+VALUES (?, ?, ?, ?, ?, ?);
 
 -- name: DeleteOldAgentLogs :execrows
 -- Deletes agent_logs rows belonging to runs in a terminal status

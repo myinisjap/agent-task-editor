@@ -9,6 +9,7 @@ import { useHealthStore } from '../stores/health'
 import { useWorkflowStore } from '../stores/workflow'
 import { buildInbox, inboxCount, itemActions } from '../lib/inbox'
 import { needsMeReasonLabel } from '../lib/needsMe'
+import { escalationInfo } from '../lib/escalation'
 import { formatRelativeAge } from '../lib/format'
 import { sideEffectText } from '../components/shared/SideEffectBadge'
 import { providerLabel } from '../components/shared/ProviderPausedBanner'
@@ -92,7 +93,7 @@ export default function InboxPage() {
     return (
       <Row key={item.task_id} to={`/tasks/${item.task_id}`} error={errors[item.task_id]}>
         <div className="min-w-0 break-words">
-          <Link to={`/tasks/${item.task_id}`} className="text-sm font-medium text-slate-200 hover:text-white hover:underline">
+          <Link to={`/tasks/${item.task_id}`} className="text-sm font-medium text-slate-200 hover:text-slate-50 hover:underline">
             {item.task_title}
           </Link>
           <span className="ml-2 align-middle text-[10px] px-1.5 py-0.5 rounded bg-pink-900/60 text-pink-200 font-medium">
@@ -104,6 +105,10 @@ export default function InboxPage() {
             </span>
           )}
           {item.message && <p className="text-xs text-slate-400 mt-1">{item.message}</p>}
+          {item.reason === 'waiting_human' && (() => {
+            const esc = escalationInfo(item.escalation_reason)
+            return <p className="text-xs text-slate-500 mt-1">{esc.explanation} {esc.nextStep}</p>
+          })()}
           {item.risk_flags && item.risk_flags.length > 0 && (
             <div className="mt-1">
               <RiskFlagChips codes={item.risk_flags} />
@@ -165,7 +170,7 @@ export default function InboxPage() {
         {groups.side_effect.map(({ task, effects, since }) => (
           <Row key={task.id} to={`/tasks/${task.id}`} error={errors[`fx:${task.id}`]}>
             <div className="min-w-0 break-words">
-              <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-slate-200 hover:text-white hover:underline">
+              <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-slate-200 hover:text-slate-50 hover:underline">
                 {task.title}
               </Link>
               {effects.map((e) => (
@@ -200,7 +205,7 @@ export default function InboxPage() {
         {groups.source_edit.map(({ task, since }) => (
           <Row key={task.id} to={`/tasks/${task.id}`} error={errors[`su:${task.id}`]}>
             <div className="min-w-0 break-words">
-              <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-slate-200 hover:text-white hover:underline">
+              <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-slate-200 hover:text-slate-50 hover:underline">
                 {task.title}
               </Link>
               <p className="text-xs text-amber-300 mt-1">

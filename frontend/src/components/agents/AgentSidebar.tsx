@@ -63,7 +63,7 @@ export default function AgentSidebar({
           {!multiMode && (
             <button
               onClick={() => { onNew(); onClose() }}
-              className="text-xs px-2 py-1 rounded bg-indigo-700 hover:bg-indigo-600 text-white"
+              className="text-xs px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white"
             >
               + New
             </button>
@@ -172,7 +172,7 @@ export default function AgentSidebar({
               <button
                 onClick={() => onBulkToggle(true)}
                 disabled={bulkSaving}
-                className="text-xs px-2 py-1.5 rounded bg-green-700 hover:bg-green-600 text-white disabled:opacity-50"
+                className="text-xs px-2 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
               >
                 {bulkSaving ? 'Saving…' : 'Enable All'}
               </button>

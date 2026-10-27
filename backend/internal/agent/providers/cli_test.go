@@ -826,3 +826,20 @@ func TestApplyRuntime_NodePin_FailsClosedWhenSystemNodeUnresolvable(t *testing.T
 		t.Fatal("expected an error when system node can't be resolved for a node-script CLI")
 	}
 }
+
+func TestExitErrorOutcomeMsg(t *testing.T) {
+	for _, cli := range []string{"claude", "codex", "opencode", "qwen"} {
+		for _, outcome := range []string{"success", "failure"} {
+			msg := exitErrorOutcomeMsg(cli, outcome)
+			if !strings.Contains(msg, "Run failed") || !strings.Contains(msg, cli) {
+				t.Errorf("msg %q missing Run failed / cli name", msg)
+			}
+			if strings.Contains(msg, "treating as failed") {
+				t.Errorf("msg %q uses old wording", msg)
+			}
+			if c := agent.ClassifyLine(msg); c != agent.ClassNone {
+				t.Errorf("msg %q classified as %v", msg, c)
+			}
+		}
+	}
+}
