@@ -4,7 +4,7 @@ export interface TabDef {
   to: string
   label: string
   /** Optional status dot (e.g. failing health check). */
-  badge?: { severity: 'error' | 'warn'; label: string } | null
+  badge?: { severity: 'error' | 'warn'; label: string; count?: number } | null
 }
 
 /**
@@ -32,13 +32,21 @@ export default function TabbedPage({ testId, tabs }: { testId: string; tabs: Tab
             }
           >
             {label}
-            {badge && (
+            {badge && (badge.count && badge.count > 0 ? (
+              <span
+                role="img"
+                aria-label={badge.label}
+                className={`ml-2 inline-block min-w-[1.25rem] rounded-full px-1 text-center text-[10px] font-semibold leading-4 align-middle text-white ${badge.severity === 'error' ? 'bg-red-600' : 'bg-amber-500'}`}
+              >
+                {badge.count}
+              </span>
+            ) : (
               <span
                 role="img"
                 aria-label={badge.label}
                 className={`ml-2 inline-block w-2 h-2 rounded-full align-middle ${badge.severity === 'error' ? 'bg-red-500' : 'bg-amber-400'}`}
               />
-            )}
+            ))}
           </NavLink>
         ))}
       </nav>
