@@ -3,6 +3,8 @@ import { useProviderConfigsStore } from '../stores/providerConfigs'
 import { useAgentsStore } from '../stores/agents'
 import type { ProviderConfig, ModelList } from '../api/client'
 import ProviderConfigForm, { type FormState } from '../components/providers/ProviderConfigForm'
+import ConfirmDialog from '../components/shared/ConfirmDialog'
+import { errMessage } from '../lib/errMessage'
 import HelpModal from '../components/shared/HelpModal'
 import { X } from 'lucide-react'
 import { Button, Icon, PageFrame } from '../components/ui'
@@ -21,6 +23,8 @@ export default function ProviderConfigPage() {
   const [fetchingModels, setFetchingModels] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  const [error, setError] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   useEffect(() => {
     fetchConfigs()
@@ -42,17 +46,20 @@ export default function ProviderConfigPage() {
   }, [form.provider]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function selectConfig(pc: ProviderConfig) {
+    setError('')
     setSelected(pc)
     setForm({ name: pc.name, provider: pc.provider, model: pc.model, env: pc.env })
   }
 
   function newConfig() {
+    setError('')
     setSelected(null)
     setForm(EMPTY)
   }
 
   async function handleSave() {
     setSaving(true)
+    setError('')
     try {
       // form.env is sent as-is. The server owns env's write-only merge
       // semantics (see backend/internal/api/handlers/provider_env.go): a
@@ -70,22 +77,25 @@ export default function ProviderConfigPage() {
         await create(payload)
       }
       newConfig()
-    } catch (e: any) {
-      alert(e.message)
+    } catch (e: unknown) {
+      setError(errMessage(e))
     } finally {
       setSaving(false)
     }
   }
 
-  async function handleDelete() {
+  function handleDelete() {
     if (!selected) return
-    if (!confirm(`Delete provider config "${selected.name}"?`)) return
+    setConfirmDelete(true)
+  }
+
+  async function performDelete() {
+    if (!selected) return
     setDeleting(true)
     try {
       await deleteConfig(selected.id)
+      setConfirmDelete(false)
       newConfig()
-    } catch (e: any) {
-      alert(e.message)
     } finally {
       setDeleting(false)
     }
@@ -161,8 +171,24 @@ export default function ProviderConfigPage() {
           deleting={deleting}
           onSave={handleSave}
           onDelete={handleDelete}
+          error={error}
         />
       </div>
+
+      {confirmDelete && selected && (
+        <ConfirmDialog
+          destructive
+          title={`Delete provider config "${selected.name}"?`}
+          confirmLabel="Delete provider config"
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={performDelete}
+        >
+          <p>
+            The saved model and environment settings are permanently deleted. If agents or chat sessions still use this
+            config, the server will refuse and tell you which.
+          </p>
+        </ConfirmDialog>
+      )}
 
       {showHelp && (
         <HelpModal title="About Providers" onClose={() => setShowHelp(false)}>

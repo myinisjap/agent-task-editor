@@ -18,6 +18,8 @@ export default function AgentSidebar({
   setShowTemplates,
   creatingTemplate,
   onApplyTemplate,
+  templateError,
+  bulkError,
   isOpen,
   onClose,
 }: {
@@ -35,6 +37,8 @@ export default function AgentSidebar({
   setShowTemplates: (updater: (v: boolean) => boolean) => void
   creatingTemplate: boolean
   onApplyTemplate: (t: typeof TEMPLATES[0]) => void
+  templateError?: string
+  bulkError?: string
   isOpen: boolean
   onClose: () => void
 }) {
@@ -104,6 +108,7 @@ export default function AgentSidebar({
             ))}
           </div>
         )}
+        {templateError && <p role="alert" className="text-xs text-danger px-4 pb-2">{templateError}</p>}
       </div>
 
       {/* Agent list */}
@@ -169,6 +174,7 @@ export default function AgentSidebar({
           <p className="text-xs text-fg-muted px-1">
             {multiSelected.size > 0 ? `${multiSelected.size} selected` : 'Tap agents to select'}
           </p>
+          {bulkError && <p role="alert" className="text-xs text-danger px-1">{bulkError}</p>}
           {multiSelected.size > 0 && (
             <>
               <button

@@ -5,12 +5,11 @@ import { labelDisplayName } from '../../lib/labelDisplay'
 import { useCallback, useMemo, useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import type { Task, WorkflowLabel } from '../../api/client'
-import { api } from '../../api/client'
-import { useTasksStore } from '../../stores/tasks'
 import { useAgentsStore } from '../../stores/agents'
 import { useWorkflowStore } from '../../stores/workflow'
 import { unstaffedLabelNames } from '../../lib/staffing'
 import TaskCard from './TaskCard'
+import { useDeleteTaskConfirm } from './useDeleteTaskConfirm'
 import { dropStateClass, type DropState } from './dropState'
 import { columnWidthClass, type ColumnMode } from '../../lib/boardLayout'
 
@@ -47,7 +46,6 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
   const expandedTransient = mode !== 'full' && ((hovered && !dragging) || isOver)
   const compact = mode !== 'full' && !expandedTransient
   const displayName = labelDisplayName(label)
-  const remove = useTasksStore((s) => s.remove)
   const [expanded, setExpanded] = useState(false)
 
   // Flag agent-triggerable columns nobody works. Only once agent configs have
@@ -82,20 +80,12 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
       ? `At/over WIP limit (${tasks.length}/${wipLimit}) — visual warning only, dispatch is not blocked`
       : undefined
 
-  // Stable callback identity (keyed only on `remove`, not per-render) so
+  // Stable callback identity (from useDeleteTaskConfirm) so
   // memo(TaskCard) below can actually skip re-rendering unrelated cards.
   // TaskCard calls onDelete(task.id) directly rather than the column handing
   // it a pre-bound per-card closure (which would get a fresh identity every
   // TaskColumn render and defeat the memo).
-  const handleDelete = useCallback(async (taskId: string) => {
-    try {
-      await api.tasks.delete(taskId)
-      remove(taskId)
-    } catch (e) {
-      console.error('Failed to delete task:', e)
-      alert(String(e))
-    }
-  }, [remove])
+  const { requestDelete: handleDelete, dialog: deleteDialog } = useDeleteTaskConfirm()
 
   // Same reasoning for multi-select: pass the ordered visible-task ids as a
   // stable array (memoized alongside visibleTasks upstream isn't necessary
@@ -209,6 +199,7 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
           </button>
         )}
       </div>
+      {deleteDialog}
     </div>
   )
 }

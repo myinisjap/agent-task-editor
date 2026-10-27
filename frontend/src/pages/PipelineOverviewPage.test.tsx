@@ -175,6 +175,7 @@ describe('PipelineOverviewPage', () => {
       await addLabelNamed(user, 'qa')
       await screen.findByTestId('pipeline-node-qa')
       await user.click(screen.getByRole('button', { name: 'Discard' }))
+      await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
       expect(screen.queryByTestId('pipeline-node-qa')).not.toBeInTheDocument()
       expect(updateYaml).not.toHaveBeenCalled()
       expect(screen.getByRole('button', { name: 'Edit workflow' })).toBeInTheDocument()

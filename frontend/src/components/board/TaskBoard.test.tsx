@@ -176,7 +176,6 @@ describe('TaskBoard drag-to-move', () => {
   it('confirms before moving a blocked task into an agent-triggerable column, and skips the move if declined', async () => {
     const blockedTask = task({ blocked_by_count: 2 })
     useTasksStore.setState({ tasks: [blockedTask], loading: false, error: null })
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
 
     const transitions = [
       { id: 't1', workflow_id: 'wf', from_label: 'doing', to_label: 'done', trigger_type: 'agent' as const },
@@ -195,12 +194,35 @@ describe('TaskBoard drag-to-move', () => {
 
     await dragCardToColumn('Move me', 'Doing')
 
-    await waitFor(() => {
-      expect(confirmSpy).toHaveBeenCalled()
-    })
+    expect(await screen.findByRole('dialog', { name: 'Move blocked task?' })).toBeInTheDocument()
     expect(moveLabelMock).not.toHaveBeenCalled()
 
-    confirmSpy.mockRestore()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(moveLabelMock).not.toHaveBeenCalled()
+  })
+
+  it('moves a blocked task once "Move anyway" is clicked', async () => {
+    const blockedTask = task({ blocked_by_count: 2 })
+    useTasksStore.setState({ tasks: [blockedTask], loading: false, error: null })
+
+    const transitions = [
+      { id: 't0', workflow_id: 'wf', from_label: 'todo', to_label: 'doing', trigger_type: 'human' as const },
+      { id: 't1', workflow_id: 'wf', from_label: 'doing', to_label: 'done', trigger_type: 'agent' as const },
+    ]
+
+    render(
+      <MemoryRouter>
+        <TaskBoard labels={labels} tasks={[blockedTask]} runningTaskIds={new Set()} transitions={transitions} />
+      </MemoryRouter>,
+    )
+
+    await dragCardToColumn('Move me', 'Doing')
+    fireEvent.click(await screen.findByRole('button', { name: 'Move anyway' }))
+
+    await waitFor(() => {
+      expect(moveLabelMock).toHaveBeenCalledWith('task-1', 'doing')
+    })
   })
 
   it('surfaces the server error when a move is rejected', async () => {

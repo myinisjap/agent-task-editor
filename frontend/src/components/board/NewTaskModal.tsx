@@ -1,6 +1,7 @@
 import { X } from 'lucide-react'
 import Icon from '../ui/Icon'
 import { useEffect, useRef, useState } from 'react'
+import { errMessage } from '../../lib/errMessage'
 import { api } from '../../api/client'
 import type { Repo, Task, TaskTemplate, Workflow } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
@@ -87,6 +88,11 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [templates, setTemplates] = useState<TaskTemplate[]>([])
+  // Inline (non-modal) replacements for the browser prompt and confirm dialogs: a nested ModalShell
+  // would double-register Escape + focus traps.
+  const [savingTemplateName, setSavingTemplateName] = useState<string | null>(null)
+  const [confirmingDeleteTemplate, setConfirmingDeleteTemplate] = useState(false)
+  const [templateError, setTemplateError] = useState('')
   const [templateId, setTemplateId] = useState('')
   const titleRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -129,31 +135,35 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
   }
 
   async function saveAsTemplate() {
-    const name = window.prompt('Template name:')
-    if (!name?.trim()) return
+    const name = (savingTemplateName ?? '').trim()
+    if (!name) return
+    setTemplateError('')
     try {
       const tpl = await api.templates.create({
-        name: name.trim(),
+        name,
         title: title.trim(),
         description: description.trim(),
         type,
       })
       setTemplates((prev) => [...prev, tpl].sort((a, b) => a.name.localeCompare(b.name)))
       setTemplateId(tpl.id)
+      setSavingTemplateName(null)
     } catch (e) {
-      setError(String(e))
+      setTemplateError(errMessage(e))
     }
   }
 
   async function deleteTemplate() {
     const tpl = templates.find((t) => t.id === templateId)
-    if (!tpl || !window.confirm(`Delete template "${tpl.name}"?`)) return
+    if (!tpl) return
+    setTemplateError('')
     try {
       await api.templates.delete(tpl.id)
       setTemplates((prev) => prev.filter((t) => t.id !== tpl.id))
       setTemplateId('')
+      setConfirmingDeleteTemplate(false)
     } catch (e) {
-      setError(String(e))
+      setTemplateError(errMessage(e))
     }
   }
 
@@ -261,7 +271,10 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
               {templateId && (
                 <button
                   type="button"
-                  onClick={deleteTemplate}
+                  onClick={() => {
+                    setTemplateError('')
+                    setConfirmingDeleteTemplate(true)
+                  }}
                   className="text-fg-subtle hover:text-danger transition-colors text-sm"
                   title="Delete this template"
                   aria-label="Delete this template"
@@ -270,6 +283,19 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
                 </button>
               )}
             </div>
+            {confirmingDeleteTemplate && templateId && (
+              <div className="flex items-center gap-2 text-xs text-fg-muted" role="group" aria-label="Confirm delete template">
+                <span className="flex-1">
+                  Delete template &quot;{templates.find((t) => t.id === templateId)?.name}&quot;? This can&apos;t be undone.
+                </span>
+                <button type="button" onClick={deleteTemplate} className="px-2 py-1 rounded bg-danger-solid text-on-accent hover:bg-danger-solid/90">
+                  Delete
+                </button>
+                <button type="button" onClick={() => setConfirmingDeleteTemplate(false)} className="px-2 py-1 text-fg-muted hover:text-fg">
+                  Keep
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -420,10 +446,49 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
 
         {error && <p className="text-xs text-danger">{error}</p>}
 
+        {savingTemplateName !== null && (
+          <div className="flex items-center gap-2">
+            <input
+              autoFocus
+              aria-label="Template name"
+              placeholder="Template name"
+              value={savingTemplateName}
+              onChange={(e) => setSavingTemplateName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  void saveAsTemplate()
+                } else if (e.key === 'Escape') {
+                  // Cancel just this row; keep the native event from reaching
+                  // ModalShell's window-level Escape handler (which would close the modal).
+                  e.nativeEvent.stopPropagation()
+                  setSavingTemplateName(null)
+                }
+              }}
+              className="flex-1 bg-surface-sunken border border-border rounded-lg px-3 py-1.5 text-sm text-fg focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+            <button
+              type="button"
+              onClick={() => void saveAsTemplate()}
+              disabled={!savingTemplateName.trim()}
+              className="px-3 py-1.5 text-sm bg-accent hover:bg-accent/90 disabled:opacity-50 text-on-accent rounded-lg"
+            >
+              Save
+            </button>
+            <button type="button" onClick={() => setSavingTemplateName(null)} className="px-3 py-1.5 text-sm text-fg-muted hover:text-fg">
+              Cancel
+            </button>
+          </div>
+        )}
+        {templateError && <p role="alert" className="text-xs text-danger">{templateError}</p>}
+
         <div className="flex items-center gap-2 pt-1">
           <button
             type="button"
-            onClick={saveAsTemplate}
+            onClick={() => {
+              setTemplateError('')
+              setSavingTemplateName('')
+            }}
             disabled={!title.trim()}
             className="px-3 py-1.5 text-sm text-fg-muted hover:text-fg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             title="Save the current title/description/type as a reusable template"

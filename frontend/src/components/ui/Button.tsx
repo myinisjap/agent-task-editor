@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes } from 'react'
+import type { ButtonHTMLAttributes, Ref } from 'react'
 import { cx } from './cx'
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
@@ -26,6 +26,7 @@ export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: ButtonVariant
   size?: ButtonSize
   loading?: boolean
+  ref?: Ref<HTMLButtonElement>
 }
 
 export default function Button({ variant = 'secondary', size = 'md', loading = false, className, disabled, type = 'button', children, ...rest }: ButtonProps) {

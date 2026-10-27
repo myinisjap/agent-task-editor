@@ -16,6 +16,8 @@ import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core'
 import type { Task, WorkflowLabel, WorkflowTransition } from '../../api/client'
 import { api } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
+import { showUndoToast } from '../../stores/toast'
+import ConfirmDialog from '../shared/ConfirmDialog'
 import TaskColumn from './TaskColumn'
 import AgentGroupColumn from './AgentGroupColumn'
 import { computeCondensedGroups } from '../../lib/condensedBoard'
@@ -136,6 +138,7 @@ function TaskBoardInner({
 }: Props & { onMoveError: (message: string) => void }) {
   const upsert = useTasksStore((s) => s.upsert)
   const isMobile = useIsMobile()
+  const [pendingBlockedMove, setPendingBlockedMove] = useState<{ task: Task; toLabel: string } | null>(null)
 
   const [expandedTerminals, setExpandedTerminals] = useState<Set<string>>(() => loadExpandedTerminals(workflowId))
   const [loadedFor, setLoadedFor] = useState(workflowId)
@@ -242,13 +245,14 @@ function TaskBoardInner({
     // so that's a deliberate choice, not a surprise.
     const blockedCount = task.blocked_by_count ?? 0
     if (blockedCount > 0 && agentTriggerableLabels.has(toLabel)) {
-      const ok = window.confirm(
-        `This task is blocked by ${blockedCount} unfinished dependency task${blockedCount === 1 ? '' : 's'}. ` +
-          `Moving it to "${toLabel}" won't start an agent until those finish. Move anyway?`,
-      )
-      if (!ok) return
+      setPendingBlockedMove({ task, toLabel })
+      return
     }
 
+    performMove(task, toLabel)
+  }
+
+  function performMove(task: Task, toLabel: string) {
     // The workflow has no transition for this move: the server would reject it
     // anyway, so don't move the card optimistically — just say why.
     if (!canHumanMove(transitions, task.label, toLabel)) {
@@ -257,15 +261,34 @@ function TaskBoardInner({
     }
 
     const snapshot = { ...task }
+    const fromLabel = task.label
+    const canUndo = canHumanMove(transitions, toLabel, fromLabel)
 
     // Optimistic update
     upsert({ ...task, label: toLabel })
 
-    api.tasks.moveLabel(taskId, toLabel).catch((e: unknown) => {
-      // Snap back on engine rejection and surface the server's reason
-      upsert(snapshot)
-      onMoveError(e instanceof Error && e.message ? e.message : 'Failed to move task')
-    })
+    api.tasks
+      .moveLabel(task.id, toLabel)
+      .then((res) => {
+        const updated = res ?? { ...task, label: toLabel }
+        upsert(updated)
+        if (canUndo) {
+          showUndoToast(`Moved "${task.title}" to ${toLabel}`, async () => {
+            upsert({ ...updated, label: fromLabel })
+            try {
+              upsert(await api.tasks.moveLabel(task.id, fromLabel, 'Undo move'))
+            } catch (e) {
+              upsert(updated)
+              throw e
+            }
+          })
+        }
+      })
+      .catch((e: unknown) => {
+        // Snap back on engine rejection and surface the server's reason
+        upsert(snapshot)
+        onMoveError(e instanceof Error && e.message ? e.message : 'Failed to move task')
+      })
   }
 
   const sortedLabels = [...labels].sort((a, b) => a.sort_order - b.sort_order)
@@ -451,6 +474,28 @@ function TaskBoardInner({
     )
   }
 
+  const dialog = pendingBlockedMove && (() => {
+    const { task, toLabel } = pendingBlockedMove
+    const n = task.blocked_by_count ?? 0
+    return (
+      <ConfirmDialog
+        title="Move blocked task?"
+        confirmLabel="Move anyway"
+        onCancel={() => setPendingBlockedMove(null)}
+        onConfirm={() => {
+          setPendingBlockedMove(null)
+          performMove(task, toLabel)
+        }}
+      >
+        <p>
+          This task is blocked by {n} unfinished dependency task{n === 1 ? '' : 's'}. Moving it to &quot;{toLabel}&quot; won&apos;t
+          start an agent until those finish.
+        </p>
+      </ConfirmDialog>
+    )
+  })()
+
+  const content = (() => {
   if (condensed && transitions.length > 0) {
     if (isMobile && groups.length > 0) {
       const currentGroup = groups[clampedCondensed]
@@ -561,6 +606,14 @@ function TaskBoardInner({
   }
 
   return renderDesktop()
+  })()
+
+  return (
+    <>
+      {content}
+      {dialog}
+    </>
+  )
 }
 
 // How long the rejected-move notice stays up before dismissing itself.

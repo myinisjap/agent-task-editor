@@ -33,6 +33,7 @@ export default function ProviderConfigForm({
   deleting,
   onSave,
   onDelete,
+  error,
   helpButton,
 }: {
   selected: ProviderConfig | null
@@ -44,6 +45,8 @@ export default function ProviderConfigForm({
   deleting: boolean
   onSave: () => void
   onDelete: () => void
+  /** Inline error from the last save. */
+  error?: string
   helpButton?: ReactNode
 }) {
   const caps = PROVIDER_CAPABILITIES[form.provider]
@@ -192,6 +195,7 @@ export default function ProviderConfigForm({
         </Field>
       </div>
 
+      {error && <p role="alert" className="text-sm text-danger mt-4">{error}</p>}
       <div className="flex gap-3 mt-6">
         <button
           onClick={onSave}

@@ -6,6 +6,8 @@ import { CSS } from '@dnd-kit/utilities'
 import type { Task } from '../../api/client'
 import { api } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
+import { showError, showUndoToast } from '../../stores/toast'
+import { errMessage } from '../../lib/errMessage'
 import { useReposStore } from '../../stores/repos'
 import { Badge, Icon } from '../ui'
 import GitStateBadge from './GitStateBadge'
@@ -43,7 +45,7 @@ function TaskCard({
   rateLimitedUntil?: string
   /** True once this task has crossed the cost early-warning threshold (see task.cost_warning WS event) */
   costWarned?: boolean
-  onDelete?: (taskId: string) => void
+  onDelete?: (task: Task) => void
   /** When set, renders a "Duplicate task" button that opens a pre-filled New Task modal for this task. */
   onDuplicate?: (task: Task) => void
   isEditable?: boolean
@@ -305,10 +307,14 @@ function TaskCard({
             onClick={async (e) => {
               e.stopPropagation()
               try {
-                const updated = await api.tasks.setPaused(task.id, !task.paused)
+                const prev = !!task.paused
+                const updated = await api.tasks.setPaused(task.id, !prev)
                 upsert(updated)
+                showUndoToast(`${prev ? 'Resumed' : 'Paused'} "${task.title}"`, async () =>
+                  upsert(await api.tasks.setPaused(task.id, prev)),
+                )
               } catch (err) {
-                alert(String(err))
+                showError(errMessage(err))
               }
             }}
             onPointerDown={(e) => e.stopPropagation()}
@@ -329,10 +335,14 @@ function TaskCard({
             onClick={async (e) => {
               e.stopPropagation()
               try {
-                const updated = await api.tasks.setArchived(task.id, !task.archived)
+                const prev = !!task.archived
+                const updated = await api.tasks.setArchived(task.id, !prev)
                 upsert(updated)
+                showUndoToast(`${prev ? 'Unarchived' : 'Archived'} "${task.title}"`, async () =>
+                  upsert(await api.tasks.setArchived(task.id, prev)),
+                )
               } catch (err) {
-                alert(String(err))
+                showError(errMessage(err))
               }
             }}
             onPointerDown={(e) => e.stopPropagation()}
@@ -374,7 +384,7 @@ function TaskCard({
             <button
               onClick={(e) => {
                 e.stopPropagation()
-                if (window.confirm('Delete this task?')) onDelete(task.id)
+                onDelete(task)
               }}
               onPointerDown={(e) => e.stopPropagation()}
               tabIndex={actionTabIndex}

@@ -10,6 +10,7 @@ import {
   type TaskTemplate,
   type Workflow,
 } from '../api/client'
+import ConfirmDialog from '../components/shared/ConfirmDialog'
 import HelpModal from '../components/shared/HelpModal'
 import { IntakeRulesHelp } from '../components/shared/pageHelp'
 import IntakeEndpointsSection from '../components/settings/IntakeEndpointsSection'
@@ -135,6 +136,7 @@ export default function IntakeRulesPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [showHelp, setShowHelp] = useState(false)
+  const [ruleToDelete, setRuleToDelete] = useState<IntakeRule | null>(null)
 
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState<RuleForm>(emptyForm)
@@ -263,10 +265,14 @@ export default function IntakeRulesPage() {
     }
   }
 
-  async function handleDelete(rule: IntakeRule) {
-    if (!confirm(`Delete intake rule "${rule.name}"?`)) return
+  function handleDelete(rule: IntakeRule) {
+    setRuleToDelete(rule)
+  }
+
+  async function performDelete(rule: IntakeRule) {
     await api.intakeRules.delete(rule.id)
     setRules((rs) => rs.filter((r) => r.id !== rule.id))
+    setRuleToDelete(null)
   }
 
   // move reorders a rule up/down by swapping sort_order with its neighbour
@@ -673,6 +679,18 @@ export default function IntakeRulesPage() {
       )}
 
       <IntakeEndpointsSection />
+
+      {ruleToDelete && (
+        <ConfirmDialog
+          destructive
+          title={`Delete intake rule "${ruleToDelete.name}"?`}
+          confirmLabel="Delete rule"
+          onCancel={() => setRuleToDelete(null)}
+          onConfirm={() => performDelete(ruleToDelete)}
+        >
+          <p>Incoming tasks will no longer be routed by this rule. Tasks it already routed are not affected.</p>
+        </ConfirmDialog>
+      )}
     </PageFrame>
   )
 }

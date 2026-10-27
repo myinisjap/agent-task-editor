@@ -9,6 +9,8 @@ import {
   type Workflow,
 } from '../../api/client'
 
+import ConfirmDialog from '../shared/ConfirmDialog'
+
 const inputCls =
   'bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500'
 
@@ -60,6 +62,7 @@ function curlExample(url: string, secret: string) {
 
 export default function IntakeEndpointsSection() {
   const [endpoints, setEndpoints] = useState<IntakeEndpoint[]>([])
+  const [pendingAction, setPendingAction] = useState<{ kind: 'delete' | 'rotate'; ep: IntakeEndpoint } | null>(null)
   const [repos, setRepos] = useState<Repo[]>([])
   const [workflows, setWorkflows] = useState<Workflow[]>([])
   const [loadError, setLoadError] = useState('')
@@ -163,24 +166,17 @@ export default function IntakeEndpointsSection() {
     }
   }
 
-  async function handleDelete(ep: IntakeEndpoint) {
-    if (!window.confirm(`Delete webhook endpoint "${ep.name}"?`)) return
-    try {
-      await api.intakeEndpoints.delete(ep.id)
-      setEndpoints((eps) => eps.filter((x) => x.id !== ep.id))
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : 'Failed to delete endpoint')
-    }
+  // Errors from these propagate to the ConfirmDialog, which shows them inline.
+  async function performDelete(ep: IntakeEndpoint) {
+    await api.intakeEndpoints.delete(ep.id)
+    setEndpoints((eps) => eps.filter((x) => x.id !== ep.id))
+    setPendingAction(null)
   }
 
-  async function handleRotate(ep: IntakeEndpoint) {
-    if (!window.confirm('Rotate the secret? The old secret stops working immediately.')) return
-    try {
-      const { secret } = await api.intakeEndpoints.rotateSecret(ep.id)
-      setSecretInfo({ ep, secret })
-    } catch (err) {
-      setLoadError(err instanceof Error ? err.message : 'Failed to rotate secret')
-    }
+  async function performRotate(ep: IntakeEndpoint) {
+    const { secret } = await api.intakeEndpoints.rotateSecret(ep.id)
+    setSecretInfo({ ep, secret })
+    setPendingAction(null)
   }
 
   async function handleTest() {
@@ -370,12 +366,34 @@ export default function IntakeEndpointsSection() {
               <div className="flex gap-2 text-xs">
                 <button onClick={() => void navigator.clipboard?.writeText(fullUrl(ep))} className="text-slate-400 hover:text-slate-200">Copy URL</button>
                 <button onClick={() => openEdit(ep)} className="text-slate-400 hover:text-slate-200">Edit</button>
-                <button onClick={() => void handleRotate(ep)} className="text-slate-400 hover:text-slate-200">Rotate secret</button>
-                <button onClick={() => void handleDelete(ep)} className="text-red-400 hover:text-red-300">Delete</button>
+                <button onClick={() => setPendingAction({ kind: 'rotate', ep })} className="text-slate-400 hover:text-slate-200">Rotate secret</button>
+                <button onClick={() => setPendingAction({ kind: 'delete', ep })} className="text-red-400 hover:text-red-300">Delete</button>
               </div>
             </li>
           ))}
         </ul>
+      )}
+      {pendingAction?.kind === 'delete' && (
+        <ConfirmDialog
+          destructive
+          title={`Delete webhook endpoint "${pendingAction.ep.name}"?`}
+          confirmLabel="Delete endpoint"
+          onCancel={() => setPendingAction(null)}
+          onConfirm={() => performDelete(pendingAction.ep)}
+        >
+          <p>Senders posting to its URL will start getting errors, and its secret is discarded.</p>
+        </ConfirmDialog>
+      )}
+      {pendingAction?.kind === 'rotate' && (
+        <ConfirmDialog
+          destructive
+          title={`Rotate secret for "${pendingAction.ep.name}"?`}
+          confirmLabel="Rotate secret"
+          onCancel={() => setPendingAction(null)}
+          onConfirm={() => performRotate(pendingAction.ep)}
+        >
+          <p>The old secret stops working immediately. Update every sender with the new secret.</p>
+        </ConfirmDialog>
       )}
     </section>
   )

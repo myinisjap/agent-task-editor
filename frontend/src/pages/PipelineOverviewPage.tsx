@@ -2,6 +2,7 @@ import { labelDisplayName } from '../lib/labelDisplay'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, type AgentConfig, type Workflow } from '../api/client'
+import ConfirmDialog from '../components/shared/ConfirmDialog'
 import WorkflowGraphEditor from '../components/shared/WorkflowGraphEditor'
 import { useTasksStore } from '../stores/tasks'
 import {
@@ -106,7 +107,9 @@ export default function PipelineOverviewPage() {
     setSavedNote(false)
     void fetchTasks()
   }
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
   const discard = () => {
+    setConfirmDiscard(false)
     setEditing(false)
     setDraft(null)
     setBaseline(null)
@@ -217,7 +220,7 @@ export default function PipelineOverviewPage() {
           )}
           {editing && (
             <>
-              <Button size="sm" onClick={discard} disabled={saving}>{dirty ? 'Discard' : 'Cancel'}</Button>
+              <Button size="sm" onClick={() => (dirty ? setConfirmDiscard(true) : discard())} disabled={saving}>{dirty ? 'Discard' : 'Cancel'}</Button>
               <Button size="sm" variant="primary" onClick={() => void save()} disabled={!dirty || saving || errors.length > 0}>
                 {saving ? 'Saving…' : 'Save'}
               </Button>
@@ -346,6 +349,21 @@ export default function PipelineOverviewPage() {
         </div>
       )}
       </div>
+      {confirmDiscard && (
+        <ConfirmDialog
+          destructive
+          title="Discard workflow changes?"
+          confirmLabel="Discard changes"
+          cancelLabel="Keep editing"
+          onCancel={() => setConfirmDiscard(false)}
+          onConfirm={discard}
+        >
+          <p>
+            Your unsaved edits to the {workflow?.name ?? 'workflow'} pipeline (labels, transitions and layout) will be lost.
+            The saved workflow is not changed.
+          </p>
+        </ConfirmDialog>
+      )}
     </PageFrame>
   )
 }
