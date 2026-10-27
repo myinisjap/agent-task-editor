@@ -34,6 +34,10 @@ export type WorkflowTransition = Schemas['WorkflowTransition']
 export type Workflow = Schemas['Workflow']
 export type AgentConfig = Schemas['AgentConfig']
 export type AgentConfigVersion = Schemas['AgentConfigVersion']
+export type AgentExperiment = Schemas['AgentExperiment']
+export type AgentExperimentArmStats = Schemas['AgentExperimentArmStats']
+export type AgentExperimentStart = Schemas['AgentExperimentStart']
+export type AgentExperimentPromoteResponse = Schemas['AgentExperimentPromoteResponse']
 export type AgentConfigSnapshot = Schemas['AgentConfigSnapshot']
 export type OutcomeQualityGroupBy = 'config' | 'version' | 'provider_config' | 'repo' | 'task_type'
 export type ModelList = Schemas['ModelList']
@@ -382,7 +386,7 @@ export const api = {
   agents: {
     list: () => listAllPages<AgentConfig>('/agents'),
     get: (id: string) => request<AgentConfig>(`/agents/${id}`),
-    create: async (body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config' | 'current_version'> & { note?: string }): Promise<{ config: AgentConfig; labelConflict?: string }> => {
+    create: async (body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config' | 'current_version' | 'running_experiment'> & { note?: string }): Promise<{ config: AgentConfig; labelConflict?: string }> => {
       const res = await authedRawFetch(`${BASE}/agents`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -396,7 +400,7 @@ export const api = {
       const labelConflict = res.headers.get('X-Label-Conflict') ?? undefined
       return { config, labelConflict }
     },
-    update: async (id: string, body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'provider_config' | 'current_version'> & { enabled?: boolean; note?: string }): Promise<{ config: AgentConfig; labelConflict?: string }> => {
+    update: async (id: string, body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'provider_config' | 'current_version' | 'running_experiment'> & { enabled?: boolean; note?: string }): Promise<{ config: AgentConfig; labelConflict?: string }> => {
       const res = await authedRawFetch(`${BASE}/agents/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -413,6 +417,14 @@ export const api = {
     delete: (id: string) => request<void>(`/agents/${id}`, { method: 'DELETE' }),
     versions: (id: string) => request<AgentConfigVersion[]>(`/agents/${id}/versions`),
     version: (id: string, version: number) => request<AgentConfigVersion>(`/agents/${id}/versions/${version}`),
+    experiments: (id: string) => request<AgentExperiment[]>(`/agents/${id}/experiments`),
+    experiment: (id: string, expId: string) => request<AgentExperiment>(`/agents/${id}/experiments/${expId}`),
+    startExperiment: (id: string, body: AgentExperimentStart) =>
+      request<AgentExperiment>(`/agents/${id}/experiments`, { method: 'POST', body: JSON.stringify(body) }),
+    stopExperiment: (id: string, expId: string) =>
+      request<AgentExperiment>(`/agents/${id}/experiments/${expId}/stop`, { method: 'POST', body: '{}' }),
+    promoteExperiment: (id: string, expId: string, note?: string) =>
+      request<AgentExperimentPromoteResponse>(`/agents/${id}/experiments/${expId}/promote`, { method: 'POST', body: JSON.stringify(note ? { note } : {}) }),
     restoreVersion: (id: string, version: number, note?: string) =>
       request<AgentConfig>(`/agents/${id}/versions/${version}/restore`, { method: 'POST', body: JSON.stringify(note ? { note } : {}) }),
     models: (provider: string) => request<ModelList>(`/agents/models?provider=${provider}`),

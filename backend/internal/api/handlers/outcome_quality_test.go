@@ -352,7 +352,7 @@ func TestOutcomeQualityGet_GroupByVersionAndValidation(t *testing.T) {
 	}
 
 	// done task with a run per version: v1 x2 tasks, v2 x1 task.
-	mkDone := func(version *int64) {
+	mkDone := func(version *int64, arm ...string) {
 		task, err := q.CreateTask(ctx, gen.CreateTaskParams{ID: uuid.NewString(), Title: "t", WorkflowID: wfID, RepoID: repoID, Label: "work"})
 		if err != nil {
 			t.Fatal(err)
@@ -364,6 +364,11 @@ func TestOutcomeQualityGet_GroupByVersionAndValidation(t *testing.T) {
 		if _, err := db.SQL().ExecContext(ctx, `UPDATE agent_runs SET agent_config_version = ?, status = 'completed' WHERE id = ?`, version, run.ID); err != nil {
 			t.Fatal(err)
 		}
+		if len(arm) > 0 {
+			if _, err := db.SQL().ExecContext(ctx, `UPDATE agent_runs SET experiment_id = 'e', experiment_arm = ? WHERE id = ?`, arm[0], run.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if _, err := q.UpdateTaskLabel(ctx, gen.UpdateTaskLabelParams{Label: "done", CurrentAgentRunID: &run.ID, ID: task.ID}); err != nil {
 			t.Fatal(err)
 		}
@@ -373,6 +378,7 @@ func TestOutcomeQualityGet_GroupByVersionAndValidation(t *testing.T) {
 	mkDone(&one)
 	mkDone(&two)
 	mkDone(nil)
+	mkDone(nil, "candidate")
 
 	h := handlers.NewOutcomeQualityHandler(q)
 	get := func(qs string) (*httptest.ResponseRecorder, []map[string]any) {
@@ -391,12 +397,12 @@ func TestOutcomeQualityGet_GroupByVersionAndValidation(t *testing.T) {
 	}
 
 	_, rows := get("?group_by=version")
-	if len(rows) != 3 {
+	if len(rows) != 4 {
 		t.Fatalf("expected 3 rows, got %+v", rows)
 	}
 	// v2, v1, unversioned (version desc, unversioned last).
-	wantVals := []string{"v2", "v1", "unversioned"}
-	wantDone := []float64{1, 2, 1}
+	wantVals := []string{"v2", "v1", "candidate (experiment)", "unversioned"}
+	wantDone := []float64{1, 2, 1, 1}
 	for i, r := range rows {
 		if r["group_value"] != wantVals[i] || r["tasks_done"] != wantDone[i] || r["low_sample"] != true {
 			t.Errorf("row %d = %+v", i, r)
@@ -404,7 +410,7 @@ func TestOutcomeQualityGet_GroupByVersionAndValidation(t *testing.T) {
 	}
 
 	_, rows = get("?group_by=provider_config")
-	if len(rows) != 1 || rows[0]["group_value"] != "prov" || rows[0]["tasks_done"] != float64(4) {
+	if len(rows) != 1 || rows[0]["group_value"] != "prov" || rows[0]["tasks_done"] != float64(5) {
 		t.Fatalf("provider_config rows: %+v", rows)
 	}
 	_, rows = get("?group_by=repo")
@@ -412,11 +418,11 @@ func TestOutcomeQualityGet_GroupByVersionAndValidation(t *testing.T) {
 		t.Fatalf("repo rows: %+v", rows)
 	}
 	_, rows = get("?group_by=task_type")
-	if len(rows) != 1 || rows[0]["tasks_done"] != float64(4) {
+	if len(rows) != 1 || rows[0]["tasks_done"] != float64(5) {
 		t.Fatalf("task_type rows: %+v", rows)
 	}
 	_, rows = get("")
-	if len(rows) != 1 || rows[0]["tasks_done"] != float64(4) {
+	if len(rows) != 1 || rows[0]["tasks_done"] != float64(5) {
 		t.Fatalf("default rows: %+v", rows)
 	}
 }

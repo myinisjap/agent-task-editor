@@ -32,6 +32,9 @@ UPDATE agent_runs SET provider_config_id = ? WHERE id = ?;
 -- Tags a run with the config latest version (stays NULL if it has none).
 UPDATE agent_runs SET agent_config_version = (SELECT MAX(v.version) FROM agent_config_versions v WHERE v.agent_config_id = ?1) WHERE agent_runs.id = ?2;
 
+-- name: SetAgentRunExperiment :exec
+UPDATE agent_runs SET experiment_id = ?, experiment_arm = ? WHERE id = ?;
+
 -- name: SetAgentRunLadderRung :exec
 UPDATE agent_runs SET ladder_rung = ? WHERE id = ?;
 

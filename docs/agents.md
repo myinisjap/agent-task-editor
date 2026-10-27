@@ -64,6 +64,19 @@ Every behavioural change to an agent config is saved as a numbered snapshot in `
 - **UI:** the History panel on the agent page lists versions with date, actor, note, a prompt diff against the previous version, and Restore (in-page confirm).
 - **Agent Performance** can break metrics down by version, provider config, repo or task type (`group_by`); rows with fewer than 5 tasks done are greyed out as low-sample.
 
+## Experiments (A/B)
+
+Try a candidate config on a share of tasks and compare it with the current one.
+
+- **Start:** from the agent page's Experiment panel (an edited copy of the current config) or `POST /agents/{id}/experiments`. `share_percent` is 1–90; at most one experiment runs per agent (`409` otherwise). The candidate must differ from the current config. Starting does not change the live config or write a version.
+- **Assignment:** the first time the agent is dispatched on a task while the experiment runs, the task is put in an arm by a deterministic hash of `(experiment id, task id)` against the share. The arm is stored in `agent_experiment_assignments` and reused for every later run of that agent on the task (retries, rework, human replies), so changing nothing about the experiment can move a task. A task that already had a run by this agent *before* the experiment started is not enrolled and runs as plain control.
+- **Candidate runs:** the candidate snapshot overlays every versioned field (prompt, provider, fallbacks, ladder, effort, permission mode, limits, plugins/MCP, command lists); name, labels, enabled and priority stay. The escalation ladder, fallbacks and rate-limit failover then apply within each arm.
+- **Run tagging:** runs carry `experiment_id` and `experiment_arm` (`control`/`candidate`). Control runs get the latest `agent_config_version` as usual; candidate runs have none until promotion. In Agent Performance by version, un-promoted candidate runs appear as "candidate (experiment)".
+- **Edits during an experiment** are allowed. "Control" always means the agent's current config at dispatch time.
+- **Results** (`GET /agents/{id}/experiments/{experimentId}`), per arm over the assigned, non-archived tasks: `tasks`; `tasks_done` (current label terminal); and, over done tasks, `first_pass_success_rate_percent` (this agent had exactly one run and it completed), `rework_rate_percent` (a transition into an already-visited label), `human_touch_rate_percent` (any human-triggered transition) and `avg_cost_to_done_usd` (all runs on the task); plus `avg_duration_secs` over the agent's finished runs in the arm. An arm with fewer than 10 done tasks is flagged `not_enough_data`; no significance statistics are computed.
+- **Stop:** `POST .../stop`. Assignments are kept for the results, but every later run uses the current config.
+- **Promote:** `POST .../promote` applies the candidate like a version restore (new version, note "Promoted from experiment …"), marks the experiment `promoted` with `promoted_version`, and backfills `agent_config_version` on the candidate-arm runs.
+
 ## Provider Configs
 
 A **Provider Config** is the provider/model/API-key (env vars) triple: which

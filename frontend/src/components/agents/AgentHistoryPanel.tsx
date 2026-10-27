@@ -15,7 +15,7 @@ function fmt(v: unknown): string {
 }
 
 /** One-line summary of non-prompt fields that differ between two snapshots. */
-function otherChanges(prev: Record<string, unknown> | undefined, cur: Record<string, unknown>): string[] {
+export function otherChanges(prev: Record<string, unknown> | undefined, cur: Record<string, unknown>): string[] {
   if (!prev) return []
   const out: string[] = []
   for (const key of Object.keys(cur)) {

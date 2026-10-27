@@ -18,62 +18,13 @@ import (
 )
 
 // agentConfigSnapshot is the behaviour-relevant slice of an agent config that
-// is stored per version. Everything except name, labels, enabled and priority
-// (identity / routing) is included; changing only those never writes a
-// version. The JSON keys must match the backfill in migration 074.
-type agentConfigSnapshot struct {
-	SystemPrompt              string          `json:"system_prompt"`
-	ProviderConfigID          string          `json:"provider_config_id"`
-	FallbackProviderConfigIDs json.RawMessage `json:"fallback_provider_config_ids"`
-	EscalationLadder          json.RawMessage `json:"escalation_ladder"`
-	Effort                    string          `json:"effort"`
-	PermissionMode            string          `json:"permission_mode"`
-	MaxTurns                  int64           `json:"max_turns"`
-	MaxTokens                 int64           `json:"max_tokens"`
-	TimeoutSecs               int64           `json:"timeout_secs"`
-	MaxCostUsd                float64         `json:"max_cost_usd"`
-	MaxRetries                int64           `json:"max_retries"`
-	RetryBackoffSecs          int64           `json:"retry_backoff_secs"`
-	ResumeSessions            bool            `json:"resume_sessions"`
-	SubtasksEnabled           bool            `json:"subtasks_enabled"`
-	MaxSubtasks               int64           `json:"max_subtasks"`
-	EnabledPlugins            json.RawMessage `json:"enabled_plugins"`
-	EnabledMcpServers         json.RawMessage `json:"enabled_mcp_servers"`
-	CommandAllowlist          json.RawMessage `json:"command_allowlist"`
-	CommandDenylist           json.RawMessage `json:"command_denylist"`
-}
+// is stored per version; see agent.ConfigSnapshot. The JSON keys must match
+// the backfill in migration 075.
+type agentConfigSnapshot = agent.ConfigSnapshot
 
-// jsonTextOrEmptyArray returns raw if it is valid JSON, else "[]".
-func jsonTextOrEmptyArray(raw string) json.RawMessage {
-	if strings.TrimSpace(raw) == "" || !json.Valid([]byte(raw)) {
-		return json.RawMessage("[]")
-	}
-	return json.RawMessage(raw)
-}
+func jsonTextOrEmptyArray(raw string) json.RawMessage { return agent.JSONTextOrEmptyArray(raw) }
 
-func snapshotOf(cfg gen.AgentConfig) agentConfigSnapshot {
-	return agentConfigSnapshot{
-		SystemPrompt:              cfg.SystemPrompt,
-		ProviderConfigID:          cfg.ProviderConfigID,
-		FallbackProviderConfigIDs: jsonTextOrEmptyArray(cfg.FallbackProviderConfigIds),
-		EscalationLadder:          jsonTextOrEmptyArray(cfg.EscalationLadder),
-		Effort:                    cfg.Effort,
-		PermissionMode:            cfg.PermissionMode,
-		MaxTurns:                  cfg.MaxTurns,
-		MaxTokens:                 cfg.MaxTokens,
-		TimeoutSecs:               cfg.TimeoutSecs,
-		MaxCostUsd:                cfg.MaxCostUsd,
-		MaxRetries:                cfg.MaxRetries,
-		RetryBackoffSecs:          cfg.RetryBackoffSecs,
-		ResumeSessions:            cfg.ResumeSessions != 0,
-		SubtasksEnabled:           cfg.SubtasksEnabled != 0,
-		MaxSubtasks:               cfg.MaxSubtasks,
-		EnabledPlugins:            jsonTextOrEmptyArray(cfg.EnabledPlugins),
-		EnabledMcpServers:         jsonTextOrEmptyArray(cfg.EnabledMcpServers),
-		CommandAllowlist:          jsonTextOrEmptyArray(cfg.CommandAllowlist),
-		CommandDenylist:           jsonTextOrEmptyArray(cfg.CommandDenylist),
-	}
-}
+func snapshotOf(cfg gen.AgentConfig) agentConfigSnapshot { return agent.SnapshotOf(cfg) }
 
 // jsonSemanticallyEqual compares two JSON-text columns by value, treating
 // empty/invalid as [].
@@ -202,6 +153,77 @@ func (h *AgentsHandler) GetVersion(w http.ResponseWriter, r *http.Request) {
 	JSON(w, http.StatusOK, versionView(v))
 }
 
+// validateSnapshot re-validates a snapshot (provider configs may be gone) and
+// returns the normalised fallbacks and ladder JSON. msg is non-empty on failure.
+func (h *AgentsHandler) validateSnapshot(r *http.Request, snap agentConfigSnapshot) (fallbacksJSON, ladderJSON, msg string) {
+	if _, err := h.q.GetProviderConfig(r.Context(), snap.ProviderConfigID); err != nil {
+		return "", "", fmt.Sprintf("provider config %s no longer exists", snap.ProviderConfigID)
+	}
+	if !validAgentConfigEffort[snap.Effort] {
+		return "", "", fmt.Sprintf("invalid effort %q", snap.Effort)
+	}
+	if !validAgentConfigPermissionMode[snap.PermissionMode] {
+		return "", "", fmt.Sprintf("invalid permission_mode %q", snap.PermissionMode)
+	}
+	var fallbackIDs []string
+	_ = json.Unmarshal(jsonTextOrEmptyArray(string(snap.FallbackProviderConfigIDs)), &fallbackIDs)
+	fallbacksJSON, msg = h.validateFallbacks(r, snap.ProviderConfigID, fallbackIDs)
+	if msg != "" {
+		return "", "", msg
+	}
+	var ladder []agent.LadderRung
+	_ = json.Unmarshal(jsonTextOrEmptyArray(string(snap.EscalationLadder)), &ladder)
+	ladderJSON, msg = h.validateLadder(r, ladder)
+	if msg != "" {
+		return "", "", msg
+	}
+	return fallbacksJSON, ladderJSON, ""
+}
+
+// applySnapshot writes snap onto existing (keeping name, labels, enabled and
+// priority) inside tq's transaction, and records a new version with note when
+// behaviour changed. The returned version is nil when nothing changed.
+func (h *AgentsHandler) applySnapshot(ctx context.Context, existing gen.AgentConfig, snap agentConfigSnapshot, fallbacks, ladderJSON, note string, tq *gen.Queries) (gen.AgentConfig, *gen.AgentConfigVersion, error) {
+	if err := ensureBaselineVersion(ctx, tq, existing); err != nil {
+		return gen.AgentConfig{}, nil, err
+	}
+	b2i := func(b bool) int64 {
+		if b {
+			return 1
+		}
+		return 0
+	}
+	cfg, err := tq.UpdateAgentConfig(ctx, gen.UpdateAgentConfigParams{
+		Name: existing.Name, ProviderConfigID: snap.ProviderConfigID,
+		SystemPrompt: snap.SystemPrompt, Labels: existing.Labels,
+		MaxTokens: snap.MaxTokens, TimeoutSecs: snap.TimeoutSecs, MaxTurns: snap.MaxTurns,
+		Enabled:           existing.Enabled,
+		EnabledPlugins:    string(jsonTextOrEmptyArray(string(snap.EnabledPlugins))),
+		EnabledMcpServers: string(jsonTextOrEmptyArray(string(snap.EnabledMcpServers))),
+		CommandAllowlist:  string(jsonTextOrEmptyArray(string(snap.CommandAllowlist))),
+		CommandDenylist:   string(jsonTextOrEmptyArray(string(snap.CommandDenylist))),
+		MaxRetries:        snap.MaxRetries, RetryBackoffSecs: snap.RetryBackoffSecs,
+		ResumeSessions:  b2i(snap.ResumeSessions),
+		SubtasksEnabled: b2i(snap.SubtasksEnabled), MaxSubtasks: snap.MaxSubtasks,
+		MaxCostUsd: snap.MaxCostUsd, Priority: existing.Priority,
+		Effort: snap.Effort, PermissionMode: snap.PermissionMode,
+		FallbackProviderConfigIds: fallbacks,
+		EscalationLadder:          ladderJSON,
+		ID:                        existing.ID,
+	})
+	if err != nil {
+		return gen.AgentConfig{}, nil, err
+	}
+	if !behaviourChanged(existing, cfg) {
+		return cfg, nil, nil
+	}
+	v, err := recordVersion(ctx, tq, cfg, middleware.ActorFromContext(ctx), note)
+	if err != nil {
+		return gen.AgentConfig{}, nil, err
+	}
+	return cfg, &v, nil
+}
+
 // RestoreVersion handles POST /agents/{id}/versions/{version}/restore. It
 // applies the snapshot onto the current config (keeping name, labels, enabled
 // and priority) and records the result as a new version when it differs.
@@ -237,83 +259,26 @@ func (h *AgentsHandler) RestoreVersion(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, "stored snapshot is corrupt")
 		return
 	}
-
-	// Re-validate: provider configs referenced by the snapshot may be gone.
-	if _, err := h.q.GetProviderConfig(ctx, snap.ProviderConfigID); err != nil {
-		Err(w, http.StatusBadRequest, fmt.Sprintf("cannot restore v%d: provider config %s no longer exists", n, snap.ProviderConfigID))
-		return
-	}
-	if !validAgentConfigEffort[snap.Effort] {
-		Err(w, http.StatusBadRequest, fmt.Sprintf("cannot restore v%d: invalid effort %q", n, snap.Effort))
-		return
-	}
-	if !validAgentConfigPermissionMode[snap.PermissionMode] {
-		Err(w, http.StatusBadRequest, fmt.Sprintf("cannot restore v%d: invalid permission_mode %q", n, snap.PermissionMode))
-		return
-	}
-	var fallbackIDs []string
-	_ = json.Unmarshal(jsonTextOrEmptyArray(string(snap.FallbackProviderConfigIDs)), &fallbackIDs)
-	fallbacks, msg := h.validateFallbacks(r, snap.ProviderConfigID, fallbackIDs)
-	if msg != "" {
-		Err(w, http.StatusBadRequest, fmt.Sprintf("cannot restore v%d: %s", n, msg))
-		return
-	}
-	var ladder []agent.LadderRung
-	_ = json.Unmarshal(jsonTextOrEmptyArray(string(snap.EscalationLadder)), &ladder)
-	ladderJSON, msg := h.validateLadder(r, ladder)
+	fallbacks, ladderJSON, msg := h.validateSnapshot(r, snap)
 	if msg != "" {
 		Err(w, http.StatusBadRequest, fmt.Sprintf("cannot restore v%d: %s", n, msg))
 		return
 	}
 
-	b2i := func(b bool) int64 {
-		if b {
-			return 1
-		}
-		return 0
-	}
 	tx, err := h.db.BeginTx(ctx, nil)
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	defer func() { _ = tx.Rollback() }()
-	tq := h.q.WithTx(tx)
-	if err := ensureBaselineVersion(ctx, tq, existing); err != nil {
-		Err(w, http.StatusInternalServerError, err.Error())
-		return
+	note := strings.TrimSpace(body.Note)
+	if note == "" {
+		note = fmt.Sprintf("Restored from v%d", n)
 	}
-	cfg, err := tq.UpdateAgentConfig(ctx, gen.UpdateAgentConfigParams{
-		Name: existing.Name, ProviderConfigID: snap.ProviderConfigID,
-		SystemPrompt: snap.SystemPrompt, Labels: existing.Labels,
-		MaxTokens: snap.MaxTokens, TimeoutSecs: snap.TimeoutSecs, MaxTurns: snap.MaxTurns,
-		Enabled:           existing.Enabled,
-		EnabledPlugins:    string(jsonTextOrEmptyArray(string(snap.EnabledPlugins))),
-		EnabledMcpServers: string(jsonTextOrEmptyArray(string(snap.EnabledMcpServers))),
-		CommandAllowlist:  string(jsonTextOrEmptyArray(string(snap.CommandAllowlist))),
-		CommandDenylist:   string(jsonTextOrEmptyArray(string(snap.CommandDenylist))),
-		MaxRetries:        snap.MaxRetries, RetryBackoffSecs: snap.RetryBackoffSecs,
-		ResumeSessions:  b2i(snap.ResumeSessions),
-		SubtasksEnabled: b2i(snap.SubtasksEnabled), MaxSubtasks: snap.MaxSubtasks,
-		MaxCostUsd: snap.MaxCostUsd, Priority: existing.Priority,
-		Effort: snap.Effort, PermissionMode: snap.PermissionMode,
-		FallbackProviderConfigIds: fallbacks,
-		EscalationLadder:          ladderJSON,
-		ID:                        id,
-	})
+	cfg, _, err := h.applySnapshot(ctx, existing, snap, fallbacks, ladderJSON, note, h.q.WithTx(tx))
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-	if behaviourChanged(existing, cfg) {
-		note := strings.TrimSpace(body.Note)
-		if note == "" {
-			note = fmt.Sprintf("Restored from v%d", n)
-		}
-		if _, err := recordVersion(ctx, tq, cfg, middleware.ActorFromContext(ctx), note); err != nil {
-			Err(w, http.StatusInternalServerError, err.Error())
-			return
-		}
 	}
 	if err := tx.Commit(); err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
