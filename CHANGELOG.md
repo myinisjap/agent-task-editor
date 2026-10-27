@@ -20,6 +20,7 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Changed
+- **Readable pipeline graph.** Pipeline → Overview and the Workflow tab preview lay the workflow out left-to-right in board column order (failure/rework edges loop above/below), with larger nodes showing the label name, agent + provider/model or Human gate, an amber "No agent" + Assign action, and Opens PR / WIP / Verify badges. Zoom is clamped so text never renders below ~12px; wide graphs pan with a hint instead of shrinking. The canvas follows the light/dark theme; phones get a vertical layout.
 
 - **Decision-first review on Task Detail (desktop).** Tasks waiting at a human gate get a review layout at ≥1280px: header with title, state, repo, cost, run count and Approve ("Approve and open PR" when the next label opens a PR) / Request changes; the diff (with preview strip) or plan in the main pane, logs/details as tabs; and a sticky right rail with the review brief, verification and runs. The review brief now always sits below the task title.
 
