@@ -22,7 +22,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 // summary" card shown while a task waits on a human (docs/workflows.md#review-brief).
 // It renders nothing while loading, on error, or when the task is not at a
 // human gate. `refreshKey` changes when the label or verification changes.
-export default function ReviewBriefCard({ taskId, refreshKey = '', hidePreview = false }: { taskId: string | undefined; refreshKey?: string | number; hidePreview?: boolean }) {
+export default function ReviewBriefCard({ taskId, refreshKey = '', hidePreview = false, filesOpen = false }: { taskId: string | undefined; refreshKey?: string | number; hidePreview?: boolean; filesOpen?: boolean }) {
   const [brief, setBrief] = useState<ReviewBrief | null>(null)
   const [expanded, setExpanded] = useState(false)
 
@@ -59,7 +59,7 @@ export default function ReviewBriefCard({ taskId, refreshKey = '', hidePreview =
             </span>
             {brief.truncated && <span className="ml-2 text-xs text-slate-500">(large diff; approximate)</span>}
             {changed.top_files.length > 0 && (
-              <details className="mt-1">
+              <details className="mt-1" open={filesOpen || undefined}>
                 <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-200">Top files</summary>
                 <ul className="mt-1 text-xs font-mono">
                   {changed.top_files.map((f) => (

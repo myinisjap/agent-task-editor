@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { NeedsMeItem, Task, Workflow } from '../api/client'
-import { buildInbox, failedEffectTasks, inboxCount, itemActions, sourceEditTasks } from './inbox'
+import { buildInbox, entryKey, failedEffectTasks, flattenInbox, inboxCount, itemActions, neighborKey, nextAfterRemoval, resolveSelection, sourceEditTasks } from './inbox'
 import { formatRelativeAge } from './format'
 
 const item = (over: Partial<NeedsMeItem>): NeedsMeItem => ({
@@ -131,5 +131,44 @@ describe('itemActions requestChanges', () => {
     expect(itemActions(item({}), wf([{ from_label: 'review', path: 'success' }])).requestChanges).toBe(false)
     const a = itemActions(item({}), wf([{ from_label: 'review', path: 'success' }, { from_label: 'review', path: 'failure' }]))
     expect(a).toMatchObject({ approve: true, requestChanges: true })
+  })
+})
+
+describe('selection helpers', () => {
+  const sections = () =>
+    buildInbox(
+      [item({ task_id: 'g1', since: '2026-01-02T00:00:00Z' }), item({ task_id: 'g2', since: '2026-01-03T00:00:00Z' }), item({ task_id: 'f1', reason: 'pr_conflict' })],
+      [{ task: task({ id: 'g1' }), effects: [], since: '2026-01-01T00:00:00Z' }],
+      [{ provider: 'claude', reason: 'x', paused_at: '2026-01-01T00:00:00Z' }],
+      [{ task: task({ id: 's1' }), since: '2026-01-01T00:00:00Z' }],
+    )
+
+  it('builds stable keys', () => {
+    const keys = flattenInbox(sections()).map(entryKey)
+    expect(keys).toEqual(['s1:source', 'g1', 'g2', 'f1', 'g1:effects', 'provider:claude'])
+  })
+
+  it('resolves exact key, task id, then the first entry', () => {
+    const flat = flattenInbox(sections())
+    expect(resolveSelection(flat, 'g2')).toBe('g2')
+    expect(resolveSelection(flat, 'g1:effects')).toBe('g1:effects')
+    expect(resolveSelection(flat, 's1')).toBe('s1:source')
+    expect(resolveSelection(flat, 'gone')).toBe('s1:source')
+    expect(resolveSelection(flat, null)).toBe('s1:source')
+    expect(resolveSelection([], 'g1')).toBeUndefined()
+  })
+
+  it('clamps neighbours', () => {
+    const flat = flattenInbox(sections())
+    expect(neighborKey(flat, 'g1', 1)).toBe('g2')
+    expect(neighborKey(flat, 's1:source', -1)).toBe('s1:source')
+    expect(neighborKey(flat, 'provider:claude', 1)).toBe('provider:claude')
+  })
+
+  it('picks the entry after a removal, else the one before', () => {
+    const flat = flattenInbox(sections())
+    expect(nextAfterRemoval(flat, 'g1')).toBe('g2')
+    expect(nextAfterRemoval(flat, 'provider:claude')).toBe('g1:effects')
+    expect(nextAfterRemoval(flat.slice(0, 1), 's1:source')).toBeUndefined()
   })
 })

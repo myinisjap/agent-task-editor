@@ -1,13 +1,16 @@
 import { labelDisplayNameByName } from '../lib/labelDisplay'
-import { useEffect, useState, type ReactNode, type MouseEvent } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type MouseEvent } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { useNeedsMeStore } from '../stores/needsMe'
 import { useInboxStore, useInboxSections } from '../stores/inbox'
 import DecisionContext from '../components/inbox/DecisionContext'
+import InboxPreview from '../components/inbox/InboxPreview'
+import { useIsWideDesktop } from '../lib/useMediaQuery'
+import { useInboxKeyboard, type InboxKeyAction } from '../lib/inboxKeys'
 import { useHealthStore } from '../stores/health'
 import { useWorkflowStore } from '../stores/workflow'
-import { inboxCount, itemActions, SECTION_ORDER, type InboxEntry, type InboxSectionKey } from '../lib/inbox'
+import { entryKey, entryTaskId, flattenInbox, inboxCount, itemActions, neighborKey, nextAfterRemoval, resolveSelection, SECTION_ORDER, type InboxEntry, type InboxSectionKey } from '../lib/inbox'
 import { needsMeReasonLabel } from '../lib/needsMe'
 import { escalationInfo } from '../lib/escalation'
 import { formatRelativeAge } from '../lib/format'
@@ -41,16 +44,31 @@ function Section({ id, count, children }: { id: InboxSectionKey; count: number; 
 
 const isPhone = () => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(max-width: 767px)').matches
 
-function Row({ children, error, to, extra }: { children: ReactNode; error?: string; to?: string; extra?: ReactNode }) {
+function Row({ children, error, to, extra, selected, onSelect }: { children: ReactNode; error?: string; to?: string; extra?: ReactNode; selected?: boolean; onSelect?: () => void }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (selected) ref.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [selected])
   const navigate = useNavigate()
   // On phones the whole row taps through to the task; taps on inner links/buttons keep their own action.
   const onClick = (e: MouseEvent<HTMLDivElement>) => {
-    if (!to || !isPhone()) return
     if ((e.target as HTMLElement).closest('a,button,input,textarea,select')) return
+    if (onSelect) {
+      onSelect()
+      return
+    }
+    if (!to || !isPhone()) return
     navigate(to)
   }
   return (
-    <div className="bg-slate-900 border border-slate-700 rounded-lg p-4 min-w-0" data-testid="inbox-item" onClick={onClick}>
+    <div
+      ref={ref}
+      className={`bg-slate-900 border rounded-lg p-4 min-w-0 ${selected ? 'border-sky-500 ring-2 ring-sky-500' : 'border-slate-700'}${onSelect ? ' cursor-pointer' : ''}`}
+      data-testid="inbox-item"
+      data-selected={selected ? 'true' : undefined}
+      aria-current={selected ? 'true' : undefined}
+      onClick={onClick}
+    >
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 md:gap-4">{children}</div>
       {extra}
       {error && <p role="alert" className="text-xs text-red-400 mt-2">{error}</p>}
@@ -69,6 +87,15 @@ export default function InboxPage() {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [noteOpen, setNoteOpen] = useState<Record<string, boolean>>({})
   const [notes, setNotes] = useState<Record<string, string>>({})
+  const [replies, setReplies] = useState<Record<string, string>>({})
+  const [legend, setLegend] = useState(false)
+  const [focusTick, setFocusTick] = useState(0)
+  const noteRef = useRef<HTMLTextAreaElement>(null)
+  const replyRef = useRef<HTMLTextAreaElement>(null)
+  const navigate = useNavigate()
+  const isWide = useIsWideDesktop()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const lastSel = useRef<{ key?: string; index: number }>({ index: 0 })
 
   useEffect(() => {
     void refreshNeedsMe()
@@ -78,15 +105,48 @@ export default function InboxPage() {
   }, [refreshNeedsMe, refreshEffects, fetchHealth])
 
   const total = inboxCount(sections)
+  const flat = useMemo(() => flattenInbox(sections), [sections])
+  const param = searchParams.get('task')
+  const selectedKey = isWide ? resolveSelection(flat, param) : undefined
+  const selectedEntry = selectedKey ? flat.find((e) => entryKey(e) === selectedKey) : undefined
 
-  const run = async (key: string, fn: () => Promise<unknown>, after: () => Promise<unknown> | void) => {
+  const select = useCallback((key: string | undefined) => {
+    if (!key) return
+    setSearchParams((p) => {
+      p.set('task', key)
+      return p
+    }, { replace: true })
+  }, [setSearchParams])
+
+  // Keep the URL in step with the selection; when the selected entry vanishes, select its neighbour.
+  useEffect(() => {
+    if (!isWide || flat.length === 0) return
+    const exists = !!param && flat.some((e) => entryKey(e) === param || entryTaskId(e) === param)
+    let target = resolveSelection(flat, param)
+    if (!exists && param && lastSel.current.key === param) {
+      target = entryKey(flat[Math.min(lastSel.current.index, flat.length - 1)])
+    }
+    if (!target) return
+    lastSel.current = { key: target, index: flat.findIndex((e) => entryKey(e) === target) }
+    if (target !== param) select(target)
+  }, [isWide, flat, param, select])
+
+  useEffect(() => {
+    if (focusTick > 0) noteRef.current?.focus()
+  }, [focusTick])
+
+  // Resolves true on success. When `advance` is given (wide layout), selection moves there afterwards.
+  const run = async (key: string, fn: () => Promise<unknown>, after: () => Promise<unknown> | void, advance?: string): Promise<boolean> => {
     setErrors((e) => ({ ...e, [key]: '' }))
     setBusy((b) => ({ ...b, [key]: true }))
     try {
       await fn()
       await after()
+      if (isWide && advance) select(advance)
+      return true
     } catch (e) {
       setErrors((m) => ({ ...m, [key]: e instanceof Error ? e.message : String(e) }))
+      return false
     } finally {
       setBusy((b) => ({ ...b, [key]: false }))
     }
@@ -94,12 +154,56 @@ export default function InboxPage() {
 
   const refreshAll = () => Promise.all([refreshNeedsMe(), refreshEffects()])
 
-  const sendChanges = (id: string) =>
+  const sendChanges = (id: string, advance?: string) =>
     run(id, async () => {
       await api.tasks.reject(id, (notes[id] ?? '').trim())
       setNotes((n) => ({ ...n, [id]: '' }))
       setNoteOpen((o) => ({ ...o, [id]: false }))
-    }, refreshAll)
+    }, refreshAll, advance)
+
+  const approve = (id: string, advance?: string) => run(id, () => api.tasks.approve(id), refreshAll, advance)
+
+  const sendReply = (item: NeedsMeItem, advance?: string) =>
+    run(item.task_id, async () => {
+      await api.tasks.replyRun(item.task_id, item.run_id as string, (replies[item.task_id] ?? '').trim())
+      setReplies((r) => ({ ...r, [item.task_id]: '' }))
+    }, refreshAll, advance)
+
+  const onKey = (action: InboxKeyAction) => {
+    switch (action) {
+      case 'next': return select(neighborKey(flat, selectedKey, 1))
+      case 'prev': return select(neighborKey(flat, selectedKey, -1))
+      case 'help': return setLegend((v) => !v)
+      case 'open': {
+        if (!selectedEntry) return
+        const id = entryTaskId(selectedEntry)
+        return navigate(id ? `/tasks/${id}` : '/settings/health')
+      }
+      case 'escape': {
+        if (selectedEntry?.kind === 'needs_me' && noteOpen[selectedEntry.item.task_id]) {
+          const id = selectedEntry.item.task_id
+          return setNoteOpen((o) => ({ ...o, [id]: false }))
+        }
+        return setLegend(false)
+      }
+      case 'approve':
+      case 'reject': {
+        if (selectedEntry?.kind !== 'needs_me') return
+        const item = selectedEntry.item
+        const a = itemActions(item, workflows.find((w) => w.id === item.workflow_id))
+        if (action === 'approve') {
+          if (a.approve && !busy[item.task_id]) void approve(item.task_id, nextAfterRemoval(flat, selectedKey))
+        } else if (item.reason === 'human_gate' && a.requestChanges) {
+          setNoteOpen((o) => ({ ...o, [item.task_id]: true }))
+          setFocusTick((t) => t + 1)
+        }
+      }
+    }
+  }
+  useInboxKeyboard(isWide && total > 0, onKey)
+
+  const rowProps = (e: InboxEntry) =>
+    isWide ? { selected: entryKey(e) === selectedKey, onSelect: () => select(entryKey(e)) } : {}
 
   const renderNeedsMe = (item: NeedsMeItem) => {
     const wf = workflows.find((w) => w.id === item.workflow_id)
@@ -107,7 +211,7 @@ export default function InboxPage() {
     const isGate = item.reason === 'human_gate'
     const open = !!noteOpen[item.task_id]
     const note = notes[item.task_id] ?? ''
-    const noteField = isGate && a.requestChanges && open && (
+    const noteField = !isWide && isGate && a.requestChanges && open && (
       <div className="mt-3 flex flex-col md:flex-row gap-2" data-testid="request-changes-form">
         <textarea
           aria-label="Request changes note"
@@ -127,7 +231,7 @@ export default function InboxPage() {
       </div>
     )
     return (
-      <Row key={item.task_id} to={`/tasks/${item.task_id}`} error={errors[item.task_id]} extra={noteField || undefined}>
+      <Row key={item.task_id} to={`/tasks/${item.task_id}`} error={isWide ? undefined : errors[item.task_id]} extra={noteField || undefined} {...rowProps({ kind: 'needs_me', item })}>
         <div className="min-w-0 break-words">
           <Link to={`/tasks/${item.task_id}`} className="text-sm font-medium text-slate-200 hover:text-slate-50 hover:underline">
             {item.task_title}
@@ -151,7 +255,7 @@ export default function InboxPage() {
           <span className="text-xs text-slate-500" title={new Date(item.since).toLocaleString()}>
             {formatRelativeAge(item.since)}
           </span>
-          <div className="flex flex-wrap gap-2">
+          {!isWide && <div className="flex flex-wrap gap-2">
             {a.fix && (
               <Link to={a.fix.to} className={PRIMARY}>{a.fix.text}</Link>
             )}
@@ -186,7 +290,7 @@ export default function InboxPage() {
             {!a.reply && (
               <Link to={`/tasks/${item.task_id}`} className={SECONDARY}>Open</Link>
             )}
-          </div>
+          </div>}
         </div>
       </Row>
     )
@@ -199,7 +303,7 @@ export default function InboxPage() {
       case 'side_effect': {
         const { task, effects, since } = e.failed
         return (
-          <Row key={`fx:${task.id}`} to={`/tasks/${task.id}`} error={errors[`fx:${task.id}`]}>
+          <Row key={`fx:${task.id}`} to={`/tasks/${task.id}`} error={isWide ? undefined : errors[`fx:${task.id}`]} {...rowProps(e)}>
             <div className="min-w-0 break-words">
               <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-slate-200 hover:text-slate-50 hover:underline">
                 {task.title}
@@ -213,20 +317,24 @@ export default function InboxPage() {
             </div>
             <div className="md:shrink-0 flex flex-col items-stretch md:items-end gap-2">
               <span className="text-xs text-slate-500">{formatRelativeAge(since)}</span>
-              <button
-                disabled={busy[`fx:${task.id}`]}
-                onClick={() => run(`fx:${task.id}`, () => api.tasks.dismissSideEffects(task.id), refreshEffects)}
-                className={SECONDARY}
-              >
-                Dismiss
-              </button>
-              <button
-                disabled={busy[`fx:${task.id}`]}
-                onClick={() => run(`fx:${task.id}`, () => api.tasks.retrySideEffects(task.id), refreshEffects)}
-                className={PRIMARY}
-              >
-                Retry
-              </button>
+              {!isWide && (
+                <>
+                  <button
+                    disabled={busy[`fx:${task.id}`]}
+                    onClick={() => run(`fx:${task.id}`, () => api.tasks.dismissSideEffects(task.id), refreshEffects)}
+                    className={SECONDARY}
+                  >
+                    Dismiss
+                  </button>
+                  <button
+                    disabled={busy[`fx:${task.id}`]}
+                    onClick={() => run(`fx:${task.id}`, () => api.tasks.retrySideEffects(task.id), refreshEffects)}
+                    className={PRIMARY}
+                  >
+                    Retry
+                  </button>
+                </>
+              )}
             </div>
           </Row>
         )
@@ -234,7 +342,7 @@ export default function InboxPage() {
       case 'source_edit': {
         const { task, since } = e.edit
         return (
-          <Row key={`su:${task.id}`} to={`/tasks/${task.id}`} error={errors[`su:${task.id}`]}>
+          <Row key={`su:${task.id}`} to={`/tasks/${task.id}`} error={isWide ? undefined : errors[`su:${task.id}`]} {...rowProps(e)}>
             <div className="min-w-0 break-words">
               <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-slate-200 hover:text-slate-50 hover:underline">
                 {task.title}
@@ -245,7 +353,7 @@ export default function InboxPage() {
             </div>
             <div className="md:shrink-0 flex flex-col items-stretch md:items-end gap-2">
               <span className="text-xs text-slate-500">{formatRelativeAge(since)}</span>
-              <div className="flex flex-wrap gap-2">
+              {!isWide && <div className="flex flex-wrap gap-2">
                 <Link to={`/tasks/${task.id}`} className={SECONDARY}>Review</Link>
                 <button
                   disabled={busy[`su:${task.id}`]}
@@ -261,7 +369,7 @@ export default function InboxPage() {
                 >
                   Apply
                 </button>
-              </div>
+              </div>}
             </div>
           </Row>
         )
@@ -269,7 +377,7 @@ export default function InboxPage() {
       case 'provider': {
         const p = e.provider
         return (
-          <Row key={`pv:${p.provider}`} error={errors[`pv:${p.provider}`]}>
+          <Row key={`pv:${p.provider}`} error={isWide ? undefined : errors[`pv:${p.provider}`]} {...rowProps(e)}>
             <div className="min-w-0 break-words">
               <p className="text-sm font-medium text-slate-200">
                 {providerLabel(p.provider)} dispatch is paused
@@ -281,13 +389,15 @@ export default function InboxPage() {
             </div>
             <div className="md:shrink-0 flex flex-col items-stretch md:items-end gap-2">
               <span className="text-xs text-slate-500">{formatRelativeAge(p.paused_at)}</span>
-              <button
-                disabled={busy[`pv:${p.provider}`]}
-                onClick={() => run(`pv:${p.provider}`, () => resume(p.provider), () => undefined)}
-                className={PRIMARY}
-              >
-                Resume
-              </button>
+              {!isWide && (
+                <button
+                  disabled={busy[`pv:${p.provider}`]}
+                  onClick={() => run(`pv:${p.provider}`, () => resume(p.provider), () => undefined)}
+                  className={PRIMARY}
+                >
+                  Resume
+                </button>
+              )}
             </div>
           </Row>
         )
@@ -295,12 +405,77 @@ export default function InboxPage() {
     }
   }
 
+  const previewNode = (() => {
+    const e = selectedEntry
+    const base = {
+      entry: e,
+      noteRef,
+      replyRef,
+    }
+    let ekey = ''
+    let id = ''
+    let item: NeedsMeItem | undefined
+    if (e) {
+      switch (e.kind) {
+        case 'needs_me': ekey = id = e.item.task_id; item = e.item; break
+        case 'source_edit': id = e.edit.task.id; ekey = `su:${id}`; break
+        case 'side_effect': id = e.failed.task.id; ekey = `fx:${id}`; break
+        case 'provider': ekey = `pv:${e.provider.provider}`; break
+      }
+    }
+    const adv = nextAfterRemoval(flat, selectedKey)
+    return (
+      <InboxPreview
+        {...base}
+        workflow={item ? workflows.find((w) => w.id === item.workflow_id) : undefined}
+        busy={!!busy[ekey]}
+        error={errors[ekey]}
+        noteOpen={!!noteOpen[id]}
+        note={notes[id] ?? ''}
+        setNote={(v) => setNotes((n) => ({ ...n, [id]: v }))}
+        setNoteOpen={(v) => setNoteOpen((o) => ({ ...o, [id]: v }))}
+        reply={replies[id] ?? ''}
+        setReply={(v) => setReplies((r) => ({ ...r, [id]: v }))}
+        onApprove={() => void approve(id, adv)}
+        onReject={() => void sendChanges(id, adv)}
+        onReply={() => item && void sendReply(item, adv)}
+        onRetry={() => void run(id, () => api.tasks.rerun(id), refreshAll, adv)}
+        onDismissEffects={() => void run(ekey, () => api.tasks.dismissSideEffects(id), refreshEffects, adv)}
+        onRetryEffects={() => void run(ekey, () => api.tasks.retrySideEffects(id), refreshEffects, adv)}
+        onApplySource={() => void run(ekey, () => api.tasks.applySourceUpdate(id), refreshEffects, adv)}
+        onDiscardSource={() => void run(ekey, () => api.tasks.discardSourceUpdate(id), refreshEffects, adv)}
+        onResume={() => e?.kind === 'provider' && void run(ekey, () => resume(e.provider.provider), () => undefined, adv)}
+      />
+    )
+  })()
+
+  const sectionsNode = SECTION_ORDER.map((k) => (
+    <Section key={k} id={k} count={sections[k].length}>{sections[k].map(renderEntry)}</Section>
+  ))
+
   return (
-    <div className="p-4 md:p-6 max-w-5xl mx-auto" data-testid="inbox-page">
+    <div className={`p-4 md:p-6 mx-auto ${isWide ? 'max-w-[1600px]' : 'max-w-5xl'}`} data-testid="inbox-page">
       <div className="flex items-baseline gap-2 mb-6">
         <h1 className="text-xl font-semibold text-slate-100">Inbox</h1>
         <span data-testid="inbox-total" className="text-sm text-slate-400">({total})</span>
+        {isWide && (
+          <button
+            aria-label="Keyboard shortcuts"
+            data-testid="inbox-shortcuts-toggle"
+            aria-expanded={legend}
+            onClick={() => setLegend((v) => !v)}
+            className="ml-1 w-5 h-5 text-xs rounded-full border border-slate-600 text-slate-400 hover:text-slate-200"
+          >
+            ?
+          </button>
+        )}
       </div>
+
+      {isWide && legend && (
+        <p data-testid="inbox-shortcuts" className="text-xs text-slate-400 mb-4 -mt-3">
+          <kbd>j</kbd>/<kbd>k</kbd> or ↑/↓ move · <kbd>a</kbd> approve · <kbd>r</kbd> request changes · <kbd>Enter</kbd>/<kbd>o</kbd> open full page · <kbd>Esc</kbd> close note/legend · <kbd>?</kbd> this help
+        </p>
+      )}
 
       {total === 0 && (
         <div data-testid="inbox-empty" className="text-center text-slate-500 py-16">
@@ -309,9 +484,14 @@ export default function InboxPage() {
         </div>
       )}
 
-      {SECTION_ORDER.map((k) => (
-        <Section key={k} id={k} count={sections[k].length}>{sections[k].map(renderEntry)}</Section>
-      ))}
+      {isWide && total > 0 ? (
+        <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-6">
+          <div>{sectionsNode}</div>
+          <aside className="sticky top-4 self-start max-h-[calc(100vh-2rem)] overflow-y-auto">{previewNode}</aside>
+        </div>
+      ) : (
+        sectionsNode
+      )}
     </div>
   )
 }

@@ -4,7 +4,7 @@ A small suite of end-to-end smoke tests that run against the real,
 built docker-compose stack (nginx-served frontend + Go backend + sqlite) —
 not against `npm run dev` and not with any mocked API calls. Kept to a
 handful of high-value flows (board load, task creation, task-detail
-navigation, WS log pane mount) plus a data-driven check that every app
+navigation, WS log pane mount, Inbox two-pane preview selection) plus a data-driven check that every app
 route loads (`pages-load.spec.ts`), so it stays fast and non-flaky; this is
 not a full E2E suite.
 

@@ -64,3 +64,17 @@ describe('ReviewBriefCard', () => {
     expect(container).toBeEmptyDOMElement()
   })
 })
+
+describe('ReviewBriefCard filesOpen', () => {
+  it('opens the Top files details only when asked', async () => {
+    vi.mocked(api.tasks.reviewBrief).mockResolvedValue(base)
+    vi.spyOn(api.tasks, 'previews').mockResolvedValue({ capture: null } as never)
+    const { unmount } = render(<ReviewBriefCard taskId="t1" filesOpen />)
+    await waitFor(() => expect(screen.getByTestId('review-brief')).toBeInTheDocument())
+    expect(screen.getByText('Top files').closest('details')).toHaveAttribute('open')
+    unmount()
+    render(<ReviewBriefCard taskId="t1" />)
+    await waitFor(() => expect(screen.getByTestId('review-brief')).toBeInTheDocument())
+    expect(screen.getByText('Top files').closest('details')).not.toHaveAttribute('open')
+  })
+})

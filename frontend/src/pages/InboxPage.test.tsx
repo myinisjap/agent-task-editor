@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import { useLocation } from 'react-router-dom'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import InboxPage from './InboxPage'
@@ -9,7 +10,7 @@ import { useHealthStore } from '../stores/health'
 import { useWorkflowStore } from '../stores/workflow'
 
 const m = {
-  needsMe: vi.fn(), reject: vi.fn(), apply: vi.fn(), discard: vi.fn(), list: vi.fn(), approve: vi.fn(), rerun: vi.fn(), retry: vi.fn(), dismiss: vi.fn(), health: vi.fn(), resume: vi.fn(),
+  needsMe: vi.fn(), reject: vi.fn(), apply: vi.fn(), discard: vi.fn(), list: vi.fn(), approve: vi.fn(), rerun: vi.fn(), retry: vi.fn(), dismiss: vi.fn(), health: vi.fn(), resume: vi.fn(), reply: vi.fn(),
 }
 vi.mock('../api/client', async () => {
   const actual = await vi.importActual<typeof import('../api/client')>('../api/client')
@@ -26,6 +27,9 @@ vi.mock('../api/client', async () => {
         dismissSideEffects: (...a: unknown[]) => m.dismiss(...a),
         applySourceUpdate: (...a: unknown[]) => m.apply(...a),
         discardSourceUpdate: (...a: unknown[]) => m.discard(...a),
+        replyRun: (...a: unknown[]) => m.reply(...a),
+        reviewBrief: () => Promise.resolve({ human_gate: false }),
+        previews: () => Promise.resolve({ capture: null }),
       },
       health: { providers: (...a: unknown[]) => m.health(...a), resumeProvider: (...a: unknown[]) => m.resume(...a) },
     },
@@ -194,7 +198,7 @@ describe('InboxPage phone layout', () => {
   it('taps through the whole row on phones', async () => {
     m.needsMe.mockResolvedValue([gateItem])
     const orig = window.matchMedia
-    window.matchMedia = ((q: string) => ({ matches: true, media: q, addEventListener() {}, removeEventListener() {} })) as never
+    window.matchMedia = ((q: string) => ({ matches: q.includes('max-width: 767px'), media: q, addEventListener() {}, removeEventListener() {} })) as never
     try {
       render(
         <MemoryRouter>
@@ -215,5 +219,135 @@ describe('InboxPage phone layout', () => {
     m.needsMe.mockResolvedValue([gateItem])
     renderPage()
     expect((await screen.findByRole('button', { name: 'Approve' })).className).toContain('min-h-[44px]')
+  })
+})
+
+const gate2 = { ...gateItem, task_id: 't2', task_title: 'Second', since: new Date(Date.now() - 2 * 3600_000).toISOString() }
+const answerItem = {
+  ...gateItem, task_id: 't3', task_title: 'Asked', reason: 'waiting_human', escalation_reason: 'agent_question', label: 'dev',
+  run_id: 'run1', message: 'Which database?', since: new Date(Date.now() - 1 * 3600_000).toISOString(),
+}
+const fixItem = {
+  ...gateItem, task_id: 't4', task_title: 'Broken', reason: 'waiting_human', escalation_reason: 'auth_required', label: 'dev',
+  since: new Date(Date.now() - 30 * 60_000).toISOString(),
+}
+
+function Loc() {
+  return <div data-testid="loc">{useLocation().search}</div>
+}
+const renderWide = (entry = '/') =>
+  render(
+    <MemoryRouter initialEntries={[entry]}>
+      <Routes>
+        <Route path="/" element={<><InboxPage /><Loc /></>} />
+        <Route path="/tasks/:id" element={<div data-testid="detail" />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+
+describe('InboxPage desktop two-pane', () => {
+  const orig = window.matchMedia
+  beforeEach(() => {
+    window.matchMedia = ((q: string) => ({ matches: q.includes('min-width: 1280px'), media: q, addEventListener() {}, removeEventListener() {} })) as never
+  })
+  afterEach(() => {
+    window.matchMedia = orig
+  })
+  const selected = () => screen.getByTestId('inbox-preview').querySelector('h2')?.textContent
+
+  it('selects the first item by default and writes it to the URL', async () => {
+    m.needsMe.mockResolvedValue([gateItem, gate2])
+    renderWide()
+    await waitFor(() => expect(screen.getByTestId('inbox-preview')).toHaveTextContent('Ship it'))
+    await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent('?task=t1'))
+  })
+
+  it('restores the selection from ?task=', async () => {
+    m.needsMe.mockResolvedValue([gateItem, gate2])
+    renderWide('/?task=t2')
+    await waitFor(() => expect(selected()).toBe('Second'))
+    expect(screen.getByTestId('loc')).toHaveTextContent('?task=t2')
+  })
+
+  it('moves with j/k and arrows, clamped at both ends', async () => {
+    m.needsMe.mockResolvedValue([gateItem, gate2])
+    renderWide()
+    await waitFor(() => expect(selected()).toBe('Ship it'))
+    await userEvent.keyboard('k')
+    expect(selected()).toBe('Ship it')
+    await userEvent.keyboard('j')
+    await waitFor(() => expect(selected()).toBe('Second'))
+    await userEvent.keyboard('{ArrowDown}')
+    expect(selected()).toBe('Second')
+    await userEvent.keyboard('{ArrowUp}')
+    await waitFor(() => expect(selected()).toBe('Ship it'))
+  })
+
+  it('approves with a and advances to the next item', async () => {
+    m.needsMe.mockResolvedValue([gateItem, gate2])
+    m.approve.mockResolvedValue({})
+    renderWide()
+    await waitFor(() => expect(selected()).toBe('Ship it'))
+    m.needsMe.mockResolvedValue([gate2])
+    await userEvent.keyboard('a')
+    expect(m.approve).toHaveBeenCalledWith('t1')
+    await waitFor(() => expect(selected()).toBe('Second'))
+    expect(screen.getByTestId('loc')).toHaveTextContent('?task=t2')
+  })
+
+  it('r opens and focuses the note; typing does not navigate; Esc closes', async () => {
+    m.needsMe.mockResolvedValue([gateItem, gate2])
+    useWorkflowStore.setState({
+      workflows: [{ ...workflow, transitions: [...workflow.transitions, { from_label: 'review', to_label: 'dev', trigger_type: 'human', path: 'failure' }] }] as never,
+    })
+    renderWide()
+    await waitFor(() => expect(selected()).toBe('Ship it'))
+    await userEvent.keyboard('r')
+    const ta = await screen.findByLabelText('Request changes note')
+    await waitFor(() => expect(ta).toHaveFocus())
+    await userEvent.keyboard('j')
+    expect(ta).toHaveValue('j')
+    expect(selected()).toBe('Ship it')
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByLabelText('Request changes note')).toBeNull()
+  })
+
+  it('Enter opens the full task page', async () => {
+    m.needsMe.mockResolvedValue([gateItem])
+    renderWide()
+    await waitFor(() => expect(selected()).toBe('Ship it'))
+    await userEvent.keyboard('{Enter}')
+    expect(await screen.findByTestId('detail')).toBeInTheDocument()
+  })
+
+  it('shows the question and a reply box for an Answer item', async () => {
+    m.needsMe.mockResolvedValue([answerItem])
+    m.reply.mockResolvedValue({})
+    renderWide()
+    const preview = await screen.findByTestId('inbox-preview')
+    await waitFor(() => expect(preview).toHaveTextContent('Which database?'))
+    await userEvent.type(screen.getByLabelText('Reply to agent'), 'Postgres')
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(m.reply).toHaveBeenCalledWith('t3', 'run1', 'Postgres')
+  })
+
+  it('shows the explanation and fix link for a Fix setup item', async () => {
+    m.needsMe.mockResolvedValue([fixItem])
+    renderWide()
+    const preview = await screen.findByTestId('inbox-preview')
+    await waitFor(() => expect(preview).toHaveTextContent('Broken'))
+    expect(preview.querySelector('a[href="/settings/health"]')).not.toBeNull()
+    expect(preview).toHaveTextContent(/log/i)
+  })
+
+  it('is off below 1280px: no preview and j does nothing', async () => {
+    window.matchMedia = orig
+    m.needsMe.mockResolvedValue([gateItem, gate2])
+    renderWide()
+    await screen.findByText('Second')
+    expect(screen.queryByTestId('inbox-preview')).toBeNull()
+    await userEvent.keyboard('j')
+    expect(screen.getByTestId('loc')).toHaveTextContent('')
+    expect(screen.getByTestId('loc').textContent).toBe('')
   })
 })
