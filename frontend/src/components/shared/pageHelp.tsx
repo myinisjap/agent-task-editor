@@ -99,13 +99,12 @@ export function DashboardHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-slate-100 font-semibold">Needs your input</h3>
+        <h3 className="text-slate-100 font-semibold">Needs you</h3>
         <p>
-          Tasks land here when a human-triggered transition (e.g. Approve/Reject a plan or a
-          finished review) is waiting on you. Approve moves the task forward on its{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">success</code> path; Reject
-          requires a note and moves it on its{' '}
-          <code className="bg-slate-800 rounded px-1 font-mono">failure</code> path.
+          When anything is waiting on you, a &ldquo;Needs you (N)&rdquo; card links to the Inbox.
+          The Inbox groups it into Decide (approve or request changes), Answer (the agent asked
+          something) and Fix setup (login, toolchain, budget or paused providers). N is the same
+          count as the Inbox badge in the navigation.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">

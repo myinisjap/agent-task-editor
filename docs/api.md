@@ -1219,7 +1219,11 @@ primary `reason`; precedence is `waiting_human` > `pr_conflict` > `human_gate`.
   backlog labels (e.g. `not_ready`) are not gates here.
   Gate items may carry `risk_flags` (an array of review-brief flag codes, see
   [`GET /tasks/{id}/review-brief`](#get-tasksidreview-brief)); it is omitted when
-  the branch diff is unavailable or no flag fired.
+  the branch diff is unavailable or no flag fired. Gate items also carry best-effort
+  decision context built from the same cached review brief: `summary` (one line of the
+  agent summary), `changed` (`files`, `additions`, `deletions`; only with a diff),
+  `cost_usd` / `cost_unknown`, `verification` (`pass`/`fail`/`timeout`/`error`/`not_run`)
+  and `preview_count`. They are omitted for non-gate items and when the brief cannot be built.
 
 Archived tasks are excluded; paused tasks are excluded except for
 `waiting_human`. The Dashboard queue, the board's "Needs you" badge and the

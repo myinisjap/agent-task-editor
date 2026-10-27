@@ -186,3 +186,90 @@ func TestNeedsMe_RiskFlags(t *testing.T) {
 		t.Fatalf("risk_flags = %v", body.Items[0].RiskFlags)
 	}
 }
+
+type ctxItem struct {
+	TaskID  string  `json:"task_id"`
+	Reason  string  `json:"reason"`
+	Summary *string `json:"summary"`
+	Changed *struct {
+		Files     int `json:"files"`
+		Additions int `json:"additions"`
+		Deletions int `json:"deletions"`
+	} `json:"changed"`
+	CostUsd      *float64 `json:"cost_usd"`
+	Verification *string  `json:"verification"`
+	PreviewCount int      `json:"preview_count"`
+	RiskFlags    []string `json:"risk_flags"`
+}
+
+func listNeedsMe(t *testing.T, q *gen.Queries) []ctxItem {
+	t.Helper()
+	h := handlers.NewNeedsMeHandler(q)
+	h.SetBriefCache(reviewbrief.NewCache())
+	w := httptest.NewRecorder()
+	h.List(w, httptest.NewRequest(http.MethodGet, "/needs-me", nil))
+	var body struct {
+		Items []ctxItem `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	return body.Items
+}
+
+func TestNeedsMe_DecisionContext(t *testing.T) {
+	e := newBriefEnv(t)
+	ctx := context.Background()
+	gate := e.task(t, "review-plan", briefRepo(t))
+
+	items := listNeedsMe(t, e.q)
+	if len(items) != 1 {
+		t.Fatalf("items = %+v", items)
+	}
+	it := items[0]
+	if it.Changed == nil || it.Changed.Files != 2 || it.Changed.Additions != 1 || it.Changed.Deletions != 3 {
+		t.Fatalf("changed = %+v", it.Changed)
+	}
+	if it.Verification == nil || *it.Verification != "not_run" || it.CostUsd == nil || *it.CostUsd != 0 || it.Summary != nil || it.PreviewCount != 0 {
+		t.Fatalf("item = %+v", it)
+	}
+
+	runID := uuid.NewString()
+	if _, err := e.q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: runID, TaskID: gate.ID}); err != nil {
+		t.Fatal(err)
+	}
+	info := "## Add migration\nmore detail"
+	if _, err := e.q.SetAgentRunCompleted(ctx, gen.SetAgentRunCompletedParams{Status: "completed", StoredInfo: &info, CostUsd: 0.25, ID: runID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.q.UpsertRunVerification(ctx, gen.UpsertRunVerificationParams{RunID: runID, TaskID: gate.ID, Command: "make test", Status: "fail", Output: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	capID := uuid.NewString()
+	if _, err := e.q.CreatePreviewCapture(ctx, gen.CreatePreviewCaptureParams{ID: capID, TaskID: gate.ID}); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := e.q.CreatePreviewImage(ctx, gen.CreatePreviewImageParams{ID: uuid.NewString(), CaptureID: capID, TaskID: gate.ID, Route: "/", Variant: "desktop", Width: 1, Height: 1, Path: "p"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	it = listNeedsMe(t, e.q)[0]
+	if it.Verification == nil || *it.Verification != "fail" || it.Summary == nil || *it.Summary != "Add migration" ||
+		it.PreviewCount != 2 || it.CostUsd == nil || *it.CostUsd != 0.25 {
+		t.Fatalf("item = %+v", it)
+	}
+}
+
+func TestNeedsMe_DecisionContext_NoBranch(t *testing.T) {
+	e := newBriefEnv(t)
+	e.task(t, "review-plan", "")
+	items := listNeedsMe(t, e.q)
+	if len(items) != 1 {
+		t.Fatalf("items = %+v", items)
+	}
+	it := items[0]
+	if it.Changed != nil || len(it.RiskFlags) != 0 || it.Verification == nil || *it.Verification != "not_run" || it.CostUsd == nil {
+		t.Fatalf("item = %+v", it)
+	}
+}
