@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { api, type Task, type AgentRun, type TaskLabelHistoryEntry, type TaskSourceComment, type TaskHumanDecision, type Workflow, type Repo } from '../api/client'
 import { wsClient } from '../api/ws'
 import { useAgentsStore } from '../stores/agents'
+import { useProviderConfigsStore } from '../stores/providerConfigs'
 import DependenciesPanel from '../components/DependenciesPanel'
 import SubtasksPanel from '../components/SubtasksPanel'
 import TaskHeader from '../components/task-detail/TaskHeader'
@@ -66,6 +67,7 @@ export default function TaskDetailPage() {
   const [costWarning, setCostWarning] = useState<{ spentUsd: number; budgetUsd: number } | null>(null)
   const [verificationKey, setVerificationKey] = useState(0)
   const { configs: agentConfigs, fetch: fetchAgents } = useAgentsStore()
+  const { configs: providerConfigs, fetch: fetchProviderConfigs } = useProviderConfigsStore()
   const { diffComments, openComments, refreshComments, handleAddComment, handleRemoveComment, handleReopenComment } = useDiffComments(id)
 
   // Tracks the task id this page instance currently "owns". React Router
@@ -133,7 +135,8 @@ export default function TaskDetailPage() {
   // Fetch agent configs for name lookup
   useEffect(() => {
     fetchAgents()
-  }, [fetchAgents])
+    fetchProviderConfigs()
+  }, [fetchAgents, fetchProviderConfigs])
 
   // Load repos list for the edit form
   useEffect(() => {
@@ -566,6 +569,7 @@ export default function TaskDetailPage() {
             <RunHistoryList
               runs={runs}
               agentConfigs={agentConfigs}
+              providerConfigs={providerConfigs}
               selectedRun={selectedRun}
               onSelectRun={handleSelectRun}
               isRunning={!!isRunning}

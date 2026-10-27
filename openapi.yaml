@@ -737,6 +737,19 @@ components:
         updated_at:  { type: string, format: date-time }
       required: [id, name, description, labels, transitions, created_at, updated_at]
 
+    EscalationRung:
+      type: object
+      required: [provider_config_id]
+      properties:
+        provider_config_id: { type: string, description: "Existing provider config used on this rung." }
+        effort:
+          type: string
+          enum: ["", low, medium, high, xhigh, max]
+          description: "Effort for this rung; empty inherits the agent config's effort."
+        fallback_provider_config_ids:
+          type: array
+          items: { type: string }
+          description: "Tried after the rung provider when it is rate-limited or paused, before the agent's own provider list."
     AgentConfig:
       type: object
       properties:
@@ -768,6 +781,19 @@ components:
             on update keeps the stored list (minus a fallback promoted to
             primary). Runs record which one they used in
             AgentRun.provider_config_id.
+        escalation_ladder:
+          type: array
+          items: { $ref: "#/components/schemas/EscalationRung" }
+          description: >
+            Escalate on failure. Rung 0 is implicit (this config's own
+            provider_config_id/effort); entry i is rung i+1. At dispatch the
+            rung is the number of failed attempts on this agent's stage
+            (consecutive failures plus review/test bounce-backs into the
+            label), capped at the last rung; it resets when the stage is
+            freshly entered or a human acts. Max 10 rungs. Rate-limit fallbacks
+            still apply on top. Optional on write: omitted on create means
+            none; omitted on update keeps the stored ladder. Runs record the
+            rung in AgentRun.ladder_rung.
         enabled:
           type: boolean
           description: >
@@ -1219,6 +1245,7 @@ components:
         task_id:          { type: string }
         agent_config_id:  { type: string, nullable: true, description: "Agent config that ran this task; set NULL if that config is later deleted." }
         provider_config_id: { type: string, nullable: true, description: "Provider config the run used (the agent config's primary or one of its fallbacks); null for runs from before provider fallbacks." }
+        ladder_rung:      { type: integer, nullable: true, description: "Escalation ladder rung the run used (0 = the agent config's own provider/effort); null when the agent config had no ladder." }
         status:           { type: string, enum: [pending, running, completed, failed, waiting_human, cancelled, interrupted] }
         feedback:         { type: string, nullable: true }
         stored_info:      { type: string, nullable: true, description: "Free-form info the agent stored for this run (via the MCP store_info tool); null when none." }
@@ -1720,6 +1747,20 @@ components:
                   Percentage of runs_finished runs that ended waiting_human
                   rather than completed.
               low_sample_escalation: { type: boolean, description: "true when runs_finished is below 10." }
+              ladder_rungs:
+                type: array
+                description: >-
+                  Present only for configs whose runs carry a ladder_rung. Per
+                  finishing rung (the rung of the config's last laddered run on
+                  each terminal task): tasks finished and average total task
+                  cost. Independent of the last-run attribution of tasks_done.
+                items:
+                  type: object
+                  required: [rung, tasks_done, avg_cost_to_done_usd]
+                  properties:
+                    rung: { type: integer }
+                    tasks_done: { type: integer }
+                    avg_cost_to_done_usd: { type: number, format: double }
             required:
               - agent_config_id
               - agent_name

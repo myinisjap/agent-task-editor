@@ -5422,6 +5422,17 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        EscalationRung: {
+            /** @description Existing provider config used on this rung. */
+            provider_config_id: string;
+            /**
+             * @description Effort for this rung; empty inherits the agent config's effort.
+             * @enum {string}
+             */
+            effort?: "" | "low" | "medium" | "high" | "xhigh" | "max";
+            /** @description Tried after the rung provider when it is rate-limited or paused, before the agent's own provider list. */
+            fallback_provider_config_ids?: string[];
+        };
         AgentConfig: {
             id: string;
             name: string;
@@ -5431,6 +5442,8 @@ export interface components {
             readonly provider_config?: components["schemas"]["ProviderConfig"];
             /** @description Ordered fallback providers, tried after provider_config_id when an earlier one's account is rate-limited (or its provider is paused). Each must be an existing provider config, distinct, and not the primary. Optional on write: omitted on create means none; omitted on update keeps the stored list (minus a fallback promoted to primary). Runs record which one they used in AgentRun.provider_config_id. */
             fallback_provider_config_ids?: string[];
+            /** @description Escalate on failure. Rung 0 is implicit (this config's own provider_config_id/effort); entry i is rung i+1. At dispatch the rung is the number of failed attempts on this agent's stage (consecutive failures plus review/test bounce-backs into the label), capped at the last rung; it resets when the stage is freshly entered or a human acts. Max 10 rungs. Rate-limit fallbacks still apply on top. Optional on write: omitted on create means none; omitted on update keeps the stored ladder. Runs record the rung in AgentRun.ladder_rung. */
+            escalation_ladder?: components["schemas"]["EscalationRung"][];
             /** @description Whether the dispatcher considers this config for its labels. Sent as a boolean on responses (the stored 0/1 is normalized); accepted as boolean or 0/1 on write. Absent from create request bodies (new configs start enabled unless a label conflict disables them). */
             enabled: boolean;
             system_prompt: string;
@@ -5638,6 +5651,8 @@ export interface components {
             agent_config_id: string | null;
             /** @description Provider config the run used (the agent config's primary or one of its fallbacks); null for runs from before provider fallbacks. */
             provider_config_id?: string | null;
+            /** @description Escalation ladder rung the run used (0 = the agent config's own provider/effort); null when the agent config had no ladder. */
+            ladder_rung?: number | null;
             /** @enum {string} */
             status: "pending" | "running" | "completed" | "failed" | "waiting_human" | "cancelled" | "interrupted";
             feedback?: string | null;
@@ -5905,6 +5920,13 @@ export interface components {
                 escalation_rate_percent: number;
                 /** @description true when runs_finished is below 10. */
                 low_sample_escalation: boolean;
+                /** @description Present only for configs whose runs carry a ladder_rung. Per finishing rung (the rung of the config's last laddered run on each terminal task): tasks finished and average total task cost. Independent of the last-run attribution of tasks_done. */
+                ladder_rungs?: {
+                    rung: number;
+                    tasks_done: number;
+                    /** Format: double */
+                    avg_cost_to_done_usd: number;
+                }[];
             }[];
         };
         /** @description A single provider/onboarding readiness row. */
