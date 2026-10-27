@@ -28,6 +28,7 @@ frontend/blob-report/
 # Go build artifacts
 backend/server
 backend/mcp-server
+backend/mcp-board
 
 # Agent tooling state (OMC / Claude Code / Qwen)
 .omc/
