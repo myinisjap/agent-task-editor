@@ -27,6 +27,7 @@ src/
 │   ├── board/        AgentGroupColumn, AgentLogEntry, GitStateBadge, NewTaskModal, TaskBoard, TaskCard, TaskColumn
 │   ├── chat/          TerminalKeyBar (mobile Esc/Tab/arrow/Ctrl row for the chat terminal)
 │   ├── diff/          FileDiffViewer (syntax-highlighted git diff + inline review comments)
+│   ├── inbox/         DecisionContext (Decide row summary), InboxPreview (desktop right-pane preview)
 │   ├── lessons/       LessonForm, LessonsPanel (repo/global lessons), RememberLessonModal
 │   ├── skills/        SkillPicker (chip multi-select for agent/repo skills)
 │   └── shared/        ApiTokenGate, GitHubAuthWarning, NavSidebar, Toast, WorkflowFlowchart
@@ -56,6 +57,7 @@ src/
 │   ├── condensedBoard.ts    Groups workflow labels into condensed/agent-group board columns
 │   ├── diffComments.ts      Maps API review-comment wire type to the diff viewer's view model
 │   ├── useIsMobile.ts       Hook for responsive breakpoint detection
+│   ├── inboxKeys.ts         Inbox keyboard map (j/k, a, r, Enter/o, Esc, ?) + `useInboxKeyboard` hook; ignores typing targets and modifiers
 │   ├── useMediaQuery.ts     useMediaQuery(q) / useIsWideDesktop() (≥1280px) / useIsPhone() (<768px) — pick the Task Detail review layout variant
 │   ├── useKeyboardInset.ts  Hook: height of the on-screen keyboard overlapping the layout viewport
 │   ├── termKeys.ts          Mobile terminal key-bar sequences + Ctrl-modifier folding

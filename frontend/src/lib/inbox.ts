@@ -126,3 +126,55 @@ export function itemActions(item: NeedsMeItem, workflow: Workflow | undefined): 
   if (esc.action === 'reply') return { approve: false, requestChanges: false, retry: false, reply: true }
   return { approve: false, requestChanges: false, retry: true, reply: false, fix: esc.action === 'fix' ? esc.fix : undefined }
 }
+
+/** Stable selection key for an entry; also what `?task=` carries. */
+export function entryKey(e: InboxEntry): string {
+  switch (e.kind) {
+    case 'needs_me': return e.item.task_id
+    case 'source_edit': return `${e.edit.task.id}:source`
+    case 'side_effect': return `${e.failed.task.id}:effects`
+    case 'provider': return `provider:${e.provider.provider}`
+  }
+}
+
+export function entryTaskId(e: InboxEntry): string | undefined {
+  switch (e.kind) {
+    case 'needs_me': return e.item.task_id
+    case 'source_edit': return e.edit.task.id
+    case 'side_effect': return e.failed.task.id
+    case 'provider': return undefined
+  }
+}
+
+/** Entries in on-screen order (section order, then within-section order). */
+export function flattenInbox(s: InboxSections): InboxEntry[] {
+  return SECTION_ORDER.flatMap((k) => s[k])
+}
+
+/** Resolves a `?task=` value to an entry key: exact key, then by task id, then the first entry. */
+export function resolveSelection(flat: InboxEntry[], param: string | null): string | undefined {
+  if (flat.length === 0) return undefined
+  if (param) {
+    const exact = flat.find((e) => entryKey(e) === param)
+    if (exact) return entryKey(exact)
+    const byTask = flat.find((e) => entryTaskId(e) === param)
+    if (byTask) return entryKey(byTask)
+  }
+  return entryKey(flat[0])
+}
+
+/** The key one step away, clamped to the list (no wrap). */
+export function neighborKey(flat: InboxEntry[], key: string | undefined, delta: 1 | -1): string | undefined {
+  if (flat.length === 0) return undefined
+  const i = flat.findIndex((e) => entryKey(e) === key)
+  if (i < 0) return entryKey(flat[0])
+  return entryKey(flat[Math.min(flat.length - 1, Math.max(0, i + delta))])
+}
+
+/** Where selection goes once `key` is gone: the next entry, else the previous one. */
+export function nextAfterRemoval(flat: InboxEntry[], key: string | undefined): string | undefined {
+  const i = flat.findIndex((e) => entryKey(e) === key)
+  if (i < 0) return undefined
+  const n = flat[i + 1] ?? flat[i - 1]
+  return n ? entryKey(n) : undefined
+}
