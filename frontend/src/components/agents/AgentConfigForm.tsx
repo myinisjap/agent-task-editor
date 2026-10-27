@@ -107,7 +107,7 @@ export default function AgentConfigForm({
   )
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
+    <div className="flex-1 min-w-0">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">
           <h2 className="text-base font-semibold text-slate-100">

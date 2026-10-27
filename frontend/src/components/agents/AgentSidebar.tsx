@@ -48,7 +48,7 @@ export default function AgentSidebar({
 
       <div
         className={`fixed inset-y-0 left-0 z-40 w-64 max-w-[80vw] bg-slate-950 border-r border-slate-800 overflow-y-auto flex flex-col transition-transform duration-200 ease-in-out
-          md:static md:z-auto md:w-56 md:max-w-none md:translate-x-0
+          md:sticky md:top-0 md:self-start md:max-h-[calc(100vh-8rem)] md:z-auto md:w-56 md:shrink-0 md:max-w-none md:translate-x-0 md:rounded-lg
           ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}
       >
       <div className="p-4 flex items-center justify-between border-b border-slate-800">
