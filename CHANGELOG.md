@@ -55,8 +55,6 @@ triggers the "Release" workflow the same way.
 - **Agents can write to repos' `.git` again after host-side git use.** With `AGENT_FIX_REPO_PERMS=auto` the entrypoint skipped any repo whose top-level dir was already group-writable, so `.git/objects/xx` dirs created by git on the host (umask `022`) stayed owner-only and agent runs failed at `git add`/merge with a permission error. The entrypoint now re-opens `.git` whenever any directory in it lacks group write and sets `core.sharedRepository=group` on each repo, so git keeps new object dirs group-writable.
 - **Human replies now reach every later agent on the task.** Answers given via the reply box / `reply_to_run` are stored on the task (table `task_human_decisions`) and shown to every later run, on any label and agent, under `HUMAN DECISIONS ON THIS TASK`, with the question they answered and when. Before, only the resumed run saw the answer, so testers and reviewers kept failing tasks for following it. The resumed run still gets `RESPONSE FROM HUMAN` as before.
 
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
-
 ### Added
 
 - **Review brief for tasks waiting on human approval.** A compact card on Task Detail (top of the Overview tab and above the diff on the Diff tab) shows what changed, deterministic risk flags (`migration`, `auth_or_security`, `dependencies`, `tests_removed`, `ci_config`, `large_change`, `outside_plan_scope`), the latest verify result, run count, rework loops and cost, and the last agent summary; Inbox rows for approvals show the flag chips. Available as `GET /tasks/{id}/review-brief` and `risk_flags` on `GET /needs-me` items. Flags are computed from the branch diff with no LLM calls and are advisory only: there is no auto-approval.
@@ -70,8 +68,6 @@ triggers the "Release" workflow the same way.
 - **A merged PR now finishes its task.** When GitHub reports a task's PR as merged, the board moves the task to its workflow's terminal column (as a forced move noted "PR merged") and releases any run left waiting on a human. Before, a task that bounced back for a CI fix and then merged anyway stayed stuck in its working column with a run that could never resume. Tasks with a run still in progress are left alone.
 - **GitHub is now talked to over its REST API instead of the `gh` CLI.** PR sync, issue import, write-back and PR creation make direct HTTP requests rather than spawning several `gh` processes per open PR per sweep. Auth is unchanged: `GH_TOKEN`, then `GITHUB_TOKEN`, then the output of `gh auth token` (so an existing `gh auth login` keeps working), and the Health page and `/github/auth-status` still report it. `GITHUB_API_URL` can point at a GitHub Enterprise API. The `ate_gh_calls_total` metric now counts API requests.
 - **Faster live log view on long runs.** Live log lines in the task detail view are now batched once per animation frame and deduplicated with an id set, instead of copying and re-rendering the whole list for every line.
-
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
 
 ### Added
 
@@ -93,8 +89,6 @@ triggers the "Release" workflow the same way.
 - **Rate limits no longer use up a task's retries.** A run that hits a provider rate or usage limit still blocks that agent config until the limit resets (or a backoff window passes), but the task is released straight away instead of counting against `max_retries`. The next sweep hands it to another enabled config on the same label, or the task waits with the "rate limited" block reason. Before, three rate limits in a row escalated the task to "needs human" even when a fallback config was free.
 - **Rate limits are tracked per provider account.** When a run hits a limit, every agent config on that account is skipped until it resets, not just the config whose run hit it, so other tasks stop trying a provider that's already tapped out. Each provider config is its own account, except `claude` configs on the shared `claude login` and `codex_cli` configs on the shared ChatGPT login, which share one (an API key, base URL, Bedrock/Vertex, or a separate `CLAUDE_CONFIG_DIR`/`CODEX_HOME` in the env makes it separate).
 - Phone navigation: a fixed bottom tab bar (Inbox with waiting badge, Board, Chat, More) replaces the floating hamburger below the `md` breakpoint; More opens the existing drawer. The bar respects the home-indicator safe area (`viewport-fit=cover`). Desktop is unchanged.
-
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
 
 ### Added
 - **Phone board: swipe and jump between columns.** A scrollable row of column chips (name + task count) sits above the single-column board; tap to jump, and columns holding a task that needs you (needs-me or waiting on a human) are highlighted. Swiping horizontally pages columns (only clearly horizontal, quick swipes — not scrolls or long-press drags), and the selected column is kept in the URL (`?col=`) so Back and reload keep your place. Desktop layout is unchanged.
@@ -138,8 +132,6 @@ triggers the "Release" workflow the same way.
 
 ### Documentation
 - Docs: brought README, `AGENTS.md` and `docs/` in line with the review-driven work (first-run navigation paths, Inbox/Pipeline/verify command in the feature list, `GITHUB_WEBHOOK_SECRET` and `SHUTDOWN_DRAIN_TIMEOUT` in the README env table, side-effect retry, source-update apply/discard and GitHub webhook endpoints in `docs/api.md`, rate-limit persistence, removed-provider leftovers in `codex_cli.md`, new internal packages in the layout).
-
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
 
 ### Added
 - **`archive_task` board MCP tool** — the remote MCP's `full` profile can now archive (or, with `archived: false`, unarchive) a task from any label, backed by `PATCH /tasks/{id}/archive`. Before this, a connector had no way to clear finished or obsolete tasks: `move_task` only follows workflow transitions, and there is none from `not_ready` to `done`.
@@ -248,8 +240,6 @@ triggers the "Release" workflow the same way.
 
 ## [0.16.0] - 2026-08-21
 
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
-
 ### Added
 - **`install.sh`** — one-line installer (`curl ... | bash`) that downloads
   just `run.sh` and the two Compose files needed to run from prebuilt images,
@@ -288,8 +278,6 @@ triggers the "Release" workflow the same way.
   last-run attribution. See `docs/agents.md` and `docs/api.md` for details.
 
 ## [0.15.0] - 2026-08-13
-
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
 
 ### Added
 - **Reasoning effort selection on agent configs.** A new optional `effort`
@@ -1689,8 +1677,6 @@ triggers the "Release" workflow the same way.
   1.23.2→1.24.0; CI actions `setup-go` v6→v7 and
   `create-github-app-token` v2→v3.
 
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
-
 ### Added
 - **In-app help modals on every page.** Each page (Overview, Board, Chat,
   Workflows, Agents, Providers, Pricing, Repos, Templates, Health, Cost &
@@ -1807,8 +1793,6 @@ triggers the "Release" workflow the same way.
 
 ## [0.13.0] - 2026-07-21
 
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
-
 ### Added
 - **Board MCP server (`mcp-board`) for creating tickets from a chat.** A new MCP
   server lets you work through a plan in a chat and have it create tickets on the
@@ -1882,8 +1866,6 @@ triggers the "Release" workflow the same way.
   `nullable: true`, so `AgentRun.agent_config_id` generates as `string | null`.
 
 ## [0.12.0] - 2026-07-16
-
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
 
 ### Added
 - **Provider Config: provider/model/API keys split out into a separate,
@@ -2033,8 +2015,6 @@ triggers the "Release" workflow the same way.
   `X-Label-Conflict` header (matching `POST /agents` behavior), and the
   frontend shows it as an informational note instead of a blocking alert.
 
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
-
 ### Added
 - **Recurring scheduled tasks from templates.** New `task_schedules` table
   (migration 035) links a task template to a repo and a cron expression. A
@@ -2102,8 +2082,6 @@ triggers the "Release" workflow the same way.
 
 ## [0.10.0] - 2026-07-12
 
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
-
 ### Added
 - **Agent config priority / failover.** Agent configs now have a `priority`
   (lower runs first). When multiple enabled configs share a label, dispatch
@@ -2113,8 +2091,6 @@ triggers the "Release" workflow the same way.
   the block expires.
 
 ## [0.9.0] - 2026-07-12
-
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
 
 ### Added
 - **Container-local `qwen_code` config.** The backend now reads qwen settings
@@ -2169,8 +2145,6 @@ triggers the "Release" workflow the same way.
   `git tag vx.y.z && git push origin vx.y.z` hotfix path is unaffected.
 
 ## [0.8.0] - 2026-07-10
-
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
 
 ### Added
 - **`-all-cli` backend release image**. The release workflow now also builds
@@ -2536,8 +2510,6 @@ triggers the "Release" workflow the same way.
 
 ## [0.7.0] - 2026-07-09
 
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
-
 ### Added
 - **SQLite backup/restore story** (#89).
   - `GET /api/v1/backup` streams a consistent point-in-time database
@@ -2592,8 +2564,6 @@ triggers the "Release" workflow the same way.
   still vulnerable to, per `govulncheck`.
 
 ## [0.6.0] - 2026-07-07
-
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
 
 ### Added
 - **Cost budgets per agent config / task, plus new cost analytics** (#42).
@@ -2688,8 +2658,6 @@ triggers the "Release" workflow the same way.
 
 ## [0.5.0] - 2026-07-07
 
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
-
 ### Added
 - **Per-agent-config run analytics** on the Dashboard (#47). A new "Agent
   config performance" table breaks run history down by `agent_config_id`
@@ -2748,8 +2716,6 @@ triggers the "Release" workflow the same way.
 
 ## [0.4.0] - 2026-07-06
 
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
-
 ### Added
 - Shift-click a task card's select checkbox to select every task between it and
   the last-clicked card in that column, instead of toggling one at a time.
@@ -2778,8 +2744,6 @@ triggers the "Release" workflow the same way.
   `docker-compose.release.yml` now target `127.0.0.1` directly.
 
 ## [0.2.0] - 2026-07-07
-
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
 
 ### Added
 - **Dark / light theme toggle** (#87). The UI now ships an explicit theme switch in the
@@ -2905,8 +2869,6 @@ triggers the "Release" workflow the same way.
   `BearerAuth` middleware (it does its own constant-time `?token=` check), and
   the header-based bypass has been removed.
 
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
-
 ### Added
 - **Session continuity across runs** (#77). The `claude` provider now records each
   run's conversation `session_id` (from the CLI's stream-json envelope) and, when
@@ -2946,8 +2908,6 @@ triggers the "Release" workflow the same way.
 ## [0.1.0] - 2026-07-04
 
 First tagged release.
-
-- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
 
 ### Added
 - Versioned multi-arch (amd64 + arm64) Docker images published to GHCR on every
