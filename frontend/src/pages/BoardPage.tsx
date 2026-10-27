@@ -15,6 +15,8 @@ import HelpButton from '../components/shared/HelpButton'
 import { BoardHelp } from '../components/shared/pageHelp'
 import { useDebouncedCallback } from '../lib/useDebouncedCallback'
 import { useIsMobile } from '../lib/useIsMobile'
+import { shortcutHint } from '../lib/shortcuts'
+import { useCommandPaletteStore } from '../stores/commandPalette'
 
 const CONDENSED_STORAGE_KEY = 'board.condensed'
 
@@ -53,6 +55,14 @@ export default function BoardPage() {
   // run/lifecycle stage) or on task.updated (in case cost_warned resets server-side).
   const [costWarnedTaskIds, setCostWarnedTaskIds] = useState(() => new Set<string>())
   const [showNewTask, setShowNewTask] = useState(false)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const focusRequested = useCommandPaletteStore((s) => s.boardSearchFocusRequested)
+  useEffect(() => {
+    if (focusRequested > 0) {
+      searchRef.current?.focus()
+      useCommandPaletteStore.setState({ boardSearchFocusRequested: 0 })
+    }
+  }, [focusRequested])
   // Source task for the "Duplicate" flow — when set, the New Task modal opens
   // pre-filled from this task instead of blank. Mutually exclusive with
   // showNewTask so only one modal instance is ever mounted at a time.
@@ -469,6 +479,9 @@ export default function BoardPage() {
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <input
+          ref={searchRef}
+          aria-label="Search tasks"
+          title={shortcutHint("focus-search")}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search tasks…"

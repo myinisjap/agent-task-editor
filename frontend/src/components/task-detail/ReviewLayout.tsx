@@ -160,6 +160,7 @@ export default function ReviewLayout({
       <Field label="Rejection note" labelHidden className="flex-1 min-w-0">
         <textarea
           value={rejectNote}
+          data-reject-note
           onChange={(e) => setRejectNote(e.target.value)}
           placeholder={rejectPlaceholder(openCommentsCount)}
           rows={3}

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-export type InboxKeyAction = 'next' | 'prev' | 'approve' | 'reject' | 'open' | 'escape' | 'help'
+export type InboxKeyAction = 'next' | 'prev' | 'approve' | 'reject' | 'open' | 'escape'
 
 type KeyLike = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'defaultPrevented'> & { target: EventTarget | null }
 
@@ -8,7 +8,8 @@ export function isTypingTarget(el: EventTarget | null): boolean {
   const t = el as HTMLElement | null
   if (!t || !t.tagName) return false
   const tag = t.tagName.toLowerCase()
-  return tag === 'input' || tag === 'textarea' || tag === 'select' || !!t.isContentEditable
+  if (tag === 'input' || tag === 'textarea' || tag === 'select' || !!t.isContentEditable) return true
+  return !!t.closest?.('.xterm')
 }
 
 /** Maps a keydown to an Inbox action, or null when it must be left alone. */
@@ -26,7 +27,6 @@ export function inboxKeyAction(e: KeyLike): InboxKeyAction | null {
       return tag === 'a' || tag === 'button' ? null : 'open'
     }
     case 'Escape': return 'escape'
-    case '?': return 'help'
     default: return null
   }
 }

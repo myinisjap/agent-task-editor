@@ -28,6 +28,8 @@ import NewTaskModal from '../components/board/NewTaskModal'
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
 import { TaskDetailHelp } from '../components/shared/pageHelp'
+import { useCommandPaletteStore } from '../stores/commandPalette'
+import { buildTaskCommands, type TaskCommandHandlers } from '../lib/taskCommands'
 
 type Tab = 'overview' | 'logs' | 'diff'
 
@@ -489,6 +491,57 @@ export default function TaskDetailPage() {
     setSelectedRun(runId)
     setActiveTab('logs')
   }
+
+  const handleToggleArchive = async () => {
+    if (!id || !task) return
+    setActionPending(true)
+    try {
+      const updated = await api.tasks.setArchived(id, !task.archived)
+      setTask(updated)
+    } catch (e: any) {
+      alert(e.message ?? String(e))
+    } finally {
+      setActionPending(false)
+    }
+  }
+
+  // Expose this task's actions to the global command palette. Handlers are
+  // recreated every render, so commands call through a ref and the effect
+  // depends only on data.
+  const commandHandlersRef = useRef<TaskCommandHandlers>(null as unknown as TaskCommandHandlers)
+  commandHandlersRef.current = {
+    moveLabel: handleMoveLabel,
+    approve: handleApprove,
+    requestChanges: () => {
+      const el = document.querySelector<HTMLTextAreaElement>('textarea[data-reject-note]')
+      if (el) { el.scrollIntoView?.({ block: 'center' }); el.focus() }
+      else setToast('Open the Overview tab to write a change request')
+    },
+    rerun: handleRerun,
+    createPR: handleCreatePR,
+    openPR: (url) => { window.open(url, '_blank', 'noopener') },
+    togglePause: handleTogglePause,
+    toggleArchive: handleToggleArchive,
+  }
+  useEffect(() => {
+    if (!id || !task) return
+    const proxy: TaskCommandHandlers = {
+      moveLabel: (l) => commandHandlersRef.current.moveLabel(l),
+      approve: () => commandHandlersRef.current.approve(),
+      requestChanges: () => commandHandlersRef.current.requestChanges(),
+      rerun: () => commandHandlersRef.current.rerun(),
+      createPR: () => commandHandlersRef.current.createPR(),
+      openPR: (u) => commandHandlersRef.current.openPR(u),
+      togglePause: () => commandHandlersRef.current.togglePause(),
+      toggleArchive: () => commandHandlersRef.current.toggleArchive(),
+    }
+    useCommandPaletteStore.getState().setTaskContext({
+      taskId: id,
+      title: task.title,
+      commands: buildTaskCommands({ task, workflow, canRerun, handlers: proxy }),
+    })
+  }, [id, task, workflow, canRerun])
+  useEffect(() => () => useCommandPaletteStore.getState().setTaskContext(null), [id])
 
   if (!task) return <div className="p-6 text-fg-muted">Loading…</div>
 

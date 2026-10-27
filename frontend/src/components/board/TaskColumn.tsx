@@ -1,3 +1,4 @@
+import { shortcutHint } from '../../lib/shortcuts'
 import { labelDisplayName } from '../../lib/labelDisplay'
 import { useCallback, useMemo, useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
@@ -198,6 +199,7 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
         {!compact && onAddTask && (
           <button
             onClick={onAddTask}
+            title={shortcutHint("new-task")}
             className="w-full text-sm text-slate-500 hover:text-slate-300 border border-dashed border-slate-700 hover:border-slate-500 rounded-lg py-2 transition-colors"
           >
             + Add task
