@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
+	"github.com/myinisjap/agent-task-editor/backend/internal/skills"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
@@ -32,6 +33,8 @@ type Dispatcher struct {
 	engine    *workflow.Engine
 	interval  time.Duration
 	uploadDir string
+	// skillsDir is the skills library root (see internal/skills).
+	skillsDir string
 	// ProviderFactory builds a Provider for a given AgentConfig.
 	ProviderFactory func(cfg AgentConfig) Provider
 	// RateLimits is the shared rate-limit registry (optional — no-op when nil).
@@ -89,6 +92,33 @@ func NewDispatcher(db *sql.DB, pool *Pool, engine *workflow.Engine, factory func
 // SetUploadDir configures the directory where task attachment images are stored.
 func (d *Dispatcher) SetUploadDir(dir string) {
 	d.uploadDir = dir
+}
+
+// SetSkillsDir configures the directory holding the skills library.
+func (d *Dispatcher) SetSkillsDir(dir string) { d.skillsDir = dir }
+
+// materializeSkills copies the union of the agent config's and repo's enabled
+// skills into the worktree directory the provider scans, excluding them from
+// git. Best-effort: failures are logged, never fail the run.
+func (d *Dispatcher) materializeSkills(ctx context.Context, workDir, provider, agentID, repoID string, log *slog.Logger) {
+	if d.skillsDir == "" || workDir == "" {
+		return
+	}
+	if _, ok := skills.ProviderDir(provider); !ok {
+		return
+	}
+	list, err := d.q.ListEnabledSkillsForRun(ctx, gen.ListEnabledSkillsForRunParams{AgentConfigID: agentID, RepoID: repoID})
+	if err != nil {
+		log.Warn("dispatcher: list skills", "err", err)
+		return
+	}
+	names := make([]string, 0, len(list))
+	for _, s := range list {
+		names = append(names, s.Name)
+	}
+	if _, err := skills.Materialize(ctx, skills.Store{Dir: d.skillsDir}, workDir, provider, names, log); err != nil {
+		log.Warn("dispatcher: materialize skills", "err", err)
+	}
 }
 
 // Run sweeps on interval until ctx is cancelled.
@@ -932,7 +962,9 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 	attachmentRels, attachmentAbsPaths := d.resolveAttachments(t, workDir, log)
 	var setup func(context.Context) (WorktreeResult, error)
 	if !haveWorktree {
-		setup = d.worktreeSetup(t, repo, attachmentAbsPaths, log)
+		setup = d.worktreeSetup(t, repo, attachmentAbsPaths, agentCfg.Provider, matched.ID, log)
+	} else {
+		d.materializeSkills(ctx, workDir, agentCfg.Provider, matched.ID, repo.ID, log)
 	}
 	reviewComments := d.loadReviewComments(ctx, t.ID, log)
 	sourceComments := d.loadSourceComments(ctx, t.ID, log)
@@ -1155,7 +1187,7 @@ func existingWorktree(t gen.Task) (string, bool) {
 // provisionWorktree itself, since subtasks.go already holds it around calls to
 // provisionWorktree/RemoveWorktree. The task row is updated while the lock is
 // still held so the sweeper never sees a directory without its recorded owner.
-func (d *Dispatcher) worktreeSetup(t gen.Task, repo gen.Repo, attachmentAbsPaths []string, log *slog.Logger) func(context.Context) (WorktreeResult, error) {
+func (d *Dispatcher) worktreeSetup(t gen.Task, repo gen.Repo, attachmentAbsPaths []string, provider, agentID string, log *slog.Logger) func(context.Context) (WorktreeResult, error) {
 	return func(ctx context.Context) (WorktreeResult, error) {
 		// parentBranchBase does a DB read; resolve it before taking the repo git
 		// lock so a slow DB doesn't hold the lock.
@@ -1187,6 +1219,7 @@ func (d *Dispatcher) worktreeSetup(t gen.Task, repo gen.Repo, attachmentAbsPaths
 				log.Warn("dispatcher: copy attachments to worktree", "err", err)
 			}
 		}
+		d.materializeSkills(ctx, wtPath, provider, agentID, repo.ID, log)
 		return WorktreeResult{Path: wtPath, Branch: branch}, nil
 	}
 }
