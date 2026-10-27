@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { api, type Task, type AgentRun, type TaskLabelHistoryEntry, type TaskSourceComment, type Workflow, type Repo } from '../api/client'
+import { api, type Task, type AgentRun, type TaskLabelHistoryEntry, type TaskSourceComment, type TaskHumanDecision, type Workflow, type Repo } from '../api/client'
 import { wsClient } from '../api/ws'
 import { useAgentsStore } from '../stores/agents'
 import { useProviderConfigsStore } from '../stores/providerConfigs'
@@ -11,6 +11,9 @@ import { humanActionsFor } from '../lib/humanGate'
 import TaskActions from '../components/task-detail/TaskActions'
 import RunHistoryList from '../components/task-detail/RunHistoryList'
 import ForceMoveControl from '../components/task-detail/ForceMoveControl'
+import HumanDecisionsList from '../components/task-detail/HumanDecisionsList'
+import RememberLessonModal from '../components/lessons/RememberLessonModal'
+import Toast from '../components/shared/Toast'
 import LabelHistoryList from '../components/task-detail/LabelHistoryList'
 import SourceUpdateNotice from '../components/task-detail/SourceUpdateNotice'
 import SourceCommentsList from '../components/task-detail/SourceCommentsList'
@@ -32,6 +35,9 @@ export default function TaskDetailPage() {
   const [runs, setRuns] = useState<AgentRun[]>([])
   const [labelHistory, setLabelHistory] = useState<TaskLabelHistoryEntry[]>([])
   const [sourceComments, setSourceComments] = useState<TaskSourceComment[]>([])
+  const [humanDecisions, setHumanDecisions] = useState<TaskHumanDecision[]>([])
+  const [rememberText, setRememberText] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
   const [selectedRun, setSelectedRun] = useState<string | null>(null)
   const [rejectNote, setRejectNote] = useState('')
   const [replyText, setReplyText] = useState('')
@@ -113,6 +119,20 @@ export default function TaskDetailPage() {
     }).catch(() => {})
   }, [id])
 
+  const refreshHumanDecisions = useCallback(() => {
+    if (!id) return
+    const taskId = id
+    api.tasks.humanDecisions(taskId).then((d) => {
+      if (currentIdRef.current !== taskId) return
+      setHumanDecisions(d ?? [])
+    }).catch(() => {})
+  }, [id])
+
+  // Human decisions load separately so a failure can't break the initial load.
+  useEffect(() => {
+    refreshHumanDecisions()
+  }, [refreshHumanDecisions])
+
   // Fetch agent configs for name lookup
   useEffect(() => {
     fetchAgents()
@@ -138,6 +158,9 @@ export default function TaskDetailPage() {
     setSelectedRun(null)
     setLabelHistory([])
     setSourceComments([])
+    setHumanDecisions([])
+    setRememberText(null)
+    setToast(null)
     setCostWarning(null)
     setEditingTask(false)
     setTaskSaveError('')
@@ -349,6 +372,7 @@ export default function TaskDetailPage() {
       // Follow the continuation run so the user watches the agent pick the reply up.
       setSelectedRun(res.run_id)
       refreshRuns()
+      refreshHumanDecisions()
     } catch (e: any) {
       setActionError(e.message ?? String(e))
     } finally {
@@ -455,6 +479,9 @@ export default function TaskDetailPage() {
   }
 
   if (!task) return <div className="p-6 text-slate-400">Loading…</div>
+
+  const canRemember = !!task.repo_id
+  const rememberRepoName = repos.find((r) => r.id === task.repo_id)?.name
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
@@ -565,7 +592,9 @@ export default function TaskDetailPage() {
               onMoved={(updated) => { setTask(updated); refreshRuns(); refreshLabelHistory() }}
             />
 
-            <LabelHistoryList history={labelHistory} />
+            <HumanDecisionsList decisions={humanDecisions} onRemember={canRemember ? setRememberText : undefined} />
+
+            <LabelHistoryList history={labelHistory} onRemember={canRemember ? setRememberText : undefined} />
 
             <SourceCommentsList comments={sourceComments} />
           </div>
@@ -624,6 +653,21 @@ export default function TaskDetailPage() {
           onJumpToDiffTab={() => setActiveTab('diff')}
         />
       )}
+
+      {rememberText !== null && canRemember && (
+        <RememberLessonModal
+          repoId={task.repo_id}
+          repoName={rememberRepoName}
+          taskId={task.id}
+          text={rememberText}
+          onClose={() => setRememberText(null)}
+          onSaved={() => {
+            setRememberText(null)
+            setToast(`Lesson saved for ${rememberRepoName ?? 'this repo'}`)
+          }}
+        />
+      )}
+      {toast && <Toast message={toast} onDismiss={() => setToast(null)} />}
     </div>
   )
 }

@@ -56,6 +56,8 @@ type Config struct {
 	PreviewCaptureScript string        `yaml:"preview_capture_script"`
 	GitHubSyncInterval   time.Duration `yaml:"github_sync_interval"`
 	IssueSyncInterval    time.Duration `yaml:"issue_sync_interval"`
+	// SkillsDir (SKILLS_DIR) holds skill folders; default "skills".
+	SkillsDir string `yaml:"skills_dir"`
 	// ScheduleInterval is how often the task-schedule sweep runs (see
 	// internal/schedule.Scheduler), checking every enabled task_schedule for
 	// due firings. Cron expressions are minute-granularity, so this only
@@ -310,6 +312,9 @@ func Load(path string) (Config, error) {
 	}
 	if v := os.Getenv("UPLOAD_DIR"); v != "" {
 		cfg.UploadDir = v
+	}
+	if v := os.Getenv("SKILLS_DIR"); v != "" {
+		cfg.SkillsDir = v
 	}
 	if v := os.Getenv("GITHUB_SYNC_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil && d > 0 {

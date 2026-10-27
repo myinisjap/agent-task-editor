@@ -73,7 +73,8 @@ sql:
       - "internal/storage/migrations/071_agent_run_session_cost.up.sql"
       - "internal/storage/migrations/072_repo_lessons.up.sql"
       - "internal/storage/migrations/073_agent_escalation_ladder.up.sql"
-      - "internal/storage/migrations/074_repo_preview.up.sql"
+      - "internal/storage/migrations/075_repo_preview.up.sql"
+      - "internal/storage/migrations/074_skills.up.sql"
     gen:
       go:
         package: "gen"

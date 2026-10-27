@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type Repo, type RuntimeLanguagePin, type Workflow } from '../api/client'
+import LessonsPanel from '../components/lessons/LessonsPanel'
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
 import { ReposHelp } from '../components/shared/pageHelp'
@@ -105,6 +106,7 @@ export default function ReposPage() {
   const [showHelp, setShowHelp] = useState(false)
 
   // Inline edit state
+  const [lessonsOpenId, setLessonsOpenId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editForm, setEditForm] = useState<EditForm>({ ...BLANK_FORM })
   const [editSaving, setEditSaving] = useState(false)
@@ -812,6 +814,13 @@ export default function ReposPage() {
                     {editingId === repo.id ? 'Cancel' : 'Edit'}
                   </button>
                   <button
+                    onClick={() => setLessonsOpenId(lessonsOpenId === repo.id ? null : repo.id)}
+                    aria-expanded={lessonsOpenId === repo.id}
+                    className="text-xs text-slate-500 hover:text-indigo-400 transition-colors shrink-0"
+                  >
+                    {lessonsOpenId === repo.id ? 'Hide lessons' : 'Lessons'}
+                  </button>
+                  <button
                     onClick={() => handleDelete(repo)}
                     className="text-xs text-slate-600 hover:text-red-400 transition-colors shrink-0"
                   >
@@ -819,6 +828,12 @@ export default function ReposPage() {
                   </button>
                 </div>
               </div>
+
+              {lessonsOpenId === repo.id && (
+                <div className="border-t border-slate-700 px-4 py-4 sm:px-5">
+                  <LessonsPanel repoId={repo.id} />
+                </div>
+              )}
 
               {/* Inline edit form */}
               {editingId === repo.id && (

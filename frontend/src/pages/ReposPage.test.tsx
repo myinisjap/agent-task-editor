@@ -10,6 +10,7 @@ const updateMock = vi.fn()
 const deleteMock = vi.fn()
 const detectRuntimeMock = vi.fn()
 const workflowsListMock = vi.fn()
+const lessonsMock = vi.fn()
 
 vi.mock('../api/client', async () => {
   const actual = await vi.importActual<typeof import('../api/client')>('../api/client')
@@ -23,6 +24,7 @@ vi.mock('../api/client', async () => {
         create: (...args: unknown[]) => createMock(...args),
         update: (...args: unknown[]) => updateMock(...args),
         delete: (...args: unknown[]) => deleteMock(...args),
+        lessons: (...args: unknown[]) => lessonsMock(...args),
         detectRuntime: (...args: unknown[]) => detectRuntimeMock(...args),
       },
       workflows: { ...actual.api.workflows, list: (...args: unknown[]) => workflowsListMock(...args) },
@@ -183,5 +185,21 @@ describe('ReposPage — Preview screenshots section', () => {
     const body = createMock.mock.calls[0][0]
     expect(body.preview_command).toBe('npm run dev')
     expect(body.preview_routes).toBe('/\n/inbox')
+  })
+})
+
+describe('ReposPage — Lessons panel', () => {
+  it('opens a per-repo lessons panel via the Lessons button', async () => {
+    listMock.mockReset().mockResolvedValue([repo()])
+    workflowsListMock.mockReset().mockResolvedValue([workflow()])
+    lessonsMock.mockReset().mockResolvedValue([])
+    render(<ReposPage />)
+    await screen.findByText('acme/widgets')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Lessons' }))
+
+    await waitFor(() => expect(lessonsMock).toHaveBeenCalledWith('repo-1', undefined))
+    expect(await screen.findByText('No lessons yet.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Hide lessons' })).toHaveAttribute('aria-expanded', 'true')
   })
 })

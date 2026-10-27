@@ -143,6 +143,7 @@ Outbound webhook notifications when a task needs a human — see [websocket.md#o
 | `REPO_BASE_DIR` | _(empty)_ | Restrict repo registration to paths under this directory. Supports `~/` prefix. If unset, any host path can be registered (not recommended in production). |
 | `UPLOAD_DIR` | `uploads` (next to DB) | Directory for task attachment uploads |
 | `PREVIEW_CAPTURE_SCRIPT` | `/opt/preview-capture/capture.mjs` | Playwright script used for [preview screenshots](runtime.md#preview-screenshots) |
+| `SKILLS_DIR` | `skills` (next to DB) | Directory holding the skills library (see [skills.md](skills.md)) |
 
 ### Forge / Gitea
 
