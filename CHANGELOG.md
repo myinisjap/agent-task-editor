@@ -22,6 +22,7 @@ triggers the "Release" workflow the same way.
 ### Changed
 
 - **Inbox as a decision queue.** Inbox sections are now Decide / Answer / Fix setup; Decide rows show the review brief's one-line summary, diff size, cost, verify result, risk flags and preview count (new `GET /needs-me` fields) with Approve and Request changes (note); login/toolchain/budget escalations moved to Fix setup. Overview's own queue is replaced by a "Needs you (N)" link to the Inbox; the nav badge, tab badge, Overview and Inbox heading share one count.
+- **One quiet, tiered status area.** Only a provider-dispatch pause shows a slim, session-dismissible banner (one line on phones); other health problems show as a counted dot on Settings/Health; advice (backups, `REPO_BASE_DIR`, update checks) lives only on Settings → Health with a per-check "Don't remind me" (API-unauthenticated stays un-snoozable). The Get Started card shows one "N setup issues · View health" line, and "Notifications blocked" in the sidebar now explains how to re-enable notifications.
 - **Decision-first review on Task Detail (desktop).** Tasks waiting at a human gate get a review layout at ≥1280px: header with title, state, repo, cost, run count and Approve ("Approve and open PR" when the next label opens a PR) / Request changes; the diff (with preview strip) or plan in the main pane, logs/details as tabs; and a sticky right rail with the review brief, verification and runs. The review brief now always sits below the task title.
 
 ### Added

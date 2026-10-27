@@ -3,6 +3,8 @@ import { api, authedRawFetch, type ProviderCheck, type ProviderCheckStatus } fro
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
 import { HealthHelp } from '../components/shared/pageHelp'
+import { useHealthStore } from '../stores/health'
+import { healthTier, isSnoozable, visibleIssues } from '../lib/healthTiers'
 
 const STATUS_META: Record<ProviderCheckStatus, { dot: string; label: string; labelCls: string }> = {
   ok: { dot: 'bg-green-500', label: 'Ready', labelCls: 'text-green-400' },
@@ -47,6 +49,8 @@ export default function HealthPage() {
   const [backupLoading, setBackupLoading] = useState(false)
   const [backupError, setBackupError] = useState('')
   const [showHelp, setShowHelp] = useState(false)
+  const snoozed = useHealthStore((s) => s.snoozed)
+  const setSnoozed = useHealthStore((s) => s.setSnoozed)
 
   // Backup schedule settings (interval/retention count) — see docs/backup.md.
   // intervalMinutes is the form's editable unit (minutes); the API works in
@@ -75,7 +79,10 @@ export default function HealthPage() {
     setLoading(true)
     setError('')
     api.health.providers()
-      .then((r) => setChecks(r.checks ?? []))
+      .then((r) => {
+        setChecks(r.checks ?? [])
+        void useHealthStore.getState().fetch()
+      })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false))
   }, [])
@@ -188,7 +195,7 @@ export default function HealthPage() {
     }
   }, [])
 
-  const problems = (checks ?? []).filter((c) => c.status !== 'ok').length
+  const problems = visibleIssues(checks ?? [], snoozed).length
 
   return (
     <div className="p-6 max-w-3xl">
@@ -237,22 +244,41 @@ export default function HealthPage() {
 
         {(checks ?? []).map((c) => {
           const meta = STATUS_META[c.status]
+          const tier = healthTier(c)
+          const isSnoozed = isSnoozable(c) && snoozed.includes(c.id)
           return (
             <div
               key={c.id}
-              className="bg-slate-900 border border-slate-700 rounded-xl p-4 flex items-start gap-3"
+              className={`bg-slate-900 border border-slate-700 rounded-xl p-4 flex items-start gap-3 ${isSnoozed ? 'opacity-60' : ''}`}
             >
               <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${meta.dot}`} aria-hidden />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-sm font-medium text-slate-100">{c.name}</span>
-                  <span className={`text-xs font-medium ${meta.labelCls}`}>{meta.label}</span>
+                  <span className={`text-xs font-medium ${meta.labelCls}`}>
+                    {tier && (
+                      <span className="mr-2 rounded bg-slate-800 px-1.5 py-0.5 text-slate-300">
+                        {isSnoozed ? 'Snoozed' : tier === 'advice' ? 'Advice' : 'Needs attention'}
+                      </span>
+                    )}
+                    {meta.label}
+                  </span>
                 </div>
                 <div className="text-xs text-slate-400 mt-0.5 break-words">{c.detail}</div>
                 {c.hint && c.status !== 'ok' && (
                   <div className="text-xs text-slate-500 mt-1.5 break-words">
                     <span className="text-slate-400">Fix:</span> {c.hint}
                   </div>
+                )}
+                {isSnoozable(c) && (
+                  <label className="mt-2 flex items-center gap-1.5 text-xs text-slate-400">
+                    <input
+                      type="checkbox"
+                      checked={isSnoozed}
+                      onChange={(e) => setSnoozed(c.id, e.target.checked)}
+                    />
+                    Don&apos;t remind me
+                  </label>
                 )}
               </div>
             </div>

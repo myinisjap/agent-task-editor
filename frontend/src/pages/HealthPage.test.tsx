@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import HealthPage from './HealthPage'
+import { useHealthStore } from '../stores/health'
 
 vi.mock('../api/client', async () => {
   const actual = await vi.importActual<typeof import('../api/client')>('../api/client')
@@ -163,5 +164,30 @@ describe('HealthPage log retention settings', () => {
       expect(api.logRetention.updateSettings).toHaveBeenCalledWith({ days: 30, interval_seconds: 7200 })
     )
     expect(await screen.findByText(/Log cleanup settings saved/i)).toBeInTheDocument()
+  })
+})
+
+describe('HealthPage snooze', () => {
+  it('snoozes advice (persisted, lowers the count) but offers no toggle for api_auth', async () => {
+    localStorage.clear()
+    useHealthStore.setState({ snoozed: [] })
+    ;(api.health.providers as ReturnType<typeof vi.fn>).mockResolvedValue({
+      checks: [
+        { id: 'auto_backup', name: 'Automatic local backups', status: 'warn', detail: 'off' },
+        { id: 'api_auth', name: 'API authentication', status: 'warn', detail: 'open' },
+      ],
+    })
+    const user = userEvent.setup()
+    render(<HealthPage />)
+
+    expect(await screen.findByText('2 items need attention.')).toBeInTheDocument()
+    const boxes = screen.getAllByRole('checkbox', { name: /Don't remind me/ })
+    expect(boxes).toHaveLength(1)
+    await user.click(boxes[0])
+
+    expect(await screen.findByText('1 item needs attention.')).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem('ate:health-snoozed') ?? '[]')).toEqual(['auto_backup'])
+    expect(screen.getByText('Snoozed')).toBeInTheDocument()
+    useHealthStore.setState({ snoozed: [] })
   })
 })
