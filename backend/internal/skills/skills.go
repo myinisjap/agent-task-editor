@@ -118,7 +118,11 @@ func cleanEntry(name string) (string, error) {
 			return "", invalid("path traversal in zip entry %q", name)
 		}
 	}
-	return path.Clean(name), nil
+	clean := path.Clean(name)
+	if !filepath.IsLocal(filepath.FromSlash(clean)) {
+		return "", invalid("path escapes skill folder: %q", name)
+	}
+	return clean, nil
 }
 
 // BundleFromZip builds a bundle from a zip of a skill folder. SKILL.md may be
@@ -226,7 +230,13 @@ func (s Store) Write(b *Bundle) error {
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 	for rel, data := range b.Files {
+		if !filepath.IsLocal(filepath.FromSlash(rel)) {
+			return invalid("path escapes skill folder: %q", rel)
+		}
 		dst := filepath.Join(tmp, filepath.FromSlash(rel))
+		if !strings.HasPrefix(dst, filepath.Clean(tmp)+string(filepath.Separator)) {
+			return invalid("path escapes skill folder: %q", rel)
+		}
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return err
 		}

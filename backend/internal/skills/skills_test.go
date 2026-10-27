@@ -221,3 +221,13 @@ func TestMaterialize_DoesNotOverwriteCommitted(t *testing.T) {
 		t.Errorf("dirty: %q", st)
 	}
 }
+
+func TestStoreWriteRejectsEscape(t *testing.T) {
+	st := Store{Dir: t.TempDir()}
+	for _, p := range []string{"../evil", "a/../../evil", "/abs"} {
+		b := &Bundle{Meta: Meta{Name: "ok-skill"}, Files: map[string][]byte{"SKILL.md": []byte("x"), p: []byte("y")}}
+		if err := st.Write(b); err == nil {
+			t.Errorf("expected error for %q", p)
+		}
+	}
+}
