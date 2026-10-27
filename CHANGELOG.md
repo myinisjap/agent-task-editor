@@ -19,6 +19,10 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Changed
+
+- **One quiet, tiered status area.** Only a provider-dispatch pause shows a slim, session-dismissible banner (one line on phones); other health problems show as a counted dot on Settings/Health; advice (backups, `REPO_BASE_DIR`, update checks) lives only on Settings → Health with a per-check "Don't remind me" (API-unauthenticated stays un-snoozable). The Get Started card shows one "N setup issues · View health" line, and "Notifications blocked" in the sidebar now explains how to re-enable notifications.
+
 ### Added
 
 - **Planner fan-out.** `create_subtask` takes an optional `file_scope` (globs): it is stated in the subtask's prompt and files changed outside it are listed as a warning in the subtask's notes after its run. Subtasks whose scopes overlap a sibling's automatically depend on it (run sequentially) and the tool result says so. Once all subtasks are merged back the parent gets an integration run (prompt lists each subtask, scope, branch, notes and the merged diff stat; the repo verify command runs as usual) instead of auto-advancing. New `task_fanout` table (migration 077); `file_scope`/`integration_status` on tasks. Docs: planner guidance on when to fan out (3+ independent parts on disjoint files).

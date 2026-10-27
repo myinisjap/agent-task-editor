@@ -740,6 +740,12 @@ export function HealthHelp() {
           database size, and the app's own version/update-available status. Green means ready;
           yellow/red need attention before you run a task with that provider.
         </p>
+        <p>
+          Problems are tiered: only a paused provider shows a banner; other problems show as a
+          counted dot on Settings. Advice (backups, repo base directory, update checks, database
+          size) can be snoozed with &quot;Don&apos;t remind me&quot;. API authentication is a
+          security warning and can&apos;t be snoozed.
+        </p>
       </section>
       <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">Fixing a red/yellow row</h3>
