@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
+import { Button, PageFrame } from '../components/ui'
 import { api, type Repo, type Skill, type RuntimeLanguagePin, type Workflow } from '../api/client'
 import SkillPicker from '../components/skills/SkillPicker'
 import LessonsPanel from '../components/lessons/LessonsPanel'
 import HelpModal from '../components/shared/HelpModal'
-import HelpButton from '../components/shared/HelpButton'
 import { ReposHelp } from '../components/shared/pageHelp'
 
 type IssueSyncUpdatePolicy = 'gate' | 'always' | 'never'
@@ -360,7 +360,7 @@ export default function ReposPage() {
   }
 
   const inputCls =
-    'bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500'
+    'bg-surface-sunken border border-border rounded-lg px-3 py-2 text-sm text-fg placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500'
 
   // Renders the "Verification" section shared by the create and edit forms.
   function renderVerifySection(opts: {
@@ -370,9 +370,9 @@ export default function ReposPage() {
   }) {
     const { command, timeout, setter } = opts
     return (
-      <div className="flex flex-col gap-2 sm:col-span-2 border-t border-slate-800 pt-4">
-        <label className="text-xs font-medium text-slate-400">
-          Verify command <span className="text-slate-600">(blank = no verification)</span>
+      <div className="flex flex-col gap-2 sm:col-span-2 border-t border-border pt-4">
+        <label className="text-xs font-medium text-fg-muted">
+          Verify command <span className="text-fg-subtle">(blank = no verification)</span>
         </label>
         <input
           type="text"
@@ -382,14 +382,14 @@ export default function ReposPage() {
           aria-label="Verify command"
           className={`${inputCls} font-mono`}
         />
-        <span className="text-xs text-slate-600">
+        <span className="text-xs text-fg-subtle">
           Runs in the task worktree as the agent user when a run reports success. It is authoritative: a non-zero exit
           or timeout overrides the agent&apos;s claim, the success transition is not taken, and the output is fed back
           to the next run. Individual workflow labels can override or disable it in the workflow YAML.
         </span>
         <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-medium text-slate-400">
-            Verify timeout (seconds) <span className="text-slate-600">(blank = 600)</span>
+          <label className="text-xs font-medium text-fg-muted">
+            Verify timeout (seconds) <span className="text-fg-subtle">(blank = 600)</span>
           </label>
           <input
             type="number"
@@ -415,9 +415,9 @@ export default function ReposPage() {
   }) {
     const { command, routes, globs, setter } = opts
     return (
-      <div className="flex flex-col gap-2 sm:col-span-2 border-t border-slate-800 pt-4">
-        <label className="text-xs font-medium text-slate-400">
-          Preview command <span className="text-slate-600">(blank = no screenshots)</span>
+      <div className="flex flex-col gap-2 sm:col-span-2 border-t border-border pt-4">
+        <label className="text-xs font-medium text-fg-muted">
+          Preview command <span className="text-fg-subtle">(blank = no screenshots)</span>
         </label>
         <input
           type="text"
@@ -427,13 +427,13 @@ export default function ReposPage() {
           aria-label="Preview command"
           className={`${inputCls} font-mono`}
         />
-        <span className="text-xs text-slate-600">
+        <span className="text-xs text-fg-subtle">
           When a run succeeds into a human gate and its diff touches UI files, this starts the app in the task
           worktree (as the agent user, <code>$PORT</code> is a free port) and screenshots the routes below at desktop
           and phone width for the review brief. Failures never block the task.
         </span>
-        <label className="text-xs font-medium text-slate-400">
-          Preview routes <span className="text-slate-600">(one path per line)</span>
+        <label className="text-xs font-medium text-fg-muted">
+          Preview routes <span className="text-fg-subtle">(one path per line)</span>
         </label>
         <textarea
           value={routes}
@@ -443,8 +443,8 @@ export default function ReposPage() {
           rows={3}
           className={`${inputCls} font-mono`}
         />
-        <label className="text-xs font-medium text-slate-400">
-          UI path globs <span className="text-slate-600">(one per line; blank = defaults)</span>
+        <label className="text-xs font-medium text-fg-muted">
+          UI path globs <span className="text-fg-subtle">(one per line; blank = defaults)</span>
         </label>
         <textarea
           value={globs}
@@ -471,28 +471,28 @@ export default function ReposPage() {
     const { rows, setter, detecting = false, detectNote = '', onDetect } = opts
     const rowError = validateRuntimeRows(rows)
     return (
-      <div className="flex flex-col gap-2 sm:col-span-2 border-t border-slate-800 pt-4">
+      <div className="flex flex-col gap-2 sm:col-span-2 border-t border-border pt-4">
         <div className="flex items-center justify-between">
-          <label className="text-xs font-medium text-slate-400">Agent runtime</label>
+          <label className="text-xs font-medium text-fg-muted">Agent runtime</label>
           {onDetect && (
             <button
               type="button"
               onClick={onDetect}
               disabled={detecting}
-              className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50 transition-colors"
+              className="text-xs text-accent-fg hover:text-accent-fg disabled:opacity-50 transition-colors"
             >
               {detecting ? 'Detecting…' : 'Detect from repo'}
             </button>
           )}
         </div>
-        <span className="text-xs text-slate-600">
+        <span className="text-xs text-fg-subtle">
           Tasks and chat sessions on this repo run with these toolchains. If installation fails, tasks escalate to
           Waiting for human. Empty = current behavior (no pinned toolchain). The agent CLI itself always runs on the
           app&apos;s bundled Node.js — a node pin applies to the agent&apos;s own commands (e.g. its Bash tool), not
           the CLI process.
         </span>
 
-        {detectNote && <p className="text-xs text-slate-500">{detectNote}</p>}
+        {detectNote && <p className="text-xs text-fg-subtle">{detectNote}</p>}
 
         {rows.map((row, i) => (
           <div key={i} className="flex items-center gap-2">
@@ -513,24 +513,24 @@ export default function ReposPage() {
               placeholder="e.g. 1.21"
               className={`${inputCls} max-w-[8rem]`}
             />
-            {row.source && <span className="text-xs text-slate-600">from {row.source}</span>}
+            {row.source && <span className="text-xs text-fg-subtle">from {row.source}</span>}
             <button
               type="button"
               onClick={() => removeRuntimeRow(setter, i)}
-              className="text-xs text-slate-600 hover:text-red-400 transition-colors"
+              className="text-xs text-fg-subtle hover:text-danger transition-colors"
             >
               Remove
             </button>
           </div>
         ))}
 
-        {rowError && <p className="text-xs text-red-400">{rowError}</p>}
+        {rowError && <p className="text-xs text-danger">{rowError}</p>}
 
         <button
           type="button"
           onClick={() => addRuntimeRow(setter)}
           disabled={rows.length >= RUNTIME_LANGUAGE_IDS.length}
-          className="self-start text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="self-start text-xs text-accent-fg hover:text-accent-fg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           + Add language
         </button>
@@ -539,20 +539,11 @@ export default function ReposPage() {
   }
 
   return (
-    <div className="p-6 max-w-3xl">
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-2">
-          <h1 className="text-xl font-semibold text-slate-100">Repos</h1>
-          <HelpButton onClick={() => setShowHelp(true)} title="About repos" />
-        </div>
-        <button
-          onClick={() => setShowForm((v) => !v)}
-          className="px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors"
-        >
-          {showForm ? 'Cancel' : '+ Add Repo'}
-        </button>
-      </div>
-
+    <PageFrame
+      title="Repos"
+      help={{ onClick: () => setShowHelp(true), title: 'About repos' }}
+      actions={<Button variant="primary" onClick={() => setShowForm((v) => !v)}>{showForm ? 'Cancel' : '+ Add Repo'}</Button>}
+    >
       {showHelp && (
         <HelpModal title="About Repos" onClose={() => setShowHelp(false)}>
           <ReposHelp />
@@ -562,14 +553,14 @@ export default function ReposPage() {
       {showForm && (
         <form
           onSubmit={handleCreate}
-          className="mb-6 bg-slate-900 border border-slate-700 rounded-xl p-5 flex flex-col gap-4"
+          className="mb-6 bg-surface-raised border border-border rounded-xl p-5 flex flex-col gap-4"
         >
-          <h2 className="text-sm font-semibold text-slate-200">New Repo</h2>
+          <h2 className="text-sm font-semibold text-fg">New Repo</h2>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-slate-400">
-                Name <span className="text-slate-600">(auto-filled from GitHub URL)</span>
+              <label className="text-xs font-medium text-fg-muted">
+                Name <span className="text-fg-subtle">(auto-filled from GitHub URL)</span>
               </label>
               <input
                 value={form.name}
@@ -580,8 +571,8 @@ export default function ReposPage() {
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-slate-400">
-                Local path <span className="text-slate-600">(optional — leave blank to auto-clone)</span>
+              <label className="text-xs font-medium text-fg-muted">
+                Local path <span className="text-fg-subtle">(optional — leave blank to auto-clone)</span>
               </label>
               <input
                 value={form.path}
@@ -592,7 +583,7 @@ export default function ReposPage() {
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-slate-400">Remote URL</label>
+              <label className="text-xs font-medium text-fg-muted">Remote URL</label>
               <input
                 value={form.remote_url}
                 onChange={handleRemoteUrlChange}
@@ -601,7 +592,7 @@ export default function ReposPage() {
               />
             </div>
 
-            <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
+            <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
               <input
                 type="checkbox"
                 checked={form.issue_sync_enabled}
@@ -609,14 +600,14 @@ export default function ReposPage() {
                 className="accent-indigo-500"
               />
               Import GitHub Issues as tasks
-              <span className="text-slate-600">(requires remote URL + workflow)</span>
+              <span className="text-fg-subtle">(requires remote URL + workflow)</span>
             </label>
 
             {form.issue_sync_enabled && (
               <>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-400">
-                    Workflow <span className="text-slate-600">(imported issues become tasks here)</span>
+                  <label className="text-xs font-medium text-fg-muted">
+                    Workflow <span className="text-fg-subtle">(imported issues become tasks here)</span>
                   </label>
                   <select
                     value={form.workflow_id}
@@ -631,9 +622,9 @@ export default function ReposPage() {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-400">
+                  <label className="text-xs font-medium text-fg-muted">
                     Issue label filter{' '}
-                    <span className="text-slate-600">
+                    <span className="text-fg-subtle">
                       (empty = all open issues; deprecated — prefer an Intake Rule with a match_labels condition)
                     </span>
                   </label>
@@ -646,8 +637,8 @@ export default function ReposPage() {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-400">
-                    Keep in sync <span className="text-slate-600">(apply upstream title/body/label changes)</span>
+                  <label className="text-xs font-medium text-fg-muted">
+                    Keep in sync <span className="text-fg-subtle">(apply upstream title/body/label changes)</span>
                   </label>
                   <select
                     value={form.issue_sync_update_policy}
@@ -661,7 +652,7 @@ export default function ReposPage() {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-400">
+                  <label className="text-xs font-medium text-fg-muted">
                     If the issue closes or loses the label
                   </label>
                   <select
@@ -677,7 +668,7 @@ export default function ReposPage() {
 
                 {form.issue_sync_gone_action === 'move' && (
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-xs font-medium text-slate-400">Move to label</label>
+                    <label className="text-xs font-medium text-fg-muted">Move to label</label>
                     <input
                       value={form.issue_sync_gone_label}
                       onChange={(e) => setForm((f) => ({ ...f, issue_sync_gone_label: e.target.value }))}
@@ -687,7 +678,7 @@ export default function ReposPage() {
                   </div>
                 )}
 
-                <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
+                <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
                   <input
                     type="checkbox"
                     checked={form.issue_comment_sync_enabled}
@@ -695,14 +686,14 @@ export default function ReposPage() {
                     className="accent-indigo-500"
                   />
                   Ingest issue comments
-                  <span className="text-slate-600">
+                  <span className="text-fg-subtle">
                     (write-access authors only, passed to the agent as untrusted context; off by default)
                   </span>
                 </label>
               </>
             )}
 
-            <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
+            <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
               <input
                 type="checkbox"
                 checked={form.issue_writeback_enabled}
@@ -710,15 +701,15 @@ export default function ReposPage() {
                 className="accent-indigo-500"
               />
               Issue write-back
-              <span className="text-slate-600">
+              <span className="text-fg-subtle">
                 (comment on the source issue when a PR opens, close it when merged; requires remote URL)
               </span>
             </label>
 
             {form.issue_writeback_enabled && (
               <div className="flex flex-col gap-1.5 pl-6">
-                <label className="text-xs font-medium text-slate-400">
-                  In-progress label <span className="text-slate-600">(blank = default agent-in-progress)</span>
+                <label className="text-xs font-medium text-fg-muted">
+                  In-progress label <span className="text-fg-subtle">(blank = default agent-in-progress)</span>
                 </label>
                 <input
                   value={form.issue_writeback_label}
@@ -726,14 +717,14 @@ export default function ReposPage() {
                   placeholder="agent-in-progress"
                   className={inputCls}
                 />
-                <span className="text-xs text-slate-600">
+                <span className="text-xs text-fg-subtle">
                   Applied to the source issue when a task first leaves the human-gate label. The label must
                   already exist on the GitHub repo, or the write-back is silently skipped.
                 </span>
               </div>
             )}
 
-            <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
+            <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
               <input
                 type="checkbox"
                 checked={form.pr_review_auto_transition_enabled}
@@ -741,14 +732,14 @@ export default function ReposPage() {
                 className="accent-indigo-500"
               />
               Auto-transition to work on PR changes-requested
-              <span className="text-slate-600">
+              <span className="text-fg-subtle">
                 (move a task back to its failure-path label when GitHub reports a changes-requested review, new review comment, or failed check; requires remote URL)
               </span>
             </label>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-slate-400">
-                Max concurrent agent runs <span className="text-slate-600">(blank = use the global default)</span>
+              <label className="text-xs font-medium text-fg-muted">
+                Max concurrent agent runs <span className="text-fg-subtle">(blank = use the global default)</span>
               </label>
               <input
                 type="number"
@@ -769,7 +760,7 @@ export default function ReposPage() {
             {renderPreviewSection({ command: form.preview_command, routes: form.preview_routes, globs: form.preview_paths_glob, setter: setForm })}
           </div>
 
-          {error && <p className="text-xs text-red-400">{error}</p>}
+          {error && <p className="text-xs text-danger">{error}</p>}
 
           <div className="flex justify-end">
             <button
@@ -784,28 +775,28 @@ export default function ReposPage() {
       )}
 
       {loading ? (
-        <div className="text-slate-400 text-sm">Loading…</div>
+        <div className="text-fg-muted text-sm">Loading…</div>
       ) : error && repos.length === 0 ? (
-        <div className="text-red-400 text-sm">{error}</div>
+        <div className="text-danger text-sm">{error}</div>
       ) : repos.length === 0 ? (
-        <div className="text-slate-500 text-sm">No repos added yet.</div>
+        <div className="text-fg-subtle text-sm">No repos added yet.</div>
       ) : (
         <div className="flex flex-col gap-2">
           {repos.map((repo) => (
-            <div key={repo.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+            <div key={repo.id} className="bg-surface-raised border border-border rounded-xl overflow-hidden">
               {/* Repo row header — stacks on mobile, single row from sm up */}
               <div className="px-5 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-slate-100 break-words">{repo.name}</div>
-                  <div className="text-xs text-slate-500 font-mono mt-0.5 truncate">{repo.path}</div>
+                  <div className="text-sm font-medium text-fg break-words">{repo.name}</div>
+                  <div className="text-xs text-fg-subtle font-mono mt-0.5 truncate">{repo.path}</div>
                   {repo.remote_url && (
-                    <div className="text-xs text-slate-600 mt-0.5 truncate">{repo.remote_url}</div>
+                    <div className="text-xs text-fg-subtle mt-0.5 truncate">{repo.remote_url}</div>
                   )}
                 </div>
                 <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                   {!!repo.issue_sync_enabled && (
                     <span
-                      className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 shrink-0"
+                      className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-accent-fg border border-indigo-500/30 shrink-0"
                       title={`Importing open GitHub issues${repo.issue_sync_label ? ` labeled "${repo.issue_sync_label}"` : ''} as tasks into the "${workflowName(repo.workflow_id)}" workflow`}
                     >
                       Issue sync{repo.issue_sync_label ? `: ${repo.issue_sync_label}` : ''}
@@ -813,7 +804,7 @@ export default function ReposPage() {
                   )}
                   {!!repo.issue_writeback_enabled && (
                     <span
-                      className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 shrink-0"
+                      className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-success border border-emerald-500/30 shrink-0"
                       title="Commenting on the source issue when a task's PR opens, and closing it when the PR merges"
                     >
                       Write-back
@@ -821,7 +812,7 @@ export default function ReposPage() {
                   )}
                   {!!repo.pr_review_auto_transition_enabled && (
                     <span
-                      className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 shrink-0"
+                      className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-warning border border-amber-500/30 shrink-0"
                       title="Auto-transitioning tasks back to their failure-path label on GitHub changes-requested reviews, new review comments, or failed checks"
                     >
                       PR auto-transition
@@ -829,7 +820,7 @@ export default function ReposPage() {
                   )}
                   {repo.max_concurrent_runs != null && (
                     <span
-                      className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/30 shrink-0"
+                      className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/10 text-accent-fg border border-sky-500/30 shrink-0"
                       title="The dispatcher will not run more than this many agents on this repo at once, regardless of free global worker slots"
                     >
                       Max {repo.max_concurrent_runs} concurrent
@@ -837,20 +828,20 @@ export default function ReposPage() {
                   )}
                   <button
                     onClick={() => editingId === repo.id ? cancelEdit() : startEdit(repo)}
-                    className="text-xs text-slate-500 hover:text-indigo-400 transition-colors shrink-0"
+                    className="text-xs text-fg-subtle hover:text-accent-fg transition-colors shrink-0"
                   >
                     {editingId === repo.id ? 'Cancel' : 'Edit'}
                   </button>
                   <button
                     onClick={() => setLessonsOpenId(lessonsOpenId === repo.id ? null : repo.id)}
                     aria-expanded={lessonsOpenId === repo.id}
-                    className="text-xs text-slate-500 hover:text-indigo-400 transition-colors shrink-0"
+                    className="text-xs text-fg-subtle hover:text-accent-fg transition-colors shrink-0"
                   >
                     {lessonsOpenId === repo.id ? 'Hide lessons' : 'Lessons'}
                   </button>
                   <button
                     onClick={() => handleDelete(repo)}
-                    className="text-xs text-slate-600 hover:text-red-400 transition-colors shrink-0"
+                    className="text-xs text-fg-subtle hover:text-danger transition-colors shrink-0"
                   >
                     Remove
                   </button>
@@ -858,7 +849,7 @@ export default function ReposPage() {
               </div>
 
               {lessonsOpenId === repo.id && (
-                <div className="border-t border-slate-700 px-4 py-4 sm:px-5">
+                <div className="border-t border-border px-4 py-4 sm:px-5">
                   <LessonsPanel repoId={repo.id} />
                 </div>
               )}
@@ -867,13 +858,13 @@ export default function ReposPage() {
               {editingId === repo.id && (
                 <form
                   onSubmit={handleUpdate}
-                  className="border-t border-slate-700 bg-slate-900 px-5 py-4 flex flex-col gap-4"
+                  className="border-t border-border bg-surface-raised px-5 py-4 flex flex-col gap-4"
                 >
-                  <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Edit Repo</h3>
+                  <h3 className="text-xs font-semibold text-fg-muted uppercase tracking-wide">Edit Repo</h3>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-xs font-medium text-slate-400">Name</label>
+                      <label className="text-xs font-medium text-fg-muted">Name</label>
                       <input
                         value={editForm.name}
                         onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
@@ -883,7 +874,7 @@ export default function ReposPage() {
                     </div>
 
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-xs font-medium text-slate-400">Local path</label>
+                      <label className="text-xs font-medium text-fg-muted">Local path</label>
                       <input
                         value={editForm.path}
                         onChange={(e) => setEditForm((f) => ({ ...f, path: e.target.value }))}
@@ -893,7 +884,7 @@ export default function ReposPage() {
                     </div>
 
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-xs font-medium text-slate-400">Remote URL</label>
+                      <label className="text-xs font-medium text-fg-muted">Remote URL</label>
                       <input
                         value={editForm.remote_url}
                         onChange={(e) => setEditForm((f) => ({ ...f, remote_url: e.target.value }))}
@@ -902,7 +893,7 @@ export default function ReposPage() {
                       />
                     </div>
 
-                    <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
+                    <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
                       <input
                         type="checkbox"
                         checked={editForm.issue_sync_enabled}
@@ -910,14 +901,14 @@ export default function ReposPage() {
                         className="accent-indigo-500"
                       />
                       Import GitHub Issues as tasks
-                      <span className="text-slate-600">(requires remote URL + workflow)</span>
+                      <span className="text-fg-subtle">(requires remote URL + workflow)</span>
                     </label>
 
                     {editForm.issue_sync_enabled && (
                       <>
                         <div className="flex flex-col gap-1.5">
-                          <label className="text-xs font-medium text-slate-400">
-                            Workflow <span className="text-slate-600">(imported issues become tasks here)</span>
+                          <label className="text-xs font-medium text-fg-muted">
+                            Workflow <span className="text-fg-subtle">(imported issues become tasks here)</span>
                           </label>
                           <select
                             value={editForm.workflow_id}
@@ -932,9 +923,9 @@ export default function ReposPage() {
                         </div>
 
                         <div className="flex flex-col gap-1.5">
-                          <label className="text-xs font-medium text-slate-400">
+                          <label className="text-xs font-medium text-fg-muted">
                             Issue label filter{' '}
-                            <span className="text-slate-600">
+                            <span className="text-fg-subtle">
                               (empty = all open issues; deprecated — prefer an Intake Rule with a match_labels condition)
                             </span>
                           </label>
@@ -947,8 +938,8 @@ export default function ReposPage() {
                         </div>
 
                         <div className="flex flex-col gap-1.5">
-                          <label className="text-xs font-medium text-slate-400">
-                            Keep in sync <span className="text-slate-600">(apply upstream title/body/label changes)</span>
+                          <label className="text-xs font-medium text-fg-muted">
+                            Keep in sync <span className="text-fg-subtle">(apply upstream title/body/label changes)</span>
                           </label>
                           <select
                             value={editForm.issue_sync_update_policy}
@@ -962,7 +953,7 @@ export default function ReposPage() {
                         </div>
 
                         <div className="flex flex-col gap-1.5">
-                          <label className="text-xs font-medium text-slate-400">
+                          <label className="text-xs font-medium text-fg-muted">
                             If the issue closes or loses the label
                           </label>
                           <select
@@ -978,7 +969,7 @@ export default function ReposPage() {
 
                         {editForm.issue_sync_gone_action === 'move' && (
                           <div className="flex flex-col gap-1.5">
-                            <label className="text-xs font-medium text-slate-400">Move to label</label>
+                            <label className="text-xs font-medium text-fg-muted">Move to label</label>
                             <input
                               value={editForm.issue_sync_gone_label}
                               onChange={(e) => setEditForm((f) => ({ ...f, issue_sync_gone_label: e.target.value }))}
@@ -988,7 +979,7 @@ export default function ReposPage() {
                           </div>
                         )}
 
-                        <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
+                        <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
                           <input
                             type="checkbox"
                             checked={editForm.issue_comment_sync_enabled}
@@ -996,14 +987,14 @@ export default function ReposPage() {
                             className="accent-indigo-500"
                           />
                           Ingest issue comments
-                          <span className="text-slate-600">
+                          <span className="text-fg-subtle">
                             (write-access authors only, passed to the agent as untrusted context; off by default)
                           </span>
                         </label>
                       </>
                     )}
 
-                    <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
+                    <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
                       <input
                         type="checkbox"
                         checked={editForm.issue_writeback_enabled}
@@ -1011,15 +1002,15 @@ export default function ReposPage() {
                         className="accent-indigo-500"
                       />
                       Issue write-back
-                      <span className="text-slate-600">
+                      <span className="text-fg-subtle">
                         (comment on the source issue when a PR opens, close it when merged; requires remote URL)
                       </span>
                     </label>
 
                     {editForm.issue_writeback_enabled && (
                       <div className="flex flex-col gap-1.5 pl-6">
-                        <label className="text-xs font-medium text-slate-400">
-                          In-progress label <span className="text-slate-600">(blank = default agent-in-progress)</span>
+                        <label className="text-xs font-medium text-fg-muted">
+                          In-progress label <span className="text-fg-subtle">(blank = default agent-in-progress)</span>
                         </label>
                         <input
                           value={editForm.issue_writeback_label}
@@ -1027,14 +1018,14 @@ export default function ReposPage() {
                           placeholder="agent-in-progress"
                           className={inputCls}
                         />
-                        <span className="text-xs text-slate-600">
+                        <span className="text-xs text-fg-subtle">
                           Applied to the source issue when a task first leaves the human-gate label. The label
                           must already exist on the GitHub repo, or the write-back is silently skipped.
                         </span>
                       </div>
                     )}
 
-                    <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer">
+                    <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
                       <input
                         type="checkbox"
                         checked={editForm.pr_review_auto_transition_enabled}
@@ -1042,14 +1033,14 @@ export default function ReposPage() {
                         className="accent-indigo-500"
                       />
                       Auto-transition to work on PR changes-requested
-                      <span className="text-slate-600">
+                      <span className="text-fg-subtle">
                         (move a task back to its failure-path label when GitHub reports a changes-requested review, new review comment, or failed check; requires remote URL)
                       </span>
                     </label>
 
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-xs font-medium text-slate-400">
-                        Max concurrent agent runs <span className="text-slate-600">(blank = use the global default)</span>
+                      <label className="text-xs font-medium text-fg-muted">
+                        Max concurrent agent runs <span className="text-fg-subtle">(blank = use the global default)</span>
                       </label>
                       <input
                         type="number"
@@ -1073,21 +1064,21 @@ export default function ReposPage() {
                     {renderPreviewSection({ command: editForm.preview_command, routes: editForm.preview_routes, globs: editForm.preview_paths_glob, setter: setEditForm })}
 
                     <div className="sm:col-span-2">
-                      <p className="text-xs font-medium text-slate-300 mb-1">Skills</p>
-                      <p className="text-xs text-slate-500 mb-2">
+                      <p className="text-xs font-medium text-fg-muted mb-1">Skills</p>
+                      <p className="text-xs text-fg-subtle mb-2">
                         Repo-wide: copied for every agent run on this repo, in addition to the agent's own skills.
                       </p>
                       <SkillPicker skills={allSkills} selected={editSkillIds} onChange={setEditSkillIds} />
                     </div>
                   </div>
 
-                  {editError && <p className="text-xs text-red-400">{editError}</p>}
+                  {editError && <p className="text-xs text-danger">{editError}</p>}
 
                   <div className="flex items-center justify-end gap-2">
                     <button
                       type="button"
                       onClick={cancelEdit}
-                      className="px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors"
+                      className="px-3 py-1.5 text-sm text-fg-muted hover:text-fg transition-colors"
                     >
                       Cancel
                     </button>
@@ -1105,6 +1096,6 @@ export default function ReposPage() {
           ))}
         </div>
       )}
-    </div>
+    </PageFrame>
   )
 }

@@ -210,6 +210,11 @@ export function PerformanceHelp() {
           whether a config's numbers hold up on a specific codebase, since aggregate numbers can
           hide a config that's excellent on one repo and poor on another.
         </p>
+        <p>
+          <strong>Attribution:</strong> “Tasks done” and every rate derived from it attribute a task
+          to its <em>last</em> run's agent config, except rework's numerator, which is attributed to
+          whichever run caused the bounce-back.
+        </p>
       </section>
       <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">Agent config performance</h3>
@@ -218,6 +223,14 @@ export function PerformanceHelp() {
           duration, and average runs per task. Success rate is still useful for spotting a flaky
           or crashing config, but it's a weaker signal than the outcome-quality metrics above —
           use it alongside them, not instead of them.
+        </p>
+        <p>
+          Success rate shows completed/failed/waiting-human counts. “Avg runs/task” counts{' '}
+          <code>agent_runs</code> rows per done task (dispatch/retry cycles), not the internal LLM
+          turns within a run that “Max turns” caps; each done task's credit is split across every
+          config that contributed a run. The retry snapshot is attributed entirely to a task's last
+          run's config and reflects its current retry counter, which resets to 0 on success or
+          escalation to a human; it is not a lifetime count.
         </p>
       </section>
     </>
