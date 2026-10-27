@@ -19,6 +19,10 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+
+- **Repo lessons.** Short, human-curated per-repo (or global) lessons stored in `repo_lessons` and managed via `GET/POST /repos/{id}/lessons`, `GET/POST /lessons`, `PATCH/DELETE /lessons/{id}`. Active lessons matching the run's label (and, when set, the task's changed files) are injected into agent prompts under `REPO LESSONS`, capped at 15 lessons / about 2,000 characters. UI comes in a follow-up. Task runs keep Claude Code auto-memory off via `--bare` (now covered by a test and documented).
+
 ### Fixed
 
 - **opencode command denylist now always beats an overlapping allowlist entry.** The `permission.bash` block was serialised as a Go map (keys sorted alphabetically) but opencode applies the last matching rule, so a deny like `rm *` could be overridden by an allow like `rm tmp/*`. Rules are now emitted in a fixed order: `*` first, then allow, then deny.

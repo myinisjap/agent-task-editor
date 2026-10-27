@@ -12,6 +12,12 @@ The `claude` provider runs the Claude CLI in headless mode and is the most featu
 
 Runs: `claude -p <prompt> --system-prompt <system> --output-format stream-json --verbose --allowedTools <tools> --max-turns <max_turns> --bare`
 
+### Auto memory
+
+`--bare` also skips Claude Code auto-memory and CLAUDE.md auto-discovery (listed under `--bare` in `claude --help` for the pinned CLI, 2.1.301). Each task runs in its own `.ate-worktrees/<id>`, so memories would be written per worktree and never read again. Cross-task knowledge comes from [repo lessons](../lessons.md) instead. Interactive chat sessions do not use `--bare` and keep the normal memory behaviour. When bumping `CLAUDE_CLI_VERSION` in `backend/Dockerfile`, re-check that `claude --help` still lists auto-memory under `--bare`.
+
+
+
 `<max_turns>` comes from the agent config's `max_turns` field (defaults to `50` when unset or `0`).
 
 Output is parsed as NDJSON (stream-json format). The MCP sidecar is launched as a subprocess alongside `claude` and connected via `--mcp-config <tempfile>`.

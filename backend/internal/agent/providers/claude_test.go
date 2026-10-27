@@ -42,6 +42,12 @@ func TestMain(m *testing.M) {
 		// Simulate: claude exits cleanly with a success outcome.
 		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success"}`)
 		os.Exit(0)
+	case "require_bare":
+		if !slices.Contains(os.Args, "--bare") {
+			os.Exit(1)
+		}
+		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success"}`)
+		os.Exit(0)
 	case "exit0_no_outcome":
 		// Simulate: claude exits cleanly with no outcome (empty result).
 		os.Exit(0)
@@ -1617,5 +1623,16 @@ func TestBuildClaudeArgs_PermissionMode(t *testing.T) {
 				t.Fatalf("expected --permission-mode %q, got %q (args=%v)", mode, got, args)
 			}
 		})
+	}
+}
+
+// TestClaudeRunner_PassesBare keeps Claude Code auto-memory off for task runs.
+// `--bare` skips auto-memory and CLAUDE.md discovery (claude CLI 2.1.301). Each
+// task runs in its own worktree, so memories would be written per worktree and
+// never read again; cross-task knowledge comes from repo lessons instead.
+func TestClaudeRunner_PassesBare(t *testing.T) {
+	result, _ := runWithHelper(t, "require_bare")
+	if result.Status != "completed" || result.Outcome != "success" {
+		t.Fatalf("claude was not invoked with --bare: status=%q outcome=%q", result.Status, result.Outcome)
 	}
 }
