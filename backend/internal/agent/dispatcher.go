@@ -262,9 +262,21 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	// agent config is considered.
 	var matched *gen.AgentConfig
 	var providerConfigID string
+	var ladderRung *int
+	failedAttempts := -1 // computed lazily, once per task per sweep
 candidates:
 	for _, cand := range matches {
-		for _, pcID := range agentProviderIDs(cand) {
+		pcIDs := agentProviderIDs(cand)
+		ladder := ParseLadder(cand.EscalationLadder)
+		rung := 0
+		if len(ladder) > 0 {
+			if failedAttempts < 0 {
+				failedAttempts = d.failedAttempts(ctx, t)
+			}
+			rung = selectRung(failedAttempts, len(ladder))
+			pcIDs = rungProviderIDs(cand, ladder, rung)
+		}
+		for _, pcID := range pcIDs {
 			if d.RateLimits != nil {
 				if blocked, until := d.RateLimits.IsBlocked(pools.ofProvider(pcID)); blocked {
 					log.Info("dispatcher: skipping rate-limited provider, trying next", "agent_config_id", cand.ID, "provider_config_id", pcID, "usage_pool", pools.ofProvider(pcID), "unblocked_at", until)
@@ -276,6 +288,13 @@ candidates:
 				continue
 			}
 			matched, providerConfigID = cand, pcID
+			if len(ladder) > 0 {
+				r := rung
+				ladderRung = &r
+				if r > 0 {
+					log.Info("dispatcher: escalating to ladder rung", "agent_config_id", cand.ID, "rung", r, "provider_config_id", pcID)
+				}
+			}
 			break candidates
 		}
 	}
@@ -313,7 +332,7 @@ candidates:
 		return
 	}
 
-	if _, err := d.startRun(ctx, t, *matched, runOptions{providerConfigID: providerConfigID}); err != nil {
+	if _, err := d.startRun(ctx, t, *matched, runOptions{providerConfigID: providerConfigID, ladderRung: ladderRung}); err != nil {
 		if errors.Is(err, ErrDispatchConflict) {
 			log.Debug("dispatcher: skipping, task changed since it was listed (lost dispatch claim)")
 			return
@@ -787,7 +806,17 @@ func (d *Dispatcher) DispatchReply(ctx context.Context, taskID, message string) 
 	// long as it is still in the agent config's list.
 	opts := runOptions{humanReply: &message}
 	if run.ProviderConfigID != nil && run.AgentConfigID != nil && *run.AgentConfigID == matched.ID {
-		for _, id := range agentProviderIDs(matched) {
+		ladder := ParseLadder(matched.EscalationLadder)
+		pcIDs := agentProviderIDs(matched)
+		if len(ladder) > 0 {
+			rung := 0
+			if run.LadderRung != nil {
+				rung = selectRung(int(*run.LadderRung), len(ladder))
+			}
+			opts.ladderRung = &rung
+			pcIDs = rungProviderIDs(matched, ladder, rung)
+		}
+		for _, id := range pcIDs {
 			if id == *run.ProviderConfigID {
 				opts.providerConfigID = id
 				break
@@ -829,6 +858,9 @@ type runOptions struct {
 	// providerConfigID is the provider (from the agent config's list) the run
 	// uses; empty means the agent config's primary.
 	providerConfigID string
+	// ladderRung is the escalation-ladder rung in effect (nil = agent config has
+	// no ladder).
+	ladderRung *int
 }
 
 // startRun creates the run row,
@@ -856,7 +888,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 	if pcID == "" {
 		pcID = matched.ProviderConfigID
 	}
-	agentCfg, resumeSessionID, err := d.resolveAgentConfig(ctx, t, matched, pcID)
+	agentCfg, resumeSessionID, err := d.resolveAgentConfig(ctx, t, matched, pcID, opts.ladderRung)
 	if err != nil {
 		return "", err
 	}
@@ -868,7 +900,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		feedback = prior.Feedback
 	}
 
-	if err := d.persistRunRow(ctx, t, matched, pcID, runID, feedback); err != nil {
+	if err := d.persistRunRow(ctx, t, matched, pcID, runID, feedback, opts.ladderRung); err != nil {
 		return "", err
 	}
 
@@ -1175,12 +1207,15 @@ func providerSupportsResume(provider string) bool {
 // the provider session to resume, if any. Resume is honored for claude,
 // qwen_code, codex_cli, and opencode (and only when the config hasn't opted
 // out); the runner falls back to a cold start if the session no longer exists.
-func (d *Dispatcher) resolveAgentConfig(ctx context.Context, t gen.Task, matched gen.AgentConfig, providerConfigID string) (AgentConfig, string, error) {
+func (d *Dispatcher) resolveAgentConfig(ctx context.Context, t gen.Task, matched gen.AgentConfig, providerConfigID string, ladderRung *int) (AgentConfig, string, error) {
 	pc, err := d.q.GetProviderConfig(ctx, providerConfigID)
 	if err != nil {
 		return AgentConfig{}, "", fmt.Errorf("get provider config: %w", err)
 	}
 	agentCfg := toAgentConfig(matched, pc)
+	if ladderRung != nil {
+		agentCfg.Effort = rungEffort(matched, ParseLadder(matched.EscalationLadder), *ladderRung)
+	}
 
 	var resumeSessionID string
 	if agentCfg.ResumeSessions && providerSupportsResume(agentCfg.Provider) {
@@ -1222,7 +1257,7 @@ func (d *Dispatcher) sessionCostBaseline(ctx context.Context, taskID, sessionID 
 // meantime, zero rows are affected, the transaction (including the just-created
 // run row) is rolled back, and ErrDispatchConflict is returned so the caller
 // does not start the run.
-func (d *Dispatcher) persistRunRow(ctx context.Context, t gen.Task, matched gen.AgentConfig, providerConfigID, runID string, feedback *string) error {
+func (d *Dispatcher) persistRunRow(ctx context.Context, t gen.Task, matched gen.AgentConfig, providerConfigID, runID string, feedback *string, ladderRung *int) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -1243,6 +1278,13 @@ func (d *Dispatcher) persistRunRow(ctx context.Context, t gen.Task, matched gen.
 	}); err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("set agent run provider config: %w", err)
+	}
+	if ladderRung != nil {
+		r := int64(*ladderRung)
+		if err := tq.SetAgentRunLadderRung(ctx, gen.SetAgentRunLadderRungParams{LadderRung: &r, ID: runID}); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("set agent run ladder rung: %w", err)
+		}
 	}
 	// Claim the task's active run so the next sweep skips it.
 	var claimed int64

@@ -83,6 +83,19 @@ type outcomeQualityConfigRow struct {
 	RunsFinished          int64   `json:"runs_finished"`
 	EscalationRatePercent float64 `json:"escalation_rate_percent"`
 	LowSampleEscalation   bool    `json:"low_sample_escalation"`
+
+	// LadderRungs is the per-finishing-rung breakdown for configs whose runs
+	// carry a ladder_rung. Independent of the last-run attribution of TasksDone:
+	// a task counts under each config for the rung of that config's last laddered
+	// run on the task, when the task is terminal.
+	LadderRungs []ladderRungStat `json:"ladder_rungs,omitempty"`
+}
+
+// ladderRungStat counts tasks finished at a ladder rung.
+type ladderRungStat struct {
+	Rung             int64   `json:"rung"`
+	TasksDone        int64   `json:"tasks_done"`
+	AvgCostToDoneUSD float64 `json:"avg_cost_to_done_usd"`
 }
 
 // taskAgg accumulates per-task state while walking that task's runs and
@@ -96,6 +109,7 @@ type taskAgg struct {
 	reworkEvents   int
 	reworkConfigs  map[string]int // agent_config_id -> rework events attributed to it
 	humanTouched   bool
+	configRung     map[string]int64 // agent_config_id -> rung of its last laddered run
 	reviewComments int64
 }
 
@@ -186,6 +200,7 @@ func (h *OutcomeQualityHandler) compute(ctx context.Context, repoID string) (out
 			isTerminal:    t.IsTerminal != 0,
 			visitedLabels: map[string]bool{},
 			reworkConfigs: map[string]int{},
+			configRung:    map[string]int64{},
 		}
 	}
 
@@ -210,6 +225,9 @@ func (h *OutcomeQualityHandler) compute(ctx context.Context, repoID string) (out
 		a.totalCost += run.CostUsd
 		if run.AgentConfigID != nil {
 			a.lastConfigID = run.AgentConfigID
+			if run.LadderRung != nil {
+				a.configRung[*run.AgentConfigID] = *run.LadderRung
+			}
 		}
 		runsByTask[run.TaskID] = append(runsByTask[run.TaskID], run)
 	}
@@ -285,6 +303,7 @@ func (h *OutcomeQualityHandler) compute(ctx context.Context, repoID string) (out
 	// denominator still uses this same last-run tasksDone count, consistent
 	// with every other rate on this row.
 	type configAcc struct {
+		ladder            map[int64]*ladderRungStat
 		name              string
 		provider          string
 		tasksDone         int64
@@ -323,6 +342,22 @@ func (h *OutcomeQualityHandler) compute(ctx context.Context, repoID string) (out
 		if !a.isTerminal {
 			continue
 		}
+		for cfgID, rung := range a.configRung {
+			acc, ok := accByConfig[cfgID]
+			if !ok {
+				continue
+			}
+			if acc.ladder == nil {
+				acc.ladder = map[int64]*ladderRungStat{}
+			}
+			st := acc.ladder[rung]
+			if st == nil {
+				st = &ladderRungStat{Rung: rung}
+				acc.ladder[rung] = st
+			}
+			st.TasksDone++
+			st.AvgCostToDoneUSD += a.totalCost // summed here, averaged below
+		}
 		for cfgID, n := range a.reworkConfigs {
 			if acc, ok := accByConfig[cfgID]; ok {
 				acc.reworkEvents += int64(n)
@@ -355,6 +390,12 @@ func (h *OutcomeQualityHandler) compute(ctx context.Context, repoID string) (out
 			row.EscalationRatePercent = float64(esc.escalated) / float64(esc.finished) * 100
 			row.LowSampleEscalation = esc.finished < minSampleSizeForRate
 		}
+		for _, st := range acc.ladder {
+			out := *st
+			out.AvgCostToDoneUSD = st.AvgCostToDoneUSD / float64(st.TasksDone)
+			row.LadderRungs = append(row.LadderRungs, out)
+		}
+		sort.Slice(row.LadderRungs, func(i, j int) bool { return row.LadderRungs[i].Rung < row.LadderRungs[j].Rung })
 		rows = append(rows, row)
 	}
 

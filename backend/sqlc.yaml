@@ -71,6 +71,7 @@ sql:
       - "internal/storage/migrations/067_agent_provider_fallbacks.up.sql"
       - "internal/storage/migrations/070_task_human_decisions.up.sql"
       - "internal/storage/migrations/071_agent_run_session_cost.up.sql"
+      - "internal/storage/migrations/072_agent_escalation_ladder.up.sql"
     gen:
       go:
         package: "gen"

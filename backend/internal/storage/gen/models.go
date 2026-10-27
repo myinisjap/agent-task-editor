@@ -34,6 +34,7 @@ type AgentConfig struct {
 	Effort                    string    `json:"effort"`
 	PermissionMode            string    `json:"permission_mode"`
 	FallbackProviderConfigIds string    `json:"fallback_provider_config_ids"`
+	EscalationLadder          string    `json:"escalation_ladder"`
 }
 
 type AgentLog struct {
@@ -71,6 +72,7 @@ type AgentRun struct {
 	EscalationReason *string    `json:"escalation_reason"`
 	ProviderConfigID *string    `json:"provider_config_id"`
 	SessionCostUsd   *float64   `json:"session_cost_usd"`
+	LadderRung       *int64     `json:"ladder_rung"`
 }
 
 type BackupSetting struct {
