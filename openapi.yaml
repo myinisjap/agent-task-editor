@@ -601,6 +601,8 @@ components:
         updated_at:  { type: string, format: date-time }
         skill_md:    { type: string, description: "SKILL.md contents (GET /skills/{id} only)" }
         files:       { type: array, items: { type: string }, description: "Relative file paths (GET /skills/{id} only)" }
+        agent_config_ids: { type: array, items: { type: string }, description: "Attached agent config ids (GET /skills list only)" }
+        repo_ids:    { type: array, items: { type: string }, description: "Attached repo ids (GET /skills list only)" }
       required: [id, name, description, enabled, created_at, updated_at]
 
     SkillIDs:

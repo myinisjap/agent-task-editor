@@ -6285,6 +6285,10 @@ export interface components {
             skill_md?: string;
             /** @description Relative file paths (GET /skills/{id} only) */
             files?: string[];
+            /** @description Attached agent config ids (GET /skills list only) */
+            agent_config_ids?: string[];
+            /** @description Attached repo ids (GET /skills list only) */
+            repo_ids?: string[];
         };
         SkillIDs: {
             skill_ids: string[];

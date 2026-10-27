@@ -28,6 +28,7 @@ src/
 │   ├── chat/          TerminalKeyBar (mobile Esc/Tab/arrow/Ctrl row for the chat terminal)
 │   ├── diff/          FileDiffViewer (syntax-highlighted git diff + inline review comments)
 │   ├── lessons/       LessonForm, LessonsPanel (repo/global lessons), RememberLessonModal
+│   ├── skills/        SkillPicker (chip multi-select for agent/repo skills)
 │   └── shared/        ApiTokenGate, GitHubAuthWarning, NavSidebar, Toast, WorkflowFlowchart
 ├── pages/
 │   ├── BoardPage.tsx        Main Kanban board

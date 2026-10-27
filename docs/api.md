@@ -463,7 +463,8 @@ Provider-neutral Agent Skills library (see [skills.md](skills.md)). Admin-only:
 the MCP sidecar's scoped tokens are rejected with 403 on every route here.
 
 ### `GET /skills`
-List skills: `[{id, name, description, enabled, created_at, updated_at}]`.
+List skills: `[{id, name, description, enabled, created_at, updated_at, agent_config_ids, repo_ids}]`.
+`agent_config_ids` / `repo_ids` (list only, omitted when empty) are the ids the skill is attached to.
 
 ### `POST /skills`
 Create from JSON `{"skill_md": "---\nname: x\ndescription: y\n---\n..."}` or an

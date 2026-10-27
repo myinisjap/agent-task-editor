@@ -1,11 +1,12 @@
 import type { Dispatch, ReactNode, SetStateAction } from 'react'
 import { Link } from 'react-router-dom'
-import type { AgentConfig, ClaudeOptions, ProviderConfig } from '../../api/client'
+import type { AgentConfig, ClaudeOptions, ProviderConfig, Skill } from '../../api/client'
 import Field from './Field'
 import PluginMcpPicker from './PluginMcpPicker'
 import CommandFilterEditor from './CommandFilterEditor'
 import LabelPicker from './LabelPicker'
 import AgentHistoryPanel from './AgentHistoryPanel'
+import SkillPicker from '../skills/SkillPicker'
 import { getCapability } from '../../lib/providerCapabilities'
 import { providerListGaps } from '../../lib/providerListGaps'
 
@@ -28,6 +29,9 @@ export default function AgentConfigForm({
   setNote,
   onRestored,
   historyReloadKey = 0,
+  skills,
+  skillIds,
+  onSkillIdsChange,
 }: {
   selected: AgentConfig | null
   form: FormState
@@ -45,6 +49,9 @@ export default function AgentConfigForm({
   setNote?: (n: string) => void
   onRestored?: (config: AgentConfig) => void
   historyReloadKey?: number
+  skills?: Skill[]
+  skillIds?: string[]
+  onSkillIdsChange?: (ids: string[]) => void
 }) {
   const isEnabled = selected ? selected.enabled : true
   // The claude-specific plugin/MCP picker and the command-filter hints are
@@ -53,6 +60,7 @@ export default function AgentConfigForm({
   const selectedProviderConfig = providerConfigs.find((pc) => pc.id === form.provider_config_id)
   const providerStr = selectedProviderConfig?.provider ?? ''
   const mcpCap = getCapability(providerStr, 'mcpServers')
+  const skillsCap = getCapability(providerStr, 'skills')
   const subtasksCap = getCapability(providerStr, 'subtasks')
   const sessionResumeCap = getCapability(providerStr, 'sessionResume')
   const costTrackingCap = getCapability(providerStr, 'costTracking')
@@ -201,7 +209,7 @@ export default function AgentConfigForm({
           </select>
         </Field>
 
-        <details className="sm:col-span-2 rounded border border-slate-700 px-3 py-2" open={ladder.length > 0}>
+        <details className="sm:col-span-2 rounded border border-slate-700 px-3 py-2" open={ladder.length > 0 || (skillIds?.length ?? 0) > 0}>
           <summary className="cursor-pointer text-sm text-slate-300">Advanced</summary>
           <div className="mt-3">
             <p className="text-sm font-medium text-slate-200">Escalate on failure</p>
@@ -252,6 +260,19 @@ export default function AgentConfigForm({
             >
               Add rung
             </button>
+          </div>
+
+          <div className="mt-4 border-t border-slate-700 pt-3">
+            <p className="text-sm font-medium text-slate-200">Skills</p>
+            <p className="text-xs text-slate-500 mb-2">
+              Enabled skills attached here, plus the repo's skills, are copied into the worktree at run start.
+            </p>
+            <SkillPicker skills={skills ?? []} selected={skillIds ?? []} onChange={(ids) => onSkillIdsChange?.(ids)} />
+            {providerStr && skillsCap.support !== 'full' && (
+              <p className="mt-1 text-xs text-amber-400">
+                ⚠️ {skillsCap.note ?? `The ${providerStr} provider has no skills support — attached skills won't be copied for this agent.`}
+              </p>
+            )}
           </div>
         </details>
 

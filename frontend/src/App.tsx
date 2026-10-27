@@ -30,6 +30,7 @@ const HealthPage = lazy(() => import('./pages/HealthPage'))
 const PipelinePage = lazy(() => import('./pages/PipelinePage'))
 const PipelineOverviewPage = lazy(() => import('./pages/PipelineOverviewPage'))
 const LessonsSettingsPage = lazy(() => import('./pages/LessonsSettingsPage'))
+const SkillsSettingsPage = lazy(() => import('./pages/SkillsSettingsPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 
 /** Redirect a retired path to its new home, keeping query string and hash. */
@@ -69,6 +70,7 @@ function AppRoutes() {
             <Route path="intake-rules" element={<IntakeRulesPage />} />
             <Route path="templates"    element={<TemplatesPage />} />
             <Route path="lessons"      element={<LessonsSettingsPage />} />
+            <Route path="skills"       element={<SkillsSettingsPage />} />
             <Route path="health"       element={<HealthPage />} />
           </Route>
           <Route path="/repos"                 element={<ReposPage />} />
