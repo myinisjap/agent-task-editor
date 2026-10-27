@@ -241,7 +241,7 @@ func (p *Pool) runPreviewCapture(ctx context.Context, taskID, captureID string, 
 	if err != nil {
 		return "failed", err.Error()
 	}
-	defer os.RemoveAll(outDir)
+	defer func() { _ = os.RemoveAll(outDir) }()
 	// The capture runs as the agent user, which is in the server user's group.
 	_ = os.Chmod(outDir, 0o770)
 	req.OutDir = outDir
