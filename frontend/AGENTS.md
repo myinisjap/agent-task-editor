@@ -57,8 +57,8 @@ src/
 │   ├── condensedBoard.ts    Groups workflow labels into condensed/agent-group board columns
 │   ├── diffComments.ts      Maps API review-comment wire type to the diff viewer's view model
 │   ├── useIsMobile.ts       Hook for responsive breakpoint detection
-│   ├── useMediaQuery.ts     useMediaQuery(q) / useIsWideDesktop() (≥1280px) — gates the Task Detail review layout
 │   ├── inboxKeys.ts         Inbox keyboard map (j/k, a, r, Enter/o, Esc, ?) + `useInboxKeyboard` hook; ignores typing targets and modifiers
+│   ├── useMediaQuery.ts     useMediaQuery(q) / useIsWideDesktop() (≥1280px) / useIsPhone() (<768px) — pick the Task Detail review layout variant
 │   ├── useKeyboardInset.ts  Hook: height of the on-screen keyboard overlapping the layout viewport
 │   ├── termKeys.ts          Mobile terminal key-bar sequences + Ctrl-modifier folding
 │   ├── humanGate.ts         isHumanGateLabel() — is a workflow label one only a human can move a task out of

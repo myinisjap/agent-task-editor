@@ -20,6 +20,7 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Changed
+- **Readable pipeline graph.** Pipeline → Overview and the Workflow tab preview lay the workflow out left-to-right in board column order (failure/rework edges loop above/below), with larger nodes showing the label name, agent + provider/model or Human gate, an amber "No agent" + Assign action, and Opens PR / WIP / Verify badges. Zoom is clamped so text never renders below ~12px; wide graphs pan with a hint instead of shrinking. The canvas follows the light/dark theme; phones get a vertical layout.
 
 - **Inbox keyboard review (desktop).** At ≥1280px the Inbox shows a preview pane for the selected item (review brief, files and screenshots with Approve / Request changes for Decide; the agent's question and a reply box for Answer; the failure reason and fix action for Fix setup) with an Open full page link. `j`/`k` or arrows move, `a` approves, `r` requests changes, `Enter`/`o` opens the task, `Esc` closes, `?` shows the legend; the next item is selected after an action and `?task=<id>` keeps your place on reload. Phones are unchanged.
 - **Inbox as a decision queue.** Inbox sections are now Decide / Answer / Fix setup; Decide rows show the review brief's one-line summary, diff size, cost, verify result, risk flags and preview count (new `GET /needs-me` fields) with Approve and Request changes (note); login/toolchain/budget escalations moved to Fix setup. Overview's own queue is replaced by a "Needs you (N)" link to the Inbox; the nav badge, tab badge, Overview and Inbox heading share one count.
@@ -28,6 +29,8 @@ triggers the "Release" workflow the same way.
 
 - **One quiet, tiered status area.** Only a provider-dispatch pause shows a slim, session-dismissible banner (one line on phones); other health problems show as a counted dot on Settings/Health; advice (backups, `REPO_BASE_DIR`, update checks) lives only on Settings → Health with a per-check "Don't remind me" (API-unauthenticated stays un-snoozable). The Get Started card shows one "N setup issues · View health" line, and "Notifications blocked" in the sidebar now explains how to re-enable notifications.
 - **Decision-first review on Task Detail (desktop).** Tasks waiting at a human gate get a review layout at ≥1280px: header with title, state, repo, cost, run count and Approve ("Approve and open PR" when the next label opens a PR) / Request changes; the diff (with preview strip) or plan in the main pane, logs/details as tabs; and a sticky right rail with the review brief, verification and runs. The review brief now always sits below the task title.
+
+- **Review layout on phone and tablet; quieter Task Detail.** Human-gate tasks now get the review layout below 1280px too: tablets stack the brief above the diff, and phones show a compact brief card (changed / risks / verified) with Approve / Request changes pinned above the bottom tab bar. Dependencies, Force move, Label history and source comments moved into a collapsed "Details" section (open/closed remembered per browser); Force move is no longer a red button in the main flow. Task metadata shows as a two-column grid on wide screens, and run statuses read as words ("Waiting on you", "Done", …).
 
 ### Added
 

@@ -353,7 +353,7 @@ describe('TaskHeader block_reason banner (#353)', () => {
       baseTask({ block_reason: { code: 'dependency', message: 'blocked on 1 unresolved dependency' } }),
     )
 
-    expect(screen.getByText(/See Dependencies below/)).toBeInTheDocument()
+    expect(screen.getByText(/See Dependencies under Details below/)).toBeInTheDocument()
   })
 })
 

@@ -571,18 +571,21 @@ const gateBrief = {
   computed_at: '2026-01-01T00:00:00Z',
 }
 
-function stubWide(): () => void {
+function stubWidth(px: number): () => void {
   const orig = window.matchMedia
   window.matchMedia = ((q: string) => ({
-    matches: q.includes('min-width: 1280px'), media: q, addEventListener() {}, removeEventListener() {},
+    matches: (q.includes('min-width: 1280px') && px >= 1280) || (q.includes('max-width: 767px') && px <= 767),
+    media: q, addEventListener() {}, removeEventListener() {},
   })) as never
   return () => { window.matchMedia = orig }
 }
+const stubWide = () => stubWidth(1400)
 
 describe('TaskDetailPage review layout', () => {
   let restore: (() => void) | null = null
   beforeEach(() => {
     vi.clearAllMocks()
+    localStorage.clear()
     wsHandlers.clear()
     vi.mocked(api.tasks.listLabelHistory).mockResolvedValue([])
     vi.mocked(api.tasks.sourceComments).mockResolvedValue([])
@@ -687,13 +690,61 @@ describe('TaskDetailPage review layout', () => {
     for (const n of ['Overview', 'Logs', 'Diff']) expect(screen.getByRole('button', { name: n })).toBeInTheDocument()
   })
 
-  it('keeps the tabbed layout on narrow screens, with the brief below the title', async () => {
+  it('tablet: stacks the brief above the diff with header buttons', async () => {
+    restore = stubWidth(1000)
     renderGate(task({ label: 'review' }), reviewWorkflow())
+    const layout = await screen.findByTestId('review-layout')
+    expect(layout).toHaveAttribute('data-variant', 'tablet')
     const brief = await screen.findByTestId('review-brief')
+    const diff = await screen.findByTestId('diff-review-pane')
+    expect(brief.compareDocumentPosition(diff) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Approve and open PR' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Request changes' })).toBeInTheDocument()
+    expect(screen.queryByTestId('task-actions-bar')).not.toBeInTheDocument()
+  })
+
+  it('phone: compact brief above the diff, decisions pinned in the action bar', async () => {
+    restore = stubWidth(400)
+    const user = userEvent.setup()
+    vi.mocked(api.tasks.approve).mockResolvedValue(task({ label: 'done' }))
+    vi.mocked(api.tasks.reject).mockResolvedValue(task({ label: 'in-progress' }))
+    renderGate(task({ label: 'review' }), reviewWorkflow())
+    const layout = await screen.findByTestId('review-layout')
+    expect(layout).toHaveAttribute('data-variant', 'phone')
+    const bar = screen.getByTestId('review-action-bar')
+    const brief = await screen.findByTestId('review-brief')
+    const diff = await screen.findByTestId('diff-review-pane')
+    expect(brief.compareDocumentPosition(diff) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    await user.click(within(bar).getByRole('button', { name: 'Request changes' }))
+    await user.type(within(bar).getByPlaceholderText(/Rejection note/), 'note')
+    await user.click(within(bar).getByRole('button', { name: 'Send back with changes' }))
+    await waitFor(() => expect(api.tasks.reject).toHaveBeenCalledWith('task-1', 'note'))
+  })
+
+  it('phone: Approve in the action bar calls the approve endpoint', async () => {
+    restore = stubWidth(400)
+    const user = userEvent.setup()
+    vi.mocked(api.tasks.approve).mockResolvedValue(task({ label: 'done' }))
+    renderGate(task({ label: 'review' }), reviewWorkflow())
+    const bar = await screen.findByTestId('review-action-bar')
+    await user.click(within(bar).getByRole('button', { name: 'Approve and open PR' }))
+    await waitFor(() => expect(api.tasks.approve).toHaveBeenCalledWith('task-1'))
+  })
+
+  it('phone: waiting_human still uses the tabbed layout with task actions', async () => {
+    restore = stubWidth(400)
+    renderGate(task({ label: 'review' }), reviewWorkflow(), [run({ status: 'waiting_human' })])
+    expect(await screen.findByTestId('task-actions-bar')).toBeInTheDocument()
     expect(screen.queryByTestId('review-layout')).not.toBeInTheDocument()
-    expect(screen.getByTestId('task-actions-bar')).toBeInTheDocument()
-    const title = screen.getByText('A detailed task')
-    expect(title.compareDocumentPosition(brief) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('Force move is hidden until the Details disclosure is opened', async () => {
+    const user = userEvent.setup()
+    renderGate(task({ label: 'in-progress' }), reviewWorkflow())
+    await screen.findByText('A detailed task')
+    expect(screen.queryByRole('button', { name: /Force move/ })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Details/ }))
+    expect(await screen.findByRole('button', { name: /Force move/ })).toBeInTheDocument()
   })
 
   it('keeps the existing layout on a wide screen when the run is waiting_human', async () => {
