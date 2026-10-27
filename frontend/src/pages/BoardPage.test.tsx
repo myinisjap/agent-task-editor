@@ -163,10 +163,10 @@ describe('BoardPage bulk actions', () => {
     )
 
     await selectTwoCards(user)
-    // Two buttons match /Archive/: the filter-bar "🗄 Archived" toggle and
-    // the bulk-toolbar "🗄 Archive" action — match the exact bulk-action
+    // Two buttons match /Archive/: the filter-bar "Archived" toggle and
+    // the bulk-toolbar "Archive" action — match the exact bulk-action
     // label to disambiguate.
-    await user.click(screen.getByRole('button', { name: '🗄 Archive' }))
+    await user.click(screen.getByRole('button', { name: 'Archive' }))
 
     await waitFor(() => {
       expect(bulkMock).toHaveBeenCalledWith(expect.arrayContaining(['task-1', 'task-2']), 'archive', undefined)
