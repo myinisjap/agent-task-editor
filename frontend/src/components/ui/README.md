@@ -34,7 +34,8 @@ and they take `text-on-accent`. Never use `text-white`.
 - `<Badge tone="neutral|accent|success|warning|danger|info" variant="soft|solid" size="sm|xs">` — solid exists only for accent and danger; other tones fall back to soft.
 - `<Card as padding="none|sm|md" selected interactive>` — rest props (onClick, data-testid, aria-*) pass through.
 - `<Field label hint error labelHidden>` wraps one input/select/textarea (use `controlClasses`) and wires id, `aria-describedby` and `aria-invalid`.
-- `<PageFrame title titleAdornment help actions tabs width="default|wide|full" testId>` — one page width and header. The h1 contains only the title text.
+- `<PageFrame title titleAdornment help actions tabs description fill headerClassName width="default|wide|full" testId>` — one page width and header. The h1 contains only the title text. `description` is a muted line under the header; `fill` makes the root a full-height flex column (children in a `flex-1 min-h-0` flex column) for boards/graphs; `headerClassName` overrides the header margin (default `mb-6`).
+- `<Icon icon={Pause} size="xs|sm|md|lg">` — Lucide icon (named import from `lucide-react`; never `import *`). xs = 10px badges, sm = text-xs buttons, md = nav and icon-only buttons, lg = bottom tab bar. Icons are decorative (`aria-hidden`): the text label, or an `aria-label` on icon-only buttons, carries the meaning. No emoji as UI icons.
 
 ```tsx
 <PageFrame title="Inbox" actions={<Button variant="primary">New</Button>}>
@@ -46,6 +47,8 @@ and they take `text-on-accent`. Never use `text-white`.
 
 slate-950/900/800 → `surface`/`-raised`/`-sunken`; slate-200 → `fg`; slate-400 → `fg-muted`; slate-500 → `fg-subtle`; slate-700 border → `border`; indigo/sky primary buttons → `Button primary`; emerald/red-900 pills → `Badge` tones. Pages with no token for a hue map to the closest tone.
 
-Task Detail does **not** use PageFrame: it is a full-height split layout whose header is TaskHeader. Don't force it.
+**Page width / header rule.** `width="default"` for every content page (Insights, Repos, all Settings tabs, Pipeline → Agents); `width="full"` + `fill` only for the Board and Pipeline → Overview / Workflow graphs. Header pattern: `title` + `help={{ onClick, title }}` + `actions` (Buttons) + optional `description`. Settings and Pipeline tabs render their own PageFrame; TabbedPage only draws the tab strip.
+
+Task Detail and Chat do **not** use PageFrame: they are full-height split layouts (Task Detail's header is TaskHeader; Chat is a terminal split with no page h1). Don't force it.
 
 `scripts/gen-light-theme.mjs` and the generated `.light { --color-slate-* }` block stay for unmigrated classes; never edit the semantic `.light` block by running the generator.
