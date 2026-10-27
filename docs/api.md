@@ -406,7 +406,8 @@ Create a child task under the parent named in the path.
   "title": "string (required)",
   "description": "string",
   "type": "feature | bug | ...",
-  "label": "optional agent_ignore label override"
+  "label": "optional agent_ignore label override",
+  "file_scope": ["repo-relative/globs/**"]
 }
 ```
 
@@ -419,12 +420,20 @@ Create a child task under the parent named in the path.
   `max_subtasks` if the config that produced the parent's active run has
   `subtasks_enabled` and sets `max_subtasks` (`403` if `subtasks_enabled` is
   off for that config). Returns `422` if the cap is already reached.
+- `file_scope` (optional): up to 20 repo-relative globs, 256 chars each, no newlines,
+  no leading `/`, no `..` segments (`400` otherwise). If it overlaps the scope of a
+  live (non-terminal, non-archived) scoped sibling, the new child gets a dependency
+  on that sibling so they run sequentially. Unscoped subtasks get no overlap check.
+  Creating a child resets the parent's `integration_status`.
 - Auto-creates a parent→child dependency edge (see Task Dependencies above) so
   the parent can't be dispatched again until every child finishes.
 - Publishes `task.created` (with `parent_id`) and `task.updated` (for the
   parent) — see [websocket.md](websocket.md).
 
-Returns `201` with the created task object (same shape as `POST /tasks`).
+Returns `201` with the created task object (same shape as `POST /tasks`) plus
+`overlap_dependencies: [{task_id, title, globs}]` (empty when none). Task objects
+carry `file_scope` (always an array) and, for parents, `integration_status`
+(`""`, `pending` or `done`).
 
 ---
 

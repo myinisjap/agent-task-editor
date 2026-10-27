@@ -619,6 +619,9 @@ func TestE2E_WaitingHumanStaysLocked(t *testing.T) {
 	runID := *locked.ActiveAgentRunID
 	assertEscalationReason(t, h.q, runID, ReasonAgentQuestion)
 
+	for i := 0; i < 200 && !h.pub.has("task.needs_human"); i++ {
+		time.Sleep(10 * time.Millisecond) // event is published just after the run status is written
+	}
 	if !h.pub.has("task.needs_human") {
 		t.Error("expected task.needs_human event")
 	}

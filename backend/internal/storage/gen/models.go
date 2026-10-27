@@ -324,6 +324,12 @@ type TaskDependency struct {
 	CreatedAt       time.Time `json:"created_at"`
 }
 
+type TaskFanout struct {
+	TaskID            string `json:"task_id"`
+	FileScope         string `json:"file_scope"`
+	IntegrationStatus string `json:"integration_status"`
+}
+
 type TaskGit struct {
 	TaskID       string `json:"task_id"`
 	Branch       string `json:"branch"`
