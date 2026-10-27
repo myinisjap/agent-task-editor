@@ -244,7 +244,7 @@ export default function PricingSettingsPage() {
             <button
               onClick={save}
               disabled={saving}
-              className="px-3 py-1.5 text-sm bg-indigo-700 hover:bg-indigo-600 disabled:opacity-50 text-white rounded-lg transition-colors"
+              className="px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg transition-colors"
             >
               {saving ? 'Saving…' : 'Save pricing table'}
             </button>

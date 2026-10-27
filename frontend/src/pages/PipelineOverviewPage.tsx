@@ -233,7 +233,7 @@ export default function PipelineOverviewPage() {
               <button type="button" onClick={() => void reloadFromServer()} className="px-2 py-1 text-xs rounded bg-slate-700 hover:bg-slate-600 text-slate-100">
                 Reload and discard my edits
               </button>
-              <button type="button" onClick={() => void save(true)} className="px-2 py-1 text-xs rounded bg-amber-700 hover:bg-amber-600 text-white">
+              <button type="button" onClick={() => void save(true)} className="px-2 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-black">
                 Overwrite with my edits
               </button>
             </div>

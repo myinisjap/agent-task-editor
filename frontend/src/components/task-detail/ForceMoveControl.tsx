@@ -102,7 +102,7 @@ export default function ForceMoveControl({
               type="button"
               onClick={confirm}
               disabled={!target || pending}
-              className="text-xs px-3 py-1.5 rounded bg-red-700 text-white hover:bg-red-600 disabled:opacity-50"
+              className="text-xs px-3 py-1.5 rounded bg-red-600 text-white hover:bg-red-500 disabled:opacity-50"
             >
               {pending ? 'Moving…' : 'Force move'}
             </button>

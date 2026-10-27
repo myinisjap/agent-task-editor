@@ -664,7 +664,7 @@ func (r *QwenRunner) runAttempt(ctx context.Context, input agent.RunInput, logCh
 		// before crashing, or the exit code may reflect an internal SDK error.
 		if err != nil {
 			if res.Outcome != "" {
-				logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("qwen exited with error but had outcome %q — treating as failed", res.Outcome), At: time.Now()}
+				logCh <- agent.LogEntry{Type: agent.LogSystem, Content: exitErrorOutcomeMsg("qwen", res.Outcome), At: time.Now()}
 			}
 			failed := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
 			price(&failed, finalUsage)
@@ -676,7 +676,7 @@ func (r *QwenRunner) runAttempt(ctx context.Context, input agent.RunInput, logCh
 	// Non-zero exit means the agent failed regardless of any parsed outcome.
 	if err != nil {
 		if outcome != "" {
-			logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("qwen exited with error but had parsed outcome %q — treating as failed", outcome), At: time.Now()}
+			logCh <- agent.LogEntry{Type: agent.LogSystem, Content: exitErrorOutcomeMsg("qwen", outcome), At: time.Now()}
 		}
 		failed := agent.Result{Status: "failed", SessionID: finalSession, CostWarned: finalCostWarned}
 		price(&failed, finalUsage)

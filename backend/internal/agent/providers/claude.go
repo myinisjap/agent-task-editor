@@ -633,7 +633,7 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 		// before crashing, or the exit code may reflect an internal SDK error.
 		if err != nil {
 			if r.Outcome != "" {
-				logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("claude exited with error but had outcome %q — treating as failed", r.Outcome), At: time.Now()}
+				logCh <- agent.LogEntry{Type: agent.LogSystem, Content: exitErrorOutcomeMsg("claude", r.Outcome), At: time.Now()}
 			}
 			failed := agent.Result{Status: "failed", SessionID: finalSession}
 			applyUsage(&failed, finalUsage)
@@ -646,7 +646,7 @@ func (r *ClaudeRunner) runAttempt(ctx context.Context, input agent.RunInput, sid
 	// For example, claude exits 1 on auth errors, crashes, or internal failures.
 	if err != nil {
 		if outcome != "" {
-			logCh <- agent.LogEntry{Type: agent.LogSystem, Content: fmt.Sprintf("claude exited with error but had parsed outcome %q — treating as failed", outcome), At: time.Now()}
+			logCh <- agent.LogEntry{Type: agent.LogSystem, Content: exitErrorOutcomeMsg("claude", outcome), At: time.Now()}
 		}
 		failed := agent.Result{Status: "failed", SessionID: finalSession}
 		applyUsage(&failed, finalUsage)

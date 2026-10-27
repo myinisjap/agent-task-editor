@@ -188,7 +188,7 @@ export default function SkillsSettingsPage() {
                     </button>
                     {confirmDeleteId === s.id ? (
                       <>
-                        <button type="button" className="px-2 py-1 text-xs rounded bg-red-700 hover:bg-red-600 text-white" onClick={() => remove(s)}>
+                        <button type="button" className="px-2 py-1 text-xs rounded bg-red-600 hover:bg-red-500 text-white" onClick={() => remove(s)}>
                           Confirm delete
                         </button>
                         <button type="button" className={btnCls} onClick={() => setConfirmDeleteId(null)}>Cancel</button>

@@ -235,7 +235,7 @@ export default function UsagePage() {
                       <td className="px-4 py-2.5 text-slate-200">
                         <button
                           onClick={() => navigate(`/tasks/${tc.task_id}`)}
-                          className="hover:text-white hover:underline truncate max-w-xs text-left"
+                          className="hover:text-slate-50 hover:underline truncate max-w-xs text-left"
                         >
                           {tc.task_title || tc.task_id}
                         </button>

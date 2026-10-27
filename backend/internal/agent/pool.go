@@ -1158,12 +1158,14 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 				return
 			}
 			logID := uuid.NewString()
+			logSeq := NextLogSeq()
 			batch = append(batch, gen.CreateAgentLogParams{
 				ID:         logID,
 				AgentRunID: runID,
 				Timestamp:  entry.At,
 				Type:       string(entry.Type),
 				Content:    entry.Content,
+				Seq:        logSeq,
 			})
 			if len(batch) >= 50 {
 				flush(ctx)
@@ -1178,6 +1180,7 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 					TaskID: taskID,
 					Entry: wsevent.AgentLogEntry{
 						ID:      logID,
+						Seq:     logSeq,
 						Type:    string(entry.Type),
 						Content: entry.Content,
 						At:      entry.At,

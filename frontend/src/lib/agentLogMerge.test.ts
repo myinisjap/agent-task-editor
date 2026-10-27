@@ -49,3 +49,17 @@ describe('mergeLogs', () => {
     expect(mergeLogs(prev, [])).toBe(prev)
   })
 })
+
+describe('mergeLogs ordering', () => {
+  const ts = '2024-01-01T00:00:00Z'
+  it('uses seq as tiebreak for equal timestamps, regardless of id', () => {
+    const started = toLog({ id: 'b', type: 'stdout', content: 'Session started', timestamp: ts, seq: 1 })
+    const failed = toLog({ id: 'a', type: 'stdout', content: 'Failed', timestamp: ts, seq: 2 })
+    expect(mergeLogs([failed], [started]).map((l) => l.content)).toEqual(['Session started', 'Failed'])
+  })
+  it('falls back to id without seq', () => {
+    const x = toLog({ id: 'b', type: 'stdout', content: 'x', timestamp: ts })
+    const y = toLog({ id: 'a', type: 'stdout', content: 'y', timestamp: ts })
+    expect(mergeLogs([x], [y]).map((l) => l.id)).toEqual(['a', 'b'])
+  })
+})

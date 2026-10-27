@@ -299,7 +299,7 @@ export default function WorkflowPage() {
                   onClick={() => loadWorkflow(wf.id)}
                   className={`px-3 py-1.5 text-sm rounded-md transition-colors whitespace-nowrap ${
                     wf.id === selectedWorkflowId
-                      ? 'bg-indigo-700 text-white font-medium'
+                      ? 'bg-indigo-600 text-white font-medium'
                       : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
                   }`}
                 >
@@ -311,7 +311,7 @@ export default function WorkflowPage() {
                     <button
                       onClick={() => handleDelete(wf.id)}
                       disabled={deleting}
-                      className="text-xs px-1.5 py-0.5 rounded bg-red-700 hover:bg-red-600 text-white disabled:opacity-50"
+                      className="text-xs px-1.5 py-0.5 rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-50"
                     >
                       {deleting ? '…' : 'Confirm'}
                     </button>

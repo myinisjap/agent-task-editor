@@ -9,6 +9,7 @@ import { useHealthStore } from '../stores/health'
 import { useWorkflowStore } from '../stores/workflow'
 import { inboxCount, itemActions, SECTION_ORDER, type InboxEntry, type InboxSectionKey } from '../lib/inbox'
 import { needsMeReasonLabel } from '../lib/needsMe'
+import { escalationInfo } from '../lib/escalation'
 import { formatRelativeAge } from '../lib/format'
 import { sideEffectText } from '../components/shared/SideEffectBadge'
 import { providerLabel } from '../components/shared/ProviderPausedBanner'
@@ -128,7 +129,7 @@ export default function InboxPage() {
     return (
       <Row key={item.task_id} to={`/tasks/${item.task_id}`} error={errors[item.task_id]} extra={noteField || undefined}>
         <div className="min-w-0 break-words">
-          <Link to={`/tasks/${item.task_id}`} className="text-sm font-medium text-slate-200 hover:text-white hover:underline">
+          <Link to={`/tasks/${item.task_id}`} className="text-sm font-medium text-slate-200 hover:text-slate-50 hover:underline">
             {item.task_title}
           </Link>
           <span className="ml-2 align-middle text-[10px] px-1.5 py-0.5 rounded bg-pink-900/60 text-pink-200 font-medium">
@@ -141,6 +142,10 @@ export default function InboxPage() {
           )}
           {item.message && <p className="text-xs text-slate-400 mt-1">{item.message}</p>}
           {isGate && <DecisionContext item={item} />}
+          {item.reason === 'waiting_human' && (() => {
+            const esc = escalationInfo(item.escalation_reason)
+            return <p className="text-xs text-slate-500 mt-1">{esc.explanation} {esc.nextStep}</p>
+          })()}
         </div>
         <div className="md:shrink-0 flex flex-col items-stretch md:items-end gap-2">
           <span className="text-xs text-slate-500" title={new Date(item.since).toLocaleString()}>
@@ -196,7 +201,7 @@ export default function InboxPage() {
         return (
           <Row key={`fx:${task.id}`} to={`/tasks/${task.id}`} error={errors[`fx:${task.id}`]}>
             <div className="min-w-0 break-words">
-              <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-slate-200 hover:text-white hover:underline">
+              <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-slate-200 hover:text-slate-50 hover:underline">
                 {task.title}
               </Link>
               {effects.map((ef) => (
@@ -231,7 +236,7 @@ export default function InboxPage() {
         return (
           <Row key={`su:${task.id}`} to={`/tasks/${task.id}`} error={errors[`su:${task.id}`]}>
             <div className="min-w-0 break-words">
-              <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-slate-200 hover:text-white hover:underline">
+              <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-slate-200 hover:text-slate-50 hover:underline">
                 {task.title}
               </Link>
               <p className="text-xs text-amber-300 mt-1">

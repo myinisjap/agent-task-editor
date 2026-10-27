@@ -19,5 +19,9 @@ an inline script in `index.html` applies the class before first paint.
 
 ## Consequences
 
+- Contrast: `white`/`black` are not remapped and shades 500/600 are stable while
+  50–400 and 700–900 flip. Use `text-slate-50` on slate fills and keep
+  `text-white` for -500/-600 accent fills only (enforced by an axe e2e spec and
+  a static vitest guard).
 - Prefer Tailwind `slate`/accent utilities over hardcoded hex so new UI themes
   automatically.

@@ -223,7 +223,7 @@ export default function DashboardPage() {
                     <td className="px-4 py-2.5 text-slate-200">
                       <button
                         onClick={() => navigate(`/tasks/${a.task_id}`)}
-                        className="hover:text-white hover:underline truncate max-w-xs text-left"
+                        className="hover:text-slate-50 hover:underline truncate max-w-xs text-left"
                       >
                         {a.task_title}
                       </button>
