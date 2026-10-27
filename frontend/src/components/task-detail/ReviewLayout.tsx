@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
-import type { AgentConfig, AgentRun, ProviderConfig, Task } from '../../api/client'
+import type { AgentConfig, AgentRun, ProviderConfig, Task, TaskLabelHistoryEntry } from '../../api/client'
 import type { DiffComment } from '../../lib/diffComments'
 import HelpButton from '../shared/HelpButton'
 import DiffReviewPane from './DiffReviewPane'
@@ -21,7 +21,7 @@ export default function ReviewLayout({
   isRunning, canRerun, onStop, onRerun, canApprove, canReject, approveLabel, onApprove,
   rejectNote, setRejectNote, onReject, openCommentsCount, actionError, actionPending,
   diffComments, onAddComment, onRemoveComment, onReopenComment, onCreatePR, creatingPR,
-  verificationKey, briefKey, mode, onBack, onHelp, details,
+  verificationKey, briefKey, mode, onBack, onHelp, details, labelHistory,
 }: {
   task: Task
   repoName?: string
@@ -56,6 +56,7 @@ export default function ReviewLayout({
   onBack: () => void
   onHelp?: () => void
   details: ReactNode
+  labelHistory?: TaskLabelHistoryEntry[]
 }) {
   const defaultTab: MainTab = mode === 'plan' ? 'plan' : 'diff'
   const [tab, setTab] = useState<MainTab>(defaultTab)
@@ -199,7 +200,19 @@ export default function ReviewLayout({
                 previewRefreshKey={briefKey}
               />
             )}
-            {tab === 'logs' && <RunLogPane taskId={task.id} runId={selectedRun} isRunning={isRunning} />}
+            {tab === 'logs' && (
+              <RunLogPane
+                taskId={task.id}
+                runId={selectedRun}
+                isRunning={isRunning}
+                run={runs.find((r) => r.id === selectedRun)}
+                agentConfigs={agentConfigs}
+                providerConfigs={providerConfigs}
+                labelHistory={labelHistory}
+                onRetry={canRerun ? onRerun : undefined}
+                onOpenDiff={() => setTab('diff')}
+              />
+            )}
             {tab === 'details' && (
               <div className="h-full overflow-y-auto overflow-x-hidden p-5 flex flex-col gap-4 min-w-0">{details}</div>
             )}

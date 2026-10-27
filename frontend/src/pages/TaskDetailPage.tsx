@@ -329,6 +329,12 @@ export default function TaskDetailPage() {
     }
   }
 
+  const focusReply = () => {
+    const el = document.getElementById('task-reply-input')
+    el?.scrollIntoView({ block: 'center' })
+    el?.focus()
+  }
+
   // Retry from an escalation banner: same re-dispatch as Rerun, but errors
   // show inline in the banner rather than in an alert().
   const handleRetryEscalation = async () => {
@@ -599,6 +605,7 @@ export default function TaskDetailPage() {
       canRerun={canRerun}
       onStop={handleStop}
       onRerun={handleRerun}
+      labelHistory={labelHistory}
       canApprove={humanActions.canApprove}
       canReject={humanActions.canReject}
       approveLabel={approveLabel}
@@ -668,7 +675,18 @@ export default function TaskDetailPage() {
 
         {/* Logs tab */}
         {activeTab === 'logs' && (
-          <RunLogPane taskId={id} runId={selectedRun} isRunning={!!isRunning} />
+          <RunLogPane
+            taskId={id}
+            runId={selectedRun}
+            isRunning={!!isRunning}
+            run={activeRun}
+            agentConfigs={agentConfigs}
+            providerConfigs={providerConfigs}
+            labelHistory={labelHistory}
+            onRetry={needsHuman ? handleRetryEscalation : canRerun ? handleRerun : undefined}
+            onReply={needsHuman ? focusReply : undefined}
+            onOpenDiff={() => setActiveTab('diff')}
+          />
         )}
 
         {/* Diff tab */}

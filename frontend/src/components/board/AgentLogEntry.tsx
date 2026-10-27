@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { resultView, type LogRow } from '../../lib/groupAgentLog'
+import { truncateOutput } from '../../lib/runTimeline'
 import type { LogSeverity } from '../../lib/logEvents'
 
 interface Props {
@@ -47,9 +48,21 @@ function Timestamp({ ts }: { ts: string | null }) {
 // Output revealed by a row's disclosure. Rendered once — the collapsed row never
 // carries a slice of this text.
 function OutputBlock({ text }: { text: string }) {
+  const [showAll, setShowAll] = useState(false)
+  const { head, truncated, hiddenLines } = truncateOutput(text)
+  const shown = truncated && !showAll ? head : text
   return (
     <div className="ml-6 mt-1 p-2 rounded bg-slate-900 border border-slate-700 text-xs text-slate-300 font-mono whitespace-pre-wrap break-words max-h-96 overflow-y-auto">
-      {text}
+      {shown}
+      {truncated && (
+        <button
+          type="button"
+          className="block mt-1 font-sans text-indigo-400 hover:text-indigo-300 underline"
+          onClick={() => setShowAll((v) => !v)}
+        >
+          {showAll ? 'Show less' : hiddenLines > 0 ? `Show more (${hiddenLines} more lines)` : 'Show more'}
+        </button>
+      )}
     </div>
   )
 }

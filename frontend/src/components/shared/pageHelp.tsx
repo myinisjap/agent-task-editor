@@ -680,8 +680,10 @@ export function TaskDetailHelp() {
         <p>
           <strong>Overview</strong> — title/description, metadata (label, type, branch, git
           state, PR link, priority, cost budget), attachments, run history, label history,
-          subtasks, and dependencies. <strong>Logs</strong> — the live/replayed stream-json
-          output of a selected run, including its tool calls. <strong>Diff</strong> — the
+          subtasks, and dependencies. <strong>Logs</strong> — a summary of the selected run
+          (outcome and why, agent/model, duration, cost, files changed, commands and tests)
+          followed by its steps grouped into collapsible sections, ending with the next step.
+          Turn on Debug to see every raw event. <strong>Diff</strong> — the
           in-flight or last run's file diff, with inline review comments.
         </p>
       </section>

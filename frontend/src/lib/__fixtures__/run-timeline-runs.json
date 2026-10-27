@@ -1,0 +1,366 @@
+{
+  "success": {
+    "run": {
+      "agent_config_id": "agent-1",
+      "provider_config_id": "prov-1",
+      "created_at": "2024-01-01T10:00:00Z",
+      "id": "run-success",
+      "status": "completed",
+      "cost_usd": 0.42,
+      "cost_unknown": false,
+      "started_at": "2024-01-01T10:00:00Z",
+      "completed_at": "2024-01-01T10:03:12Z"
+    },
+    "logs": [
+      {
+        "id": "l001",
+        "agent_run_id": "run-success",
+        "timestamp": "2023-11-14T22:13:21.000Z",
+        "seq": 1,
+        "type": "system",
+        "content": "{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"claude-opus-4\",\"tools\":[\"Read\",\"Edit\",\"Bash\"],\"session_id\":\"s1\"}"
+      },
+      {
+        "id": "l002",
+        "agent_run_id": "run-success",
+        "timestamp": "2023-11-14T22:13:22.000Z",
+        "seq": 2,
+        "type": "stdout",
+        "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"I will read the API module, then fix it.\"}]}}"
+      },
+      {
+        "id": "l003",
+        "agent_run_id": "run-success",
+        "timestamp": "2023-11-14T22:13:23.000Z",
+        "seq": 3,
+        "type": "tool_call",
+        "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"r1\",\"name\":\"Read\",\"input\":{\"file_path\":\"/repo/src/api/tasks.js\"}}]}}"
+      },
+      {
+        "id": "l004",
+        "agent_run_id": "run-success",
+        "timestamp": "2023-11-14T22:13:24.000Z",
+        "seq": 4,
+        "type": "tool_result",
+        "content": "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"r1\",\"content\":\"export const x = 1\"}]}}"
+      },
+      {
+        "id": "l005",
+        "agent_run_id": "run-success",
+        "timestamp": "2023-11-14T22:13:25.000Z",
+        "seq": 5,
+        "type": "tool_call",
+        "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"r2\",\"name\":\"Read\",\"input\":{\"file_path\":\"/repo/src/api/client.ts\"}}]}}"
+      },
+      {
+        "id": "l006",
+        "agent_run_id": "run-success",
+        "timestamp": "2023-11-14T22:13:26.000Z",
+        "seq": 6,
+        "type": "tool_result",
+        "content": "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"r2\",\"content\":\"export const y = 2\"}]}}"
+      },
+      {
+        "id": "l007",
+        "agent_run_id": "run-success",
+        "timestamp": "2023-11-14T22:13:27.000Z",
+        "seq": 7,
+        "type": "tool_call",
+        "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"e1\",\"name\":\"Edit\",\"input\":{\"file_path\":\"/repo/src/api/tasks.js\",\"old_string\":\"a\",\"new_string\":\"b\"}}]}}"
+      },
+      {
+        "id": "l008",
+        "agent_run_id": "run-success",
+        "timestamp": "2023-11-14T22:13:28.000Z",
+        "seq": 8,
+        "type": "tool_result",
+        "content": "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"e1\",\"content\":\"ok\"}]}}"
+      },
+      {
+        "id": "l009",
+        "agent_run_id": "run-success",
+        "timestamp": "2023-11-14T22:13:29.000Z",
+        "seq": 9,
+        "type": "tool_call",
+        "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"e2\",\"name\":\"Edit\",\"input\":{\"file_path\":\"/repo/src/api/tasks.js\",\"old_string\":\"c\",\"new_string\":\"d\"}}]}}"
+      },
+      {
+        "id": "l010",
+        "agent_run_id": "run-success",
+        "timestamp": "2023-11-14T22:13:30.000Z",
+        "seq": 10,
+        "type": "tool_result",
+        "content": "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"e2\",\"content\":\"ok\"}]}}"
+      },
+      {
+        "id": "l011",
+        "agent_run_id": "run-success",
+        "timestamp": "2023-11-14T22:13:31.000Z",
+        "seq": 11,
+        "type": "tool_call",
+        "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"e3\",\"name\":\"Edit\",\"input\":{\"file_path\":\"/repo/src/api/api.ts\",\"old_string\":\"c\",\"new_string\":\"d\"}}]}}"
+      },
+      {
+        "id": "l012",
+        "agent_run_id": "run-success",
+        "timestamp": "2023-11-14T22:13:32.000Z",
+        "seq": 12,
+        "type": "tool_result",
+        "content": "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"e3\",\"content\":\"ok\"}]}}"
+      },
+      {
+        "id": "l013",
+        "agent_run_id": "run-success",
+        "timestamp": "2023-11-14T22:13:33.000Z",
+        "seq": 13,
+        "type": "tool_call",
+        "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"b1\",\"name\":\"Bash\",\"input\":{\"command\":\"npm test\"}}]}}"
+      },
+      {
+        "id": "l014",
+        "agent_run_id": "run-success",
+        "timestamp": "2023-11-14T22:13:34.000Z",
+        "seq": 14,
+        "type": "tool_result",
+        "content": "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"b1\",\"content\":\"Tests 5 passed\"}]}}"
+      },
+      {
+        "id": "l015",
+        "agent_run_id": "run-success",
+        "timestamp": "2023-11-14T22:13:35.000Z",
+        "seq": 15,
+        "type": "system",
+        "content": "{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"All done\"}"
+      }
+    ]
+  },
+  "test_failure": {
+    "run": {
+      "agent_config_id": "agent-1",
+      "provider_config_id": "prov-1",
+      "created_at": "2024-01-01T10:00:00Z",
+      "id": "run-fail",
+      "status": "failed",
+      "cost_usd": 0.1,
+      "started_at": "2024-01-01T10:00:00Z",
+      "completed_at": "2024-01-01T10:01:00Z",
+      "notes": "fallback note\nmore"
+    },
+    "logs": [
+      {
+        "id": "l016",
+        "agent_run_id": "run-fail",
+        "timestamp": "2023-11-14T22:13:36.000Z",
+        "seq": 16,
+        "type": "system",
+        "content": "{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"claude-opus-4\",\"tools\":[\"Read\",\"Edit\",\"Bash\"],\"session_id\":\"s1\"}"
+      },
+      {
+        "id": "l017",
+        "agent_run_id": "run-fail",
+        "timestamp": "2023-11-14T22:13:37.000Z",
+        "seq": 17,
+        "type": "tool_call",
+        "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"b1\",\"name\":\"Bash\",\"input\":{\"command\":\"npm test\"}}]}}"
+      },
+      {
+        "id": "l018",
+        "agent_run_id": "run-fail",
+        "timestamp": "2023-11-14T22:13:38.000Z",
+        "seq": 18,
+        "type": "tool_result",
+        "content": "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"b1\",\"is_error\":true,\"content\":\"Exit code 1\\nFAIL src/a.test.ts\\n  expected 1 to be 2\"}]}}"
+      },
+      {
+        "id": "l019",
+        "agent_run_id": "run-fail",
+        "timestamp": "2023-11-14T22:13:39.000Z",
+        "seq": 19,
+        "type": "tool_call",
+        "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"b2\",\"name\":\"Bash\",\"input\":{\"command\":\"ls src\"}}]}}"
+      },
+      {
+        "id": "l020",
+        "agent_run_id": "run-fail",
+        "timestamp": "2023-11-14T22:13:40.000Z",
+        "seq": 20,
+        "type": "tool_result",
+        "content": "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"b2\",\"content\":\"a.ts\"}]}}"
+      },
+      {
+        "id": "l021",
+        "agent_run_id": "run-fail",
+        "timestamp": "2023-11-14T22:13:41.000Z",
+        "seq": 21,
+        "type": "system",
+        "content": "Run failed: claude exited with an error (it had reported \"success\")"
+      }
+    ]
+  },
+  "escalated": {
+    "run": {
+      "agent_config_id": "agent-1",
+      "provider_config_id": "prov-1",
+      "created_at": "2024-01-01T10:00:00Z",
+      "id": "run-wait",
+      "status": "waiting_human",
+      "escalation_reason": "agent_question",
+      "feedback": "Which database should I use?\nPostgres or SQLite",
+      "started_at": "2024-01-01T10:00:00Z",
+      "completed_at": "2024-01-01T10:00:30Z"
+    },
+    "logs": [
+      {
+        "id": "l022",
+        "agent_run_id": "run-wait",
+        "timestamp": "2023-11-14T22:13:42.000Z",
+        "seq": 22,
+        "type": "system",
+        "content": "{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"claude-opus-4\",\"tools\":[\"Read\",\"Edit\",\"Bash\"],\"session_id\":\"s1\"}"
+      },
+      {
+        "id": "l023",
+        "agent_run_id": "run-wait",
+        "timestamp": "2023-11-14T22:13:43.000Z",
+        "seq": 23,
+        "type": "tool_call",
+        "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"h1\",\"name\":\"mcp__task-editor__request_human\",\"input\":{\"message\":\"Which database should I use?\"}}]}}"
+      }
+    ]
+  },
+  "auth_required": {
+    "run": {
+      "agent_config_id": "agent-1",
+      "provider_config_id": "prov-1",
+      "created_at": "2024-01-01T10:00:00Z",
+      "id": "run-wait",
+      "status": "waiting_human",
+      "escalation_reason": "auth_required",
+      "started_at": "2024-01-01T10:00:00Z",
+      "completed_at": "2024-01-01T10:00:05Z"
+    },
+    "logs": []
+  },
+  "live": {
+    "run": {
+      "agent_config_id": "agent-1",
+      "provider_config_id": "prov-1",
+      "created_at": "2024-01-01T10:00:00Z",
+      "id": "run-live",
+      "status": "running",
+      "started_at": "2024-01-01T10:00:00Z"
+    },
+    "logs": [
+      {
+        "id": "l024",
+        "agent_run_id": "run-live",
+        "timestamp": "2023-11-14T22:13:44.000Z",
+        "seq": 24,
+        "type": "system",
+        "content": "{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"claude-opus-4\",\"tools\":[\"Read\",\"Edit\",\"Bash\"],\"session_id\":\"s1\"}"
+      },
+      {
+        "id": "l025",
+        "agent_run_id": "run-live",
+        "timestamp": "2023-11-14T22:13:45.000Z",
+        "seq": 25,
+        "type": "stdout",
+        "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Working on it\"}]}}"
+      },
+      {
+        "id": "l026",
+        "agent_run_id": "run-live",
+        "timestamp": "2023-11-14T22:13:46.000Z",
+        "seq": 26,
+        "type": "tool_call",
+        "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"r1\",\"name\":\"Read\",\"input\":{\"file_path\":\"/repo/src/api/tasks.js\"}}]}}"
+      },
+      {
+        "id": "l027",
+        "agent_run_id": "run-live",
+        "timestamp": "2023-11-14T22:13:47.000Z",
+        "seq": 27,
+        "type": "tool_result",
+        "content": "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"r1\",\"content\":\"x\"}]}}"
+      },
+      {
+        "id": "l028",
+        "agent_run_id": "run-live",
+        "timestamp": "2023-11-14T22:13:48.000Z",
+        "seq": 28,
+        "type": "tool_call",
+        "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"e1\",\"name\":\"Edit\",\"input\":{\"file_path\":\"/repo/src/api/tasks.js\",\"old_string\":\"a\",\"new_string\":\"b\"}}]}}"
+      }
+    ]
+  },
+  "live_test": {
+    "run": {
+      "agent_config_id": "agent-1",
+      "provider_config_id": "prov-1",
+      "created_at": "2024-01-01T10:00:00Z",
+      "id": "run-live2",
+      "status": "running",
+      "started_at": "2024-01-01T10:00:00Z"
+    },
+    "logs": [
+      {
+        "id": "l029",
+        "agent_run_id": "run-live2",
+        "timestamp": "2023-11-14T22:13:49.000Z",
+        "seq": 29,
+        "type": "system",
+        "content": "{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"claude-opus-4\",\"tools\":[\"Read\",\"Edit\",\"Bash\"],\"session_id\":\"s1\"}"
+      },
+      {
+        "id": "l030",
+        "agent_run_id": "run-live2",
+        "timestamp": "2023-11-14T22:13:50.000Z",
+        "seq": 30,
+        "type": "tool_call",
+        "content": "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"b1\",\"name\":\"Bash\",\"input\":{\"command\":\"npm test\"}}]}}"
+      }
+    ]
+  },
+  "label_history": [
+    {
+      "id": "h0",
+      "task_id": "t1",
+      "from_label": null,
+      "to_label": "todo",
+      "trigger": "agent",
+      "actor_id": null,
+      "note": null,
+      "created_at": "2024-01-01T09:00:00Z"
+    },
+    {
+      "id": "h1",
+      "task_id": "t1",
+      "from_label": "todo",
+      "to_label": "in-progress",
+      "trigger": "agent",
+      "actor_id": null,
+      "note": null,
+      "created_at": "2024-01-01T09:10:00Z"
+    },
+    {
+      "id": "h2",
+      "task_id": "t1",
+      "from_label": "in-progress",
+      "to_label": "review",
+      "trigger": "agent",
+      "actor_id": null,
+      "note": null,
+      "created_at": "2024-01-01T09:50:00Z"
+    },
+    {
+      "id": "h3",
+      "task_id": "t1",
+      "from_label": "review",
+      "to_label": "in-progress",
+      "trigger": "agent",
+      "actor_id": null,
+      "note": null,
+      "created_at": "2024-01-01T10:30:00Z"
+    }
+  ]
+}

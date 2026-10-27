@@ -21,6 +21,7 @@ triggers the "Release" workflow the same way.
 
 ### Changed
 
+- **Run timeline in the Logs tab.** Each run starts with a summary card (outcome and why, agent and provider/model, duration, cost, files changed, commands and tests with pass/fail, rework loop; a live run shows its current step), followed by steps grouped into collapsible sections (files read, edits, shell commands with exit codes, tests, messages to/from you, errors), with long output truncated behind "Show more" and a closing "Next step" line (Reply / Retry / Open Health…). Debug still shows every raw event.
 - **Readable run logs.** System events in the Logs tab now carry a severity (errors red, warnings amber, info neutral). Internal events (CLI pid, effort, UI invalidate, unknown CLI bookkeeping) only show with Debug on. Log entries get a monotonic `seq` (migration 081, on `AgentLog` and the `agent.log`/replay WebSocket entries) so same-second entries keep their real order (a failure no longer appears above "Session started"). The exit-error/outcome conflict line now reads "Run failed: <cli> exited with an error (it had reported "success")". Escalations in Inbox, Dashboard and Task Detail show a one-line explanation and next step for every reason.
 
 
