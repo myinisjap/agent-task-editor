@@ -19,6 +19,7 @@ Loads server configuration from a YAML file (path from `CONFIG_FILE` env var) wi
 | `MaxWorkers` | `MAX_WORKERS` | `max_workers` | `5` |
 | `RepoBaseDir` | `REPO_BASE_DIR` | `repo_base_dir` | _(empty)_ |
 | `UploadDir` | `UPLOAD_DIR` | `upload_dir` | `uploads` (next to DB) |
+| `SkillsDir` | `SKILLS_DIR` | `skills_dir` | `skills` (next to DB) |
 | `GitHubWebhookSecret` | `GITHUB_WEBHOOK_SECRET` | `github_webhook_secret` | _(empty = webhook disabled)_ |
 | `GitHubSyncInterval` | `GITHUB_SYNC_INTERVAL` | `github_sync_interval` | `30s` |
 | `IssueSyncInterval` | `ISSUE_SYNC_INTERVAL` | `issue_sync_interval` | `60s` |
