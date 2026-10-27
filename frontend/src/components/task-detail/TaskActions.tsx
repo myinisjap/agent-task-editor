@@ -118,6 +118,7 @@ export default function TaskActions({
       {needsHuman && (
         <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-start mb-3">
           <textarea
+            id="task-reply-input"
             value={replyText}
             onChange={(e) => setReplyText(e.target.value)}
             placeholder="Reply to the agent — answer its question and it continues in the same session, without moving the task…"

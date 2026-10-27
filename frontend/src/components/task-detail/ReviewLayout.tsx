@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
-import type { AgentConfig, AgentRun, ProviderConfig, Task } from '../../api/client'
+import type { AgentConfig, AgentRun, ProviderConfig, Task, TaskLabelHistoryEntry } from '../../api/client'
 import type { DiffComment } from '../../lib/diffComments'
 import HelpButton from '../shared/HelpButton'
 import DiffReviewPane from './DiffReviewPane'
@@ -21,7 +21,7 @@ export default function ReviewLayout({
   isRunning, canRerun, onStop, onRerun, canApprove, canReject, approveLabel, onApprove,
   rejectNote, setRejectNote, onReject, openCommentsCount, actionError, actionPending,
   diffComments, onAddComment, onRemoveComment, onReopenComment, onCreatePR, creatingPR,
-  verificationKey, briefKey, mode, onBack, onHelp, details, variant = 'desktop',
+  verificationKey, briefKey, mode, onBack, onHelp, details, labelHistory, variant = 'desktop',
 }: {
   task: Task
   repoName?: string
@@ -56,6 +56,7 @@ export default function ReviewLayout({
   onBack: () => void
   onHelp?: () => void
   details: ReactNode
+  labelHistory?: TaskLabelHistoryEntry[]
   variant?: 'desktop' | 'tablet' | 'phone'
 }) {
   const defaultTab: MainTab = mode === 'plan' ? 'plan' : 'diff'
@@ -253,11 +254,22 @@ export default function ReviewLayout({
             previewRefreshKey={briefKey}
           />
         )}
-        {tab === 'logs' && (
-          stacked
-            ? <div className="h-[70vh]"><RunLogPane taskId={task.id} runId={selectedRun} isRunning={isRunning} /></div>
-            : <RunLogPane taskId={task.id} runId={selectedRun} isRunning={isRunning} />
-        )}
+        {tab === 'logs' && (() => {
+          const pane = (
+            <RunLogPane
+              taskId={task.id}
+              runId={selectedRun}
+              isRunning={isRunning}
+              run={runs.find((r) => r.id === selectedRun)}
+              agentConfigs={agentConfigs}
+              providerConfigs={providerConfigs}
+              labelHistory={labelHistory}
+              onRetry={canRerun ? onRerun : undefined}
+              onOpenDiff={() => setTab('diff')}
+            />
+          )
+          return stacked ? <div className="h-[70vh]">{pane}</div> : pane
+        })()}
         {tab === 'details' && (
           <div className={`${stacked ? '' : 'h-full overflow-y-auto'} overflow-x-hidden p-5 flex flex-col gap-4 min-w-0`}>{detailsPane}</div>
         )}
