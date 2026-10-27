@@ -87,7 +87,7 @@ export default function InboxPreview(p: InboxPreviewProps) {
         </>
       )
       const approveBtn = a.approve && (
-        <button aria-label="Approve" disabled={busy} onClick={p.onApprove} className={`${BTN} bg-emerald-600 hover:bg-emerald-500`}>
+        <button aria-label="Approve" title="Approve (A)" disabled={busy} onClick={p.onApprove} className={`${BTN} bg-emerald-600 hover:bg-emerald-500`}>
           Approve<kbd className={KBD}>a</kbd>
         </button>
       )
@@ -100,7 +100,7 @@ export default function InboxPreview(p: InboxPreviewProps) {
               {approveBtn}
               {a.requestChanges && (
                 <button
-                  aria-label="Request changes"
+                  aria-label="Request changes" title="Request changes (R)"
                   disabled={busy}
                   onClick={() => p.setNoteOpen(!p.noteOpen)}
                   className={`${BTN} bg-red-700 hover:bg-red-600`}

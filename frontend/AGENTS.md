@@ -30,7 +30,7 @@ src/
 │   ├── inbox/         DecisionContext (Decide row summary), InboxPreview (desktop right-pane preview)
 │   ├── lessons/       LessonForm, LessonsPanel (repo/global lessons), RememberLessonModal
 │   ├── skills/        SkillPicker (chip multi-select for agent/repo skills)
-│   └── shared/        ApiTokenGate, GitHubAuthWarning, NavSidebar, Toast, WorkflowFlowchart
+│   └── shared/        ApiTokenGate, GitHubAuthWarning, NavSidebar, Toast, CommandPalette, CommandHost, ShortcutSheet (Cmd/Ctrl+K palette, global shortcuts host, shortcut sheet), WorkflowFlowchart
 ├── pages/
 │   ├── BoardPage.tsx        Main Kanban board
 │   ├── TaskDetailPage.tsx   Task detail + live agent log stream
@@ -45,6 +45,7 @@ src/
 │   ├── agents.ts     Agent config state
 │   ├── providerConfigs.ts Provider config state (provider/model/env)
 │   ├── repos.ts      Repo list state
+│   ├── commandPalette.ts Command palette / shortcut sheet / global new-task open state and the open task's palette commands
 │   ├── theme.ts      Dark/light theme state (persisted, syncs root class)
 │   ├── notifications.ts Browser-notification opt-in + permission state (persisted; default off)
 │   └── workflow.ts   Workflow + label state
@@ -57,7 +58,9 @@ src/
 │   ├── condensedBoard.ts    Groups workflow labels into condensed/agent-group board columns
 │   ├── diffComments.ts      Maps API review-comment wire type to the diff viewer's view model
 │   ├── useIsMobile.ts       Hook for responsive breakpoint detection
-│   ├── inboxKeys.ts         Inbox keyboard map (j/k, a, r, Enter/o, Esc, ?) + `useInboxKeyboard` hook; ignores typing targets and modifiers
+│   ├── inboxKeys.ts         Inbox keyboard map (j/k, a, r, Enter/o, Esc) + `useInboxKeyboard` hook; ignores typing targets and modifiers
+│   ├── shortcuts.ts         Shortcut registry (`SHORTCUTS`, `PAGES`), `formatKeys`/`shortcutHint`, pure `globalShortcutAction` matcher and `useGlobalShortcuts` hook (Cmd/Ctrl+K, `c`, `g i/b/p/s`, `/`, `?`)
+│   ├── taskCommands.ts      `buildTaskCommands`: palette actions for the open task (legal moves, approve/reject, rerun, PR, pause, archive)
 │   ├── useMediaQuery.ts     useMediaQuery(q) / useIsWideDesktop() (≥1280px) / useIsPhone() (<768px) — pick the Task Detail review layout variant
 │   ├── useKeyboardInset.ts  Hook: height of the on-screen keyboard overlapping the layout viewport
 │   ├── termKeys.ts          Mobile terminal key-bar sequences + Ctrl-modifier folding

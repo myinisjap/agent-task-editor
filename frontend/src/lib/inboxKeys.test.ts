@@ -15,7 +15,7 @@ describe('inboxKeyAction', () => {
     expect(inboxKeyAction(ev('Enter'))).toBe('open')
     expect(inboxKeyAction(ev('o'))).toBe('open')
     expect(inboxKeyAction(ev('Escape'))).toBe('escape')
-    expect(inboxKeyAction(ev('?'))).toBe('help')
+    expect(inboxKeyAction(ev('?'))).toBeNull()
     expect(inboxKeyAction(ev('x'))).toBeNull()
   })
 

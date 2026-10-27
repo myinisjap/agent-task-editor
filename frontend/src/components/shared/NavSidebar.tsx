@@ -9,6 +9,8 @@ import type { WSStatus } from '../../api/ws'
 import { useNeedsMeSync } from '../../lib/useNeedsMeSync'
 import { useInboxSync } from '../../lib/useInboxSync'
 import { useInboxCount } from '../../stores/inbox'
+import { useCommandPaletteStore } from '../../stores/commandPalette'
+import { shortcutHint, shortcutKeys, formatKeys, isMacPlatform } from '../../lib/shortcuts'
 
 interface NavGroup {
   key: string
@@ -28,6 +30,8 @@ const primaryLinks = [
   { to: '/repos', label: 'Repos' },
   { to: '/settings', label: 'Settings' },
 ]
+
+const NAV_SHORTCUT: Record<string, string> = { '/board': 'go-board', '/pipeline': 'go-pipeline', '/settings': 'go-settings' }
 
 const groups: NavGroup[] = [
   {
@@ -177,8 +181,17 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
             bottom via mt-auto even when expanded groups overflow a short
             viewport. */}
         <div className="flex flex-col gap-1 overflow-y-auto min-h-0">
+          <button
+            type="button"
+            onClick={() => { setIsOpen(false); useCommandPaletteStore.getState().setOpen(true) }}
+            className="flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
+          >
+            <span>Search and commands</span>
+            <kbd className="hidden [@media(hover:hover)]:inline text-xs text-slate-500">{formatKeys(shortcutKeys("palette") ?? [], isMacPlatform())}</kbd>
+          </button>
           <NavLink
             to={inboxLink.to}
+            title={shortcutHint("go-inbox", "Inbox")}
             onClick={() => setIsOpen(false)}
             className={linkClassName}
           >
@@ -198,6 +211,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
             <NavLink
               key={to}
               to={to}
+              title={NAV_SHORTCUT[to] ? shortcutHint(NAV_SHORTCUT[to], label) : undefined}
               onClick={() => setIsOpen(false)}
               className={linkClassName}
             >

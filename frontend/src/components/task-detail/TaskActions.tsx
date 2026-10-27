@@ -147,6 +147,7 @@ export default function TaskActions({
         <textarea
           value={rejectNote}
           onChange={(e) => setRejectNote(e.target.value)}
+          data-reject-note
           placeholder={
             openCommentsCount > 0
               ? 'Additional rejection note (optional — open inline comments reach the agent automatically)…'
