@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Button, PageFrame } from '../components/ui'
+import { Button, PageFrame, controlClasses } from '../components/ui'
 import { api, type Repo, type Skill, type RuntimeLanguagePin, type Workflow } from '../api/client'
 import SkillPicker from '../components/skills/SkillPicker'
 import LessonsPanel from '../components/lessons/LessonsPanel'
@@ -359,8 +359,7 @@ export default function ReposPage() {
     setRepos((r) => r.filter((x) => x.id !== repo.id))
   }
 
-  const inputCls =
-    'bg-surface-sunken border border-border rounded-lg px-3 py-2 text-sm text-fg placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500'
+  const inputCls = controlClasses
 
   // Renders the "Verification" section shared by the create and edit forms.
   function renderVerifySection(opts: {
@@ -766,7 +765,7 @@ export default function ReposPage() {
             <button
               type="submit"
               disabled={saving || (!form.name.trim() && !form.remote_url.trim()) || (!form.path.trim() && !form.remote_url.trim())}
-              className="px-4 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+              className="px-4 py-1.5 text-sm bg-accent hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed text-on-accent rounded-lg transition-colors"
             >
               {saving ? 'Adding…' : 'Add Repo'}
             </button>
@@ -1085,7 +1084,7 @@ export default function ReposPage() {
                     <button
                       type="submit"
                       disabled={editSaving || !editForm.name.trim() || !editForm.path.trim()}
-                      className="px-4 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                      className="px-4 py-1.5 text-sm bg-accent hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed text-on-accent rounded-lg transition-colors"
                     >
                       {editSaving ? 'Saving…' : 'Save'}
                     </button>

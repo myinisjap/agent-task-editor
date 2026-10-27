@@ -404,7 +404,7 @@ export default function BoardPage() {
     }
   }
 
-  const selectCls = 'bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer'
+  const selectCls = 'bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-300 focus:outline-none focus:ring-1 focus:ring-accent cursor-pointer'
 
   return (
     <div className="p-6 h-full flex flex-col">
@@ -472,7 +472,7 @@ export default function BoardPage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search tasks…"
-          className="bg-slate-800 border border-slate-700 rounded px-2.5 py-1 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 w-48"
+          className="bg-slate-800 border border-slate-700 rounded px-2.5 py-1 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-accent w-48"
         />
         <select value={filterRepo} onChange={(e) => setFilterRepo(e.target.value)} className={selectCls}>
           <option value="">All repos</option>

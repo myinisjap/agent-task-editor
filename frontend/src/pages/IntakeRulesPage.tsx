@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Button, PageFrame } from '../components/ui'
 import {
   api,
   type IntakeRule,
@@ -9,12 +10,11 @@ import {
   type Workflow,
 } from '../api/client'
 import HelpModal from '../components/shared/HelpModal'
-import HelpButton from '../components/shared/HelpButton'
 import { IntakeRulesHelp } from '../components/shared/pageHelp'
 import IntakeEndpointsSection from '../components/settings/IntakeEndpointsSection'
 
 export const inputCls =
-  'bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500'
+  'bg-surface-sunken border border-border rounded-lg px-3 py-2 text-sm text-fg placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-accent'
 
 // TRUSTED_ASSOCIATIONS mirrors internal/intake.TrustedAssociations — the
 // only author associations that let a rule target a non-agent_ignore
@@ -309,7 +309,7 @@ export default function IntakeRulesPage() {
     return (
       <div className="flex flex-wrap gap-3">
         {ALL_ASSOCIATIONS.map((a) => (
-          <label key={a} className="flex items-center gap-1.5 text-xs text-slate-300">
+          <label key={a} className="flex items-center gap-1.5 text-xs text-fg-muted">
             <input
               type="checkbox"
               checked={f.match_author_assoc.includes(a)}
@@ -324,7 +324,7 @@ export default function IntakeRulesPage() {
             />
             {a}
             {!(TRUSTED_ASSOCIATIONS as readonly string[]).includes(a) && (
-              <span className="text-slate-600">(untrusted)</span>
+              <span className="text-fg-subtle">(untrusted)</span>
             )}
           </label>
         ))}
@@ -340,7 +340,7 @@ export default function IntakeRulesPage() {
       <div className="flex flex-col gap-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400">Name</label>
+            <label className="text-xs font-medium text-fg-muted">Name</label>
             <input
               value={f.name}
               onChange={(e) => setF((p) => ({ ...p, name: e.target.value }))}
@@ -349,7 +349,7 @@ export default function IntakeRulesPage() {
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400">Source</label>
+            <label className="text-xs font-medium text-fg-muted">Source</label>
             <select
               value={f.match_source}
               onChange={(e) => setF((p) => ({ ...p, match_source: e.target.value as RuleForm['match_source'] }))}
@@ -363,7 +363,7 @@ export default function IntakeRulesPage() {
             </select>
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400">Repo</label>
+            <label className="text-xs font-medium text-fg-muted">Repo</label>
             <select
               value={f.match_repo_id}
               onChange={(e) => setF((p) => ({ ...p, match_repo_id: e.target.value }))}
@@ -378,7 +378,7 @@ export default function IntakeRulesPage() {
             </select>
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400">Match labels (comma-separated, any-of)</label>
+            <label className="text-xs font-medium text-fg-muted">Match labels (comma-separated, any-of)</label>
             <input
               value={f.match_labels}
               onChange={(e) => setF((p) => ({ ...p, match_labels: e.target.value }))}
@@ -387,7 +387,7 @@ export default function IntakeRulesPage() {
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400">Title pattern (Go regexp)</label>
+            <label className="text-xs font-medium text-fg-muted">Title pattern (Go regexp)</label>
             <input
               value={f.match_title_pattern}
               onChange={(e) => setF((p) => ({ ...p, match_title_pattern: e.target.value }))}
@@ -396,7 +396,7 @@ export default function IntakeRulesPage() {
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400">Body pattern (Go regexp)</label>
+            <label className="text-xs font-medium text-fg-muted">Body pattern (Go regexp)</label>
             <input
               value={f.match_body_pattern}
               onChange={(e) => setF((p) => ({ ...p, match_body_pattern: e.target.value }))}
@@ -406,13 +406,13 @@ export default function IntakeRulesPage() {
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-medium text-slate-400">Author association (required to auto-start)</label>
+          <label className="text-xs font-medium text-fg-muted">Author association (required to auto-start)</label>
           {renderAssocCheckboxes(f, setF)}
         </div>
 
-        <div className="border-t border-slate-800 pt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="border-t border-border pt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400">Apply template</label>
+            <label className="text-xs font-medium text-fg-muted">Apply template</label>
             <select
               value={f.apply_template_id}
               onChange={(e) => setF((p) => ({ ...p, apply_template_id: e.target.value }))}
@@ -427,14 +427,14 @@ export default function IntakeRulesPage() {
               ))}
             </select>
             {templateDisabledForSchedule && (
-              <p className="text-[11px] text-slate-500">
+              <p className="text-[11px] text-fg-subtle">
                 Not available for schedule rules — scheduled tasks are always shaped from the schedule's own
                 template.
               </p>
             )}
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400">Priority</label>
+            <label className="text-xs font-medium text-fg-muted">Priority</label>
             <select
               value={f.apply_priority}
               onChange={(e) => setF((p) => ({ ...p, apply_priority: e.target.value }))}
@@ -449,7 +449,7 @@ export default function IntakeRulesPage() {
             </select>
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400">Target label</label>
+            <label className="text-xs font-medium text-fg-muted">Target label</label>
             <input
               value={f.apply_target_label}
               onChange={(e) => setF((p) => ({ ...p, apply_target_label: e.target.value }))}
@@ -464,7 +464,7 @@ export default function IntakeRulesPage() {
             </datalist>
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400">Workflow override</label>
+            <label className="text-xs font-medium text-fg-muted">Workflow override</label>
             <select
               value={f.apply_workflow_id}
               onChange={(e) => setF((p) => ({ ...p, apply_workflow_id: e.target.value }))}
@@ -479,7 +479,7 @@ export default function IntakeRulesPage() {
             </select>
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400">Max cost (USD)</label>
+            <label className="text-xs font-medium text-fg-muted">Max cost (USD)</label>
             <input
               type="number"
               min="0"
@@ -491,7 +491,7 @@ export default function IntakeRulesPage() {
             />
           </div>
           <div className="flex items-end">
-            <label className="flex items-center gap-2 text-xs text-slate-300">
+            <label className="flex items-center gap-2 text-xs text-fg-muted">
               <input
                 type="checkbox"
                 checked={f.enabled}
@@ -503,7 +503,7 @@ export default function IntakeRulesPage() {
         </div>
 
         {unsafe && (
-          <div className="rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2.5 text-xs text-amber-300">
+          <div className="rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2.5 text-xs text-warning">
             <strong>Auto-start warning:</strong> this target label is not the workflow's human-review gate, so a
             matching task skips the human promotion step that protects against untrusted imported issue content.
             Restrict "Author association" above to OWNER / MEMBER / COLLABORATOR before this rule can be saved, or
@@ -512,7 +512,7 @@ export default function IntakeRulesPage() {
         )}
 
         {templateWarn && (
-          <div className="rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2.5 text-xs text-amber-300">
+          <div className="rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2.5 text-xs text-warning">
             <strong>No effect:</strong> "Apply template" has no effect for schedule rules — scheduled tasks are
             always shaped from the schedule's own template. Set "Apply template" to None to save this rule, or
             change Source to Issue import to shape imported issues with a template instead.
@@ -523,19 +523,11 @@ export default function IntakeRulesPage() {
   }
 
   return (
-    <div className="p-6 max-w-4xl">
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-2">
-          <h1 className="text-xl font-semibold text-slate-100">Intake Routing Rules</h1>
-          <HelpButton onClick={() => setShowHelp(true)} title="About intake rules" />
-        </div>
-        <button
-          onClick={() => setShowForm((v) => !v)}
-          className="px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg transition-colors"
-        >
-          {showForm ? 'Cancel' : '+ Add Rule'}
-        </button>
-      </div>
+    <PageFrame
+      title="Intake Routing Rules"
+      help={{ onClick: () => setShowHelp(true), title: 'About intake rules' }}
+      actions={<Button variant="primary" onClick={() => setShowForm((v) => !v)}>{showForm ? 'Cancel' : '+ Add Rule'}</Button>}
+    >
 
       {showHelp && (
         <HelpModal title="About Intake Routing Rules" onClose={() => setShowHelp(false)}>
@@ -546,24 +538,24 @@ export default function IntakeRulesPage() {
       {showForm && (
         <form
           onSubmit={handleCreate}
-          className="mb-6 bg-slate-900 border border-slate-700 rounded-xl p-5 flex flex-col gap-4"
+          className="mb-6 bg-surface-raised border border-border rounded-xl p-5 flex flex-col gap-4"
         >
-          <h2 className="text-sm font-semibold text-slate-200">New Rule</h2>
+          <h2 className="text-sm font-semibold text-fg">New Rule</h2>
           {renderFormFields(form, setForm, 'new')}
-          {formError && <p className="text-xs text-red-400">{formError}</p>}
+          {formError && <p className="text-xs text-danger">{formError}</p>}
           <div className="flex items-center justify-between">
             <button
               type="button"
               onClick={() => runPreview('new', form)}
               disabled={previewLoading}
-              className="px-3 py-1.5 text-xs text-slate-300 hover:text-indigo-400 border border-slate-700 rounded-lg transition-colors disabled:opacity-50"
+              className="px-3 py-1.5 text-xs text-fg-muted hover:text-accent-fg border border-border rounded-lg transition-colors disabled:opacity-50"
             >
               {previewLoading && previewFor === 'new' ? 'Previewing…' : 'Preview matches'}
             </button>
             <button
               type="submit"
               disabled={saving || !form.name.trim() || autoStartUnsafe(form) || templateNoOpForSchedule(form)}
-              className="px-4 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+              className="px-4 py-1.5 text-sm bg-accent hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed text-on-accent rounded-lg transition-colors"
             >
               {saving ? 'Adding…' : 'Add Rule'}
             </button>
@@ -575,23 +567,23 @@ export default function IntakeRulesPage() {
       )}
 
       {loading ? (
-        <div className="text-slate-400 text-sm">Loading…</div>
+        <div className="text-fg-muted text-sm">Loading…</div>
       ) : error && rules.length === 0 ? (
-        <div className="text-red-400 text-sm">{error}</div>
+        <div className="text-danger text-sm">{error}</div>
       ) : rules.length === 0 ? (
-        <div className="text-slate-500 text-sm">
+        <div className="text-fg-subtle text-sm">
           No intake rules yet. Issues and scheduled tasks land on their workflow's gate label by default.
         </div>
       ) : (
         <div className="flex flex-col gap-2">
           {rules.map((rule, idx) => (
-            <div key={rule.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+            <div key={rule.id} className="bg-surface-raised border border-border rounded-xl overflow-hidden">
               <div className="px-5 py-4 flex items-center gap-3">
                 <div className="flex flex-col shrink-0">
                   <button
                     onClick={() => move(rule, -1)}
                     disabled={idx === 0}
-                    className="text-slate-500 hover:text-indigo-400 disabled:opacity-30 disabled:cursor-not-allowed text-xs leading-none"
+                    className="text-fg-subtle hover:text-accent-fg disabled:opacity-30 disabled:cursor-not-allowed text-xs leading-none"
                     title="Move up"
                   >
                     ▲
@@ -599,22 +591,22 @@ export default function IntakeRulesPage() {
                   <button
                     onClick={() => move(rule, 1)}
                     disabled={idx === rules.length - 1}
-                    className="text-slate-500 hover:text-indigo-400 disabled:opacity-30 disabled:cursor-not-allowed text-xs leading-none"
+                    className="text-fg-subtle hover:text-accent-fg disabled:opacity-30 disabled:cursor-not-allowed text-xs leading-none"
                     title="Move down"
                   >
                     ▼
                   </button>
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-slate-100 flex items-center gap-2">
+                  <div className="text-sm font-medium text-fg flex items-center gap-2">
                     {rule.name}
                     {!rule.enabled && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-800 text-slate-500 border border-slate-700">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-sunken text-fg-subtle border border-border">
                         disabled
                       </span>
                     )}
                   </div>
-                  <div className="text-xs text-slate-500 mt-0.5 truncate">
+                  <div className="text-xs text-fg-subtle mt-0.5 truncate">
                     {rule.match_source || 'any source'}
                     {rule.match_repo_id ? ` · ${repos.find((r) => r.id === rule.match_repo_id)?.name ?? rule.match_repo_id}` : ' · any repo'}
                     {rule.match_labels && rule.match_labels.length > 0 ? ` · labels: ${rule.match_labels.join(', ')}` : ''}
@@ -622,26 +614,26 @@ export default function IntakeRulesPage() {
                 </div>
                 <button
                   onClick={() => runPreview(rule.id, ruleToForm(rule))}
-                  className="text-xs text-slate-500 hover:text-indigo-400 transition-colors shrink-0"
+                  className="text-xs text-fg-subtle hover:text-accent-fg transition-colors shrink-0"
                 >
                   Preview
                 </button>
                 <button
                   onClick={() => (editingId === rule.id ? cancelEdit() : startEdit(rule))}
-                  className="text-xs text-slate-500 hover:text-indigo-400 transition-colors shrink-0"
+                  className="text-xs text-fg-subtle hover:text-accent-fg transition-colors shrink-0"
                 >
                   {editingId === rule.id ? 'Cancel' : 'Edit'}
                 </button>
                 <button
                   onClick={() => handleDelete(rule)}
-                  className="text-xs text-slate-600 hover:text-red-400 transition-colors shrink-0"
+                  className="text-xs text-fg-subtle hover:text-danger transition-colors shrink-0"
                 >
                   Delete
                 </button>
               </div>
 
               {previewFor === rule.id && (
-                <div className="border-t border-slate-800 px-5 py-3">
+                <div className="border-t border-border px-5 py-3">
                   <PreviewResultsPanel results={previewResults} error={previewError} />
                 </div>
               )}
@@ -649,23 +641,23 @@ export default function IntakeRulesPage() {
               {editingId === rule.id && (
                 <form
                   onSubmit={handleUpdate}
-                  className="border-t border-slate-700 bg-slate-900 px-5 py-4 flex flex-col gap-4"
+                  className="border-t border-border bg-surface-raised px-5 py-4 flex flex-col gap-4"
                 >
-                  <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Edit Rule</h3>
+                  <h3 className="text-xs font-semibold text-fg-muted uppercase tracking-wide">Edit Rule</h3>
                   {renderFormFields(editForm, setEditForm, `edit-${rule.id}`)}
-                  {editError && <p className="text-xs text-red-400">{editError}</p>}
+                  {editError && <p className="text-xs text-danger">{editError}</p>}
                   <div className="flex items-center justify-end gap-2">
                     <button
                       type="button"
                       onClick={cancelEdit}
-                      className="px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors"
+                      className="px-3 py-1.5 text-sm text-fg-muted hover:text-fg transition-colors"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
                       disabled={editSaving || !editForm.name.trim() || autoStartUnsafe(editForm) || templateNoOpForSchedule(editForm)}
-                      className="px-4 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+                      className="px-4 py-1.5 text-sm bg-accent hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed text-on-accent rounded-lg transition-colors"
                     >
                       {editSaving ? 'Saving…' : 'Save'}
                     </button>
@@ -678,28 +670,28 @@ export default function IntakeRulesPage() {
       )}
 
       <IntakeEndpointsSection />
-    </div>
+    </PageFrame>
   )
 }
 
 function PreviewResultsPanel({ results, error }: { results: IntakeRulePreviewMatch[] | null; error: string }) {
-  if (error) return <p className="text-xs text-red-400">{error}</p>
+  if (error) return <p className="text-xs text-danger">{error}</p>
   if (results === null) return null
   if (results.length === 0) {
-    return <p className="text-xs text-slate-500">No recently-imported tasks for this repo to preview against.</p>
+    return <p className="text-xs text-fg-subtle">No recently-imported tasks for this repo to preview against.</p>
   }
   return (
     <div className="flex flex-col gap-1.5">
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-fg-subtle">
         Checked against the most recently imported tasks for this repo:
       </p>
       <ul className="flex flex-col gap-1">
         {results.map((m) => (
           <li key={m.task_id} className="text-xs flex items-center gap-2">
-            <span className={m.matched ? 'text-emerald-400' : 'text-slate-600'}>{m.matched ? '✓' : '·'}</span>
-            <span className="text-slate-300 truncate">{m.title}</span>
+            <span className={m.matched ? 'text-success' : 'text-fg-subtle'}>{m.matched ? '✓' : '·'}</span>
+            <span className="text-fg-muted truncate">{m.title}</span>
             {m.matched && m.target_label && (
-              <span className="text-slate-500 shrink-0">→ {m.target_label}</span>
+              <span className="text-fg-subtle shrink-0">→ {m.target_label}</span>
             )}
           </li>
         ))}

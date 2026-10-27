@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
+import { PageFrame } from '../components/ui'
 import { api, type Skill } from '../api/client'
 import { useAgentsStore } from '../stores/agents'
 import { useReposStore } from '../stores/repos'
 
 const MAX_ZIP_BYTES = 1024 * 1024
-const btnCls = 'px-2 py-1 text-xs rounded bg-slate-700 hover:bg-slate-600 text-slate-200'
-const chipCls = 'px-2 py-0.5 rounded-full text-xs bg-slate-800 border border-slate-700 text-slate-300 break-words'
+const btnCls = 'px-2 py-1 text-xs rounded bg-border hover:bg-slate-600 text-fg'
+const chipCls = 'px-2 py-0.5 rounded-full text-xs bg-surface-sunken border border-border text-fg-muted break-words'
 
 const byName = (a: Skill, b: Skill) => a.name.localeCompare(b.name)
 
@@ -103,14 +104,12 @@ export default function SkillsSettingsPage() {
   }
 
   return (
-    <div className="p-4 md:p-6 max-w-3xl">
-      <h2 className="text-lg font-semibold text-slate-100 mb-1">Skills</h2>
-      <p className="text-sm text-slate-400 mb-4">
-        Agent Skills (a SKILL.md plus optional files). Enabled skills attached to an agent or its repo are copied into
-        the worktree at run start. See docs/skills.md.
-      </p>
+    <PageFrame
+      title="Skills"
+      description="Agent Skills (a SKILL.md plus optional files). Enabled skills attached to an agent or its repo are copied into the worktree at run start. See docs/skills.md."
+    >
 
-      <form onSubmit={submit} className="mb-6 p-3 rounded border border-slate-700 bg-slate-900 space-y-2">
+      <form onSubmit={submit} className="mb-6 p-3 rounded border border-border bg-surface-raised space-y-2">
         <div className="flex gap-2" role="tablist">
           {(['paste', 'zip'] as const).map((m) => (
             <button
@@ -119,7 +118,7 @@ export default function SkillsSettingsPage() {
               role="tab"
               aria-selected={mode === m}
               onClick={() => { setMode(m); setFormError('') }}
-              className={`px-3 py-1 text-xs rounded ${mode === m ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-400'}`}
+              className={`px-3 py-1 text-xs rounded ${mode === m ? 'bg-accent text-on-accent' : 'bg-surface-sunken text-fg-muted'}`}
             >
               {m === 'paste' ? 'Paste SKILL.md' : 'Upload zip'}
             </button>
@@ -132,7 +131,7 @@ export default function SkillsSettingsPage() {
             onChange={(e) => setMd(e.target.value)}
             rows={8}
             placeholder={'---\nname: my-skill\ndescription: What it does\n---\n'}
-            className="w-full bg-slate-800 border border-slate-700 rounded p-2 text-xs font-mono text-slate-100"
+            className="w-full bg-surface-sunken border border-border rounded p-2 text-xs font-mono text-fg"
           />
         ) : (
           <input
@@ -140,20 +139,20 @@ export default function SkillsSettingsPage() {
             aria-label="Skill zip file"
             accept=".zip,application/zip"
             onChange={(e) => onFile(e.target.files?.[0] ?? null)}
-            className="w-full text-xs text-slate-300"
+            className="w-full text-xs text-fg-muted"
           />
         )}
-        {formError && <p className="text-xs text-red-400 break-words">{formError}</p>}
-        <button type="submit" disabled={saving} className="px-3 py-1 text-xs rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50">
+        {formError && <p className="text-xs text-danger break-words">{formError}</p>}
+        <button type="submit" disabled={saving} className="px-3 py-1 text-xs rounded bg-accent hover:bg-accent/90 text-on-accent disabled:opacity-50">
           {saving ? 'Adding…' : 'Add skill'}
         </button>
       </form>
 
-      {error && <p className="text-sm text-red-400 mb-2">{error}</p>}
+      {error && <p className="text-sm text-danger mb-2">{error}</p>}
       {loading ? (
-        <p className="text-sm text-slate-500">Loading…</p>
+        <p className="text-sm text-fg-subtle">Loading…</p>
       ) : skills.length === 0 ? (
-        <p className="text-sm text-slate-500">No skills yet.</p>
+        <p className="text-sm text-fg-subtle">No skills yet.</p>
       ) : (
         <ul className="space-y-2">
           {skills.map((s) => {
@@ -161,12 +160,12 @@ export default function SkillsSettingsPage() {
             const rIds = s.repo_ids ?? []
             const d = detail[s.id]
             return (
-              <li key={s.id} className="p-3 rounded border border-slate-700 bg-slate-900">
+              <li key={s.id} className="p-3 rounded border border-border bg-surface-raised">
                 <div className="flex flex-col sm:flex-row sm:items-start gap-2">
                   <div className="min-w-0 flex-1">
-                    <div className="font-mono text-sm text-slate-100 break-words">{s.name}</div>
-                    <div className="text-xs text-slate-400 break-words">{s.description}</div>
-                    <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-slate-500">
+                    <div className="font-mono text-sm text-fg break-words">{s.name}</div>
+                    <div className="text-xs text-fg-muted break-words">{s.description}</div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-fg-subtle">
                       <span>Attached to:</span>
                       {aIds.length + rIds.length === 0 && <span>Not attached</span>}
                       {aIds.map((id) => <span key={`a${id}`} className={chipCls}>Agent: {agentName.get(id) ?? 'Unknown'}</span>)}
@@ -174,7 +173,7 @@ export default function SkillsSettingsPage() {
                     </div>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <label className="flex items-center gap-1 text-xs text-slate-300">
+                    <label className="flex items-center gap-1 text-xs text-fg-muted">
                       <input
                         type="checkbox"
                         aria-label={`Enable ${s.name}`}
@@ -188,7 +187,7 @@ export default function SkillsSettingsPage() {
                     </button>
                     {confirmDeleteId === s.id ? (
                       <>
-                        <button type="button" className="px-2 py-1 text-xs rounded bg-red-600 hover:bg-red-500 text-white" onClick={() => remove(s)}>
+                        <button type="button" className="px-2 py-1 text-xs rounded bg-danger-solid hover:bg-danger-solid/90 text-on-accent" onClick={() => remove(s)}>
                           Confirm delete
                         </button>
                         <button type="button" className={btnCls} onClick={() => setConfirmDeleteId(null)}>Cancel</button>
@@ -199,20 +198,20 @@ export default function SkillsSettingsPage() {
                   </div>
                 </div>
                 {confirmDeleteId === s.id && (
-                  <p className="mt-1 text-xs text-amber-400">
+                  <p className="mt-1 text-xs text-warning">
                     Deletes this skill. Also detaches it from {aIds.length} agents / {rIds.length} repos.
                   </p>
                 )}
-                {rowErrors[s.id] && <p className="mt-1 text-xs text-red-400 break-words">{rowErrors[s.id]}</p>}
+                {rowErrors[s.id] && <p className="mt-1 text-xs text-danger break-words">{rowErrors[s.id]}</p>}
                 {viewId === s.id && (
                   <div className="mt-2">
                     {!d ? (
-                      <p className="text-xs text-slate-500">Loading…</p>
+                      <p className="text-xs text-fg-subtle">Loading…</p>
                     ) : (
                       <>
-                        <pre className="whitespace-pre-wrap break-words text-xs max-h-96 overflow-auto bg-slate-950 p-2 rounded text-slate-300">{d.skill_md}</pre>
+                        <pre className="whitespace-pre-wrap break-words text-xs max-h-96 overflow-auto bg-surface p-2 rounded text-fg-muted">{d.skill_md}</pre>
                         {(d.files ?? []).length > 0 && (
-                          <ul className="mt-1 text-xs text-slate-400 font-mono break-words">
+                          <ul className="mt-1 text-xs text-fg-muted font-mono break-words">
                             {d.files!.map((f) => <li key={f}>{f}</li>)}
                           </ul>
                         )}
@@ -225,6 +224,6 @@ export default function SkillsSettingsPage() {
           })}
         </ul>
       )}
-    </div>
+    </PageFrame>
   )
 }

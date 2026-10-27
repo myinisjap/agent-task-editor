@@ -121,7 +121,7 @@ export default function ProviderConfigPage() {
             <div className="flex items-center gap-1.5">
               <button
                 onClick={() => { newConfig(); setSidebarOpen(false) }}
-                className="text-xs px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white"
+                className="text-xs px-2 py-1 rounded bg-accent hover:bg-accent/90 text-on-accent"
               >
                 + New
               </button>

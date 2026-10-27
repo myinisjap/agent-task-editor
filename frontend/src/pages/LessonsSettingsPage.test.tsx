@@ -11,7 +11,7 @@ vi.mock('../api/client', () => ({
 describe('LessonsSettingsPage', () => {
   it('renders the global lessons panel', async () => {
     render(<MemoryRouter><LessonsSettingsPage /></MemoryRouter>)
-    expect(screen.getByRole('heading', { name: 'Global lessons', level: 2 })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Global lessons', level: 1 })).toBeInTheDocument()
     expect(await screen.findByText('No lessons yet.')).toBeInTheDocument()
     expect(listGlobal).toHaveBeenCalledWith(undefined)
   })

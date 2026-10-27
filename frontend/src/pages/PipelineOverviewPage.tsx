@@ -217,7 +217,7 @@ export default function PipelineOverviewPage() {
                 {dirty ? 'Discard' : 'Cancel'}
               </button>
               <button type="button" onClick={() => void save()} disabled={!dirty || saving || errors.length > 0}
-                className="px-3 py-1 text-sm rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50">
+                className="px-3 py-1 text-sm rounded bg-accent hover:bg-accent/90 text-on-accent disabled:opacity-50">
                 {saving ? 'Saving…' : 'Save'}
               </button>
             </>

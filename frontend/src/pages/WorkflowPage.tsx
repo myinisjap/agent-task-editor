@@ -58,7 +58,7 @@ function NewWorkflowModal({
             ref={inputRef}
             value={name}
             onChange={(e) => { setName(e.target.value); setError(null) }}
-            className="bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            className="bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-accent"
             placeholder="My Workflow"
           />
         </div>
@@ -68,7 +68,7 @@ function NewWorkflowModal({
           <input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            className="bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            className="bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-accent"
             placeholder="A short description…"
           />
         </div>
@@ -86,7 +86,7 @@ function NewWorkflowModal({
           <button
             type="submit"
             disabled={creating || !name.trim()}
-            className="px-4 py-1.5 text-sm font-medium rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-colors"
+            className="px-4 py-1.5 text-sm font-medium rounded bg-accent hover:bg-accent/90 text-on-accent disabled:opacity-50 transition-colors"
           >
             {creating ? 'Creating…' : 'Create'}
           </button>
@@ -299,7 +299,7 @@ export default function WorkflowPage() {
                   onClick={() => loadWorkflow(wf.id)}
                   className={`px-3 py-1.5 text-sm rounded-md transition-colors whitespace-nowrap ${
                     wf.id === selectedWorkflowId
-                      ? 'bg-indigo-600 text-white font-medium'
+                      ? 'bg-accent text-on-accent font-medium'
                       : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
                   }`}
                 >
@@ -311,7 +311,7 @@ export default function WorkflowPage() {
                     <button
                       onClick={() => handleDelete(wf.id)}
                       disabled={deleting}
-                      className="text-xs px-1.5 py-0.5 rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-50"
+                      className="text-xs px-1.5 py-0.5 rounded bg-danger-solid hover:bg-danger-solid/90 text-on-accent disabled:opacity-50"
                     >
                       {deleting ? '…' : 'Confirm'}
                     </button>
@@ -353,7 +353,7 @@ export default function WorkflowPage() {
           <button
             onClick={handleSave}
             disabled={saving || !selectedWorkflowId || yamlLoadedId !== selectedWorkflowId}
-            className="px-4 py-1.5 text-sm font-medium rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-colors"
+            className="px-4 py-1.5 text-sm font-medium rounded bg-accent hover:bg-accent/90 text-on-accent disabled:opacity-50 transition-colors"
           >
             {saving ? 'Saving…' : 'Save'}
           </button>
@@ -387,7 +387,7 @@ export default function WorkflowPage() {
                 value={yaml}
                 onChange={(e) => { setYaml(e.target.value); setError(null); setValidationErrors([]) }}
                 spellCheck={false}
-                className="flex-1 bg-slate-900 border border-slate-700 rounded p-4 text-sm text-slate-100 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-none"
+                className="flex-1 bg-slate-900 border border-slate-700 rounded p-4 text-sm text-slate-100 font-mono focus:outline-none focus:ring-1 focus:ring-accent resize-none"
                 placeholder={selectedWorkflowId ? 'Enter YAML…' : 'Select a workflow to edit'}
               />
               {validationErrors.length > 0 && (

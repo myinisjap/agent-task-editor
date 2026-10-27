@@ -113,7 +113,7 @@ export default function ChatPage() {
           <button
             onClick={createSession}
             disabled={!newRepo || !newProviderConfigId}
-            className="w-full text-xs px-2 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
+            className="w-full text-xs px-2 py-1.5 rounded bg-accent hover:bg-accent/90 text-on-accent disabled:opacity-50"
           >
             Start terminal
           </button>
@@ -491,7 +491,7 @@ function TerminalView({ sessionId, fontSize }: { sessionId: string; fontSize: nu
           <button
             type="button"
             onClick={() => scrollToBottomRef.current()}
-            className="absolute bottom-3 right-3 px-3 py-1.5 rounded-full bg-indigo-600 text-white text-xs shadow-lg"
+            className="absolute bottom-3 right-3 px-3 py-1.5 rounded-full bg-accent text-on-accent text-xs shadow-lg"
           >
             Jump to latest ↓
           </button>
