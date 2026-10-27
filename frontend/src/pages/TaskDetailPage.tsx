@@ -1,3 +1,5 @@
+import { CircleDollarSign } from 'lucide-react'
+import Icon from '../components/ui/Icon'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api, type Task, type AgentRun, type TaskLabelHistoryEntry, type TaskSourceComment, type TaskHumanDecision, type Workflow, type Repo } from '../api/client'
@@ -716,7 +718,7 @@ export default function TaskDetailPage() {
           GET/PUT /settings/cost-warning and docs/agents.md#cost-budgets. */}
       {costWarning && (
         <div className="mb-4 px-4 py-3 rounded-lg bg-warning-soft border border-warning/40 text-warning text-sm">
-          💰 Cost warning: this task has spent ${costWarning.spentUsd.toFixed(2)} of its ${costWarning.budgetUsd.toFixed(2)} budget.
+          <Icon icon={CircleDollarSign} size="sm" className="inline -mt-0.5 mr-1" />Cost warning: this task has spent ${costWarning.spentUsd.toFixed(2)} of its ${costWarning.budgetUsd.toFixed(2)} budget.
         </div>
       )}
 

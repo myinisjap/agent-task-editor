@@ -1,3 +1,4 @@
+import { MessageSquare } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { AgentConfig, AgentRun, ProviderConfig, Task, TaskLabelHistoryEntry } from '../../api/client'
@@ -9,7 +10,7 @@ import RunHistoryList from './RunHistoryList'
 import RunLogPane from './RunLogPane'
 import VerificationPanel from './VerificationPanel'
 import { rejectDisabled, rejectPlaceholder } from './TaskActions'
-import { Badge, Button, Field, controlClasses } from '../ui'
+import { Badge, Button, Field, controlClasses, Icon } from '../ui'
 
 type MainTab = 'plan' | 'diff' | 'logs' | 'details'
 
@@ -98,7 +99,7 @@ export default function ReviewLayout({
 
   const commentsNote = openCommentsCount > 0 && (
     <p className="text-xs text-warning">
-      💬 {openCommentsCount} open diff comment{openCommentsCount !== 1 ? 's' : ''} — the next run will see them
+      <Icon icon={MessageSquare} size="sm" className="inline -mt-0.5 mr-1" />{openCommentsCount} open diff comment{openCommentsCount !== 1 ? 's' : ''} — the next run will see them
     </p>
   )
   const errorNote = actionError && <p role="alert" className="text-xs text-danger">{actionError}</p>

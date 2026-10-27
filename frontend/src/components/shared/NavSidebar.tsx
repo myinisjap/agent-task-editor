@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { Bell, BellOff, ChartColumn, ChevronRight, CircleDollarSign, FolderGit2, Inbox, LayoutDashboard, MessageSquare, Moon, Settings, SquareKanban, Sun, Workflow } from 'lucide-react'
+import { Bell, BellOff, ChartColumn, ChevronRight, CircleDollarSign, FolderGit2, Inbox, LayoutDashboard, MessageSquare, Moon, Settings, SquareKanban, Sun, Workflow, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { useThemeStore } from '../../stores/theme'
@@ -172,7 +172,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
             aria-label="Close menu"
             className="md:hidden text-fg-muted hover:text-fg p-1 rounded"
           >
-            ✕
+            <Icon icon={X} size="md" />
           </button>
         </div>
 

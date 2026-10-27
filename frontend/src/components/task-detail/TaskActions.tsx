@@ -1,7 +1,8 @@
+import { MessageSquare } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import type { AgentRun } from '../../api/client'
 import { escalationInfo } from '../../lib/escalation'
-import { Button, Field, buttonClasses, controlClasses } from '../ui'
+import { Button, Field, buttonClasses, controlClasses, Icon } from '../ui'
 
 const MOBILE_TAP = 'max-md:min-h-[44px]'
 const AREA = `${controlClasses} flex-1 min-w-0 text-base md:text-xs resize-none`
@@ -107,7 +108,7 @@ export default function TaskActions({
       )}
       {openCommentsCount > 0 && (
         <p className="text-xs text-warning mb-2">
-          💬 {openCommentsCount} open diff comment{openCommentsCount !== 1 ? 's' : ''} — the next agent run will see and address them
+          <Icon icon={MessageSquare} size="sm" className="inline -mt-0.5 mr-1" />{openCommentsCount} open diff comment{openCommentsCount !== 1 ? 's' : ''} — the next agent run will see and address them
           {' '}
           <button
             type="button"

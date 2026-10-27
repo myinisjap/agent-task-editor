@@ -1,3 +1,5 @@
+import { Check, CornerDownRight, Hourglass, TriangleAlert } from 'lucide-react'
+import Icon from './ui/Icon'
 import { labelDisplayNameByName } from '../lib/labelDisplay'
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -7,9 +9,9 @@ import { wsClient } from '../api/ws'
 
 // mergeBadge renders a child's merge-back status.
 function mergeBadge(status?: string) {
-  if (status === 'merged') return <span className="text-[10px] text-emerald-400">✓ merged</span>
-  if (status === 'merge_conflict') return <span className="text-[10px] text-red-400">⚠ conflict</span>
-  if (status === 'pending') return <span className="text-[10px] text-amber-400">⏳ pending</span>
+  if (status === 'merged') return <span className="text-[10px] text-success inline-flex items-center gap-1"><Icon icon={Check} size="xs" />merged</span>
+  if (status === 'merge_conflict') return <span className="text-[10px] text-danger inline-flex items-center gap-1"><Icon icon={TriangleAlert} size="xs" />conflict</span>
+  if (status === 'pending') return <span className="text-[10px] text-warning inline-flex items-center gap-1"><Icon icon={Hourglass} size="xs" />pending</span>
   return null
 }
 
@@ -26,19 +28,19 @@ export function subtaskStatus(child: Task, labels: WorkflowLabel[]): SubtaskStat
 }
 
 const statusColor: Record<SubtaskStatus, string> = {
-  running: 'text-sky-400',
-  done: 'text-emerald-400',
-  'awaiting release': 'text-slate-400',
-  blocked: 'text-amber-400',
-  queued: 'text-slate-300',
+  running: 'text-accent-fg',
+  done: 'text-success',
+  'awaiting release': 'text-fg-muted',
+  blocked: 'text-warning',
+  queued: 'text-fg-muted',
 }
 
 function scopeChips(scope?: string[]) {
-  if (!scope || scope.length === 0) return <span className="text-[10px] text-slate-600">no scope</span>
+  if (!scope || scope.length === 0) return <span className="text-[10px] text-fg-subtle">no scope</span>
   return (
     <span className="flex flex-wrap gap-1">
       {scope.map((g) => (
-        <code key={g} className="text-[10px] px-1 rounded bg-slate-900 text-slate-400">
+        <code key={g} className="text-[10px] px-1 rounded bg-surface-raised text-fg-muted">
           {g}
         </code>
       ))}
@@ -102,22 +104,22 @@ export default function SubtasksPanel({
   if (!isChild && children.length === 0) return null
 
   return (
-    <div className="border-t border-slate-800 pt-3">
-      <p className="text-xs text-slate-500 mb-2">Subtasks</p>
+    <div className="border-t border-border pt-3">
+      <p className="text-xs text-fg-subtle mb-2">Subtasks</p>
 
       {isChild && (
         <div className="mb-3 text-xs">
           <button
             onClick={() => navigate(`/tasks/${task.parent_task_id}`)}
-            className="inline-flex items-center gap-1 text-indigo-300 hover:text-indigo-200"
+            className="inline-flex items-center gap-1 text-accent-fg hover:text-indigo-200"
           >
-            ↳ Part of a parent task — open parent
+            <Icon icon={CornerDownRight} size="sm" className="inline -mt-0.5 mr-1" />Part of a parent task — open parent
           </button>
-          <div className="mt-1 flex items-center gap-2 text-slate-500">
+          <div className="mt-1 flex items-center gap-2 text-fg-subtle">
             <span>Merge-back:</span>
-            {mergeBadge(task.merge_status) ?? <span className="text-[10px] text-slate-500">not yet merged</span>}
+            {mergeBadge(task.merge_status) ?? <span className="text-[10px] text-fg-subtle">not yet merged</span>}
           </div>
-          <div className="mt-1 flex items-center gap-2 text-slate-500">
+          <div className="mt-1 flex items-center gap-2 text-fg-subtle">
             <span>Scope:</span>
             {scopeChips(task.file_scope)}
           </div>
@@ -127,16 +129,16 @@ export default function SubtasksPanel({
       {children.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-1">
-            <p className="text-[11px] uppercase tracking-wide text-slate-600">
+            <p className="text-[11px] uppercase tracking-wide text-fg-subtle">
               Children ({children.filter((c) => mergeIsDone(c)).length}/{children.length})
-              {task.integration_status === 'pending' && <span className="ml-2 normal-case text-amber-400">integration pending</span>}
-              {task.integration_status === 'done' && <span className="ml-2 normal-case text-emerald-400">integrated</span>}
+              {task.integration_status === 'pending' && <span className="ml-2 normal-case text-warning">integration pending</span>}
+              {task.integration_status === 'done' && <span className="ml-2 normal-case text-success">integrated</span>}
             </p>
             {gatedChildren.length > 0 && releaseTarget && (
               <button
                 onClick={release}
                 disabled={busy}
-                className="text-[11px] px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
+                className="text-[11px] px-2 py-0.5 rounded bg-accent hover:bg-accent/90 text-on-accent disabled:opacity-50"
                 title={`Move ${gatedChildren.length} gated subtask(s) into "${releaseTarget}"`}
               >
                 Release {gatedChildren.length} → {releaseTarget}
@@ -145,16 +147,16 @@ export default function SubtasksPanel({
           </div>
           <ul className="flex flex-col gap-1">
             {children.map((c) => (
-              <li key={c.id} className="flex flex-col gap-1 text-xs bg-slate-800 rounded px-2 py-1">
+              <li key={c.id} className="flex flex-col gap-1 text-xs bg-surface-sunken rounded px-2 py-1">
                 <div className="flex items-center gap-2">
                 <button
                   onClick={() => navigate(`/tasks/${c.id}`)}
-                  className="text-slate-300 hover:text-indigo-300 truncate text-left flex-1"
+                  className="text-fg-muted hover:text-accent-fg truncate text-left flex-1"
                   title={c.title}
                 >
                   {c.title}
                 </button>
-                <span className="text-slate-500 shrink-0">{labelDisplayNameByName(c.label, labels)}</span>
+                <span className="text-fg-subtle shrink-0">{labelDisplayNameByName(c.label, labels)}</span>
                 <span data-testid="subtask-status" className={`shrink-0 text-[10px] ${statusColor[subtaskStatus(c, labels)]}`}>
                   {subtaskStatus(c, labels)}
                 </span>
@@ -164,7 +166,7 @@ export default function SubtasksPanel({
               </li>
             ))}
           </ul>
-          {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
+          {error && <p className="text-xs text-danger mt-1">{error}</p>}
         </div>
       )}
     </div>

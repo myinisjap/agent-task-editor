@@ -1,3 +1,5 @@
+import { Bot } from 'lucide-react'
+import Icon from '../ui/Icon'
 import { useCallback, useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import type { Task, WorkflowLabel } from '../../api/client'
@@ -69,20 +71,20 @@ export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLi
     >
       <div className={`flex items-center ${compact ? 'justify-center' : 'justify-between px-3'} py-2 mb-2`}>
         {!compact && (
-          <span className="text-xs text-slate-500 flex items-center gap-1.5 min-w-0" title={groupTitle}>
-            <span>⚙</span>
+          <span className="text-xs text-fg-subtle flex items-center gap-1.5 min-w-0" title={groupTitle}>
+            <Icon icon={Bot} size="sm" />
             <span className="font-semibold truncate">{groupTitle}</span>
           </span>
         )}
-        <span className="text-xs text-slate-500 bg-slate-800 rounded-full px-2 py-0.5" data-testid="column-count-badge">{tasks.length}</span>
+        <span className="text-xs text-fg-subtle bg-surface-sunken rounded-full px-2 py-0.5" data-testid="column-count-badge">{tasks.length}</span>
       </div>
 
       <div
         ref={setNodeRef}
-        className={`flex-1 flex flex-col ${compact ? 'items-center py-2' : 'gap-3 p-2'} rounded-lg min-h-[100px] transition-colors ${isOver && dropState !== 'illegal' ? 'bg-slate-700/50' : 'bg-slate-800/30'} ${dropStateClass(dropState)}`}
+        className={`flex-1 flex flex-col ${compact ? 'items-center py-2' : 'gap-3 p-2'} rounded-lg min-h-[100px] transition-colors ${isOver && dropState !== 'illegal' ? 'bg-border/50' : 'bg-surface-sunken/30'} ${dropStateClass(dropState)}`}
       >
         {compact && (
-          <span title={groupTitle} style={{ writingMode: 'vertical-rl' }} className="text-sm font-semibold text-slate-400">
+          <span title={groupTitle} style={{ writingMode: 'vertical-rl' }} className="text-sm font-semibold text-fg-muted">
             {groupTitle}
           </span>
         )}
@@ -101,7 +103,7 @@ export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLi
           />
         ))}
         {!compact && tasks.length === 0 && (
-          <div className="text-center text-slate-600 text-sm py-8">No tasks</div>
+          <div className="text-center text-fg-subtle text-sm py-8">No tasks</div>
         )}
       </div>
     </div>

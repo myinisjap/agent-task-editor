@@ -1,3 +1,5 @@
+import { ChevronDown, ChevronUp } from 'lucide-react'
+import Icon from '../ui/Icon'
 import { labelDisplayName } from '../../lib/labelDisplay'
 import { useCallback, useMemo, useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
@@ -70,9 +72,9 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
   const isHardAtOrOverLimit = isAtOrOverLimit && label.wip_limit_hard !== 0
   const badgeClassName = isAtOrOverLimit
     ? isHardAtOrOverLimit
-      ? 'text-xs text-red-300 bg-red-900/60 border border-red-700 rounded-full px-2 py-0.5'
-      : 'text-xs text-amber-300 bg-amber-900/40 border border-amber-700 rounded-full px-2 py-0.5'
-    : 'text-xs text-slate-500 bg-slate-800 rounded-full px-2 py-0.5'
+      ? 'text-xs text-danger bg-red-900/60 border border-red-700 rounded-full px-2 py-0.5'
+      : 'text-xs text-warning bg-amber-900/40 border border-amber-700 rounded-full px-2 py-0.5'
+    : 'text-xs text-fg-subtle bg-surface-sunken rounded-full px-2 py-0.5'
   const badgeTitle = isHardAtOrOverLimit
     ? `At/over WIP limit (${tasks.length}/${wipLimit}) — dispatcher will hold new tasks back from this label until it drops below the limit`
     : isAtOrOverLimit
@@ -114,7 +116,7 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
       aria-expanded={mode === 'full'}
       aria-label={`${mode === 'full' ? 'Collapse' : 'Expand'} ${displayName} column`}
       title={mode === 'full' ? 'Collapse column' : 'Expand column'}
-      className="ml-2 text-xs text-slate-400 hover:text-slate-200"
+      className="ml-2 text-xs text-fg-muted hover:text-fg"
     >
       {mode === 'full' ? '‹' : '›'}
     </button>
@@ -129,7 +131,7 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
     >
       <div className={`flex items-center ${compact ? 'justify-center px-0' : 'justify-between px-3'} py-2 mb-2`}>
         {!compact && (
-          <span className={`text-sm font-semibold ${isAtOrOverLimit ? (isHardAtOrOverLimit ? 'text-red-300' : 'text-amber-300') : 'text-slate-300'}`}>
+          <span className={`text-sm font-semibold ${isAtOrOverLimit ? (isHardAtOrOverLimit ? 'text-danger' : 'text-warning') : 'text-fg-muted'}`}>
             {displayName}
           </span>
         )}
@@ -137,7 +139,7 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
           <span
             data-testid="no-agent-chip"
             title="Tasks in this column are waiting for an agent, but no enabled agent config covers it. Assign one on the Pipeline page."
-            className="ml-2 mr-auto text-[10px] font-medium normal-case tracking-normal text-amber-300 bg-amber-900/40 border border-amber-700 rounded-full px-1.5 py-0.5"
+            className="ml-2 mr-auto text-[10px] font-medium normal-case tracking-normal text-warning bg-amber-900/40 border border-amber-700 rounded-full px-1.5 py-0.5"
           >
             No agent assigned
           </span>
@@ -149,7 +151,7 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
       </div>
       <div
         ref={setNodeRef}
-        className={`flex-1 flex flex-col ${compact ? 'items-center py-2' : 'gap-3 p-2'} rounded-lg min-h-[100px] transition-colors ${isOver && dropState !== 'illegal' ? 'bg-slate-700/50' : 'bg-slate-800/30'} ${dropStateClass(dropState)}`}
+        className={`flex-1 flex flex-col ${compact ? 'items-center py-2' : 'gap-3 p-2'} rounded-lg min-h-[100px] transition-colors ${isOver && dropState !== 'illegal' ? 'bg-border/50' : 'bg-surface-sunken/30'} ${dropStateClass(dropState)}`}
       >
         {compact && (
           isTerminal && onToggleCollapsed ? (
@@ -160,12 +162,12 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
               aria-label={`Expand ${displayName} column`}
               title={displayName}
               style={{ writingMode: 'vertical-rl' }}
-              className="text-sm font-semibold text-slate-400 hover:text-slate-200"
+              className="text-sm font-semibold text-fg-muted hover:text-fg"
             >
               {displayName}
             </button>
           ) : (
-            <span title={displayName} style={{ writingMode: 'vertical-rl' }} className="text-sm font-semibold text-slate-400">
+            <span title={displayName} style={{ writingMode: 'vertical-rl' }} className="text-sm font-semibold text-fg-muted">
               {displayName}
             </span>
           )
@@ -185,20 +187,21 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
           />
         ))}
         {!compact && tasks.length === 0 && (
-          <div className="text-center text-slate-600 text-sm py-8">No tasks</div>
+          <div className="text-center text-fg-subtle text-sm py-8">No tasks</div>
         )}
         {!compact && shouldCollapse && (
           <button
             onClick={() => setExpanded(!expanded)}
-            className="w-full text-xs text-slate-500 hover:text-slate-300 border border-dashed border-slate-700 hover:border-slate-500 rounded-lg py-2 mt-1 transition-colors"
+            className="w-full text-xs text-fg-subtle hover:text-fg-muted border border-dashed border-border hover:border-slate-500 rounded-lg py-2 mt-1 transition-colors"
           >
-            {expanded ? '▲ Show less' : `▼ Show ${tasks.length - MAX_VISIBLE} more`}
+            <Icon icon={expanded ? ChevronUp : ChevronDown} size="sm" className="inline -mt-0.5 mr-1" />
+            {expanded ? 'Show less' : `Show ${tasks.length - MAX_VISIBLE} more`}
           </button>
         )}
         {!compact && onAddTask && (
           <button
             onClick={onAddTask}
-            className="w-full text-sm text-slate-500 hover:text-slate-300 border border-dashed border-slate-700 hover:border-slate-500 rounded-lg py-2 transition-colors"
+            className="w-full text-sm text-fg-subtle hover:text-fg-muted border border-dashed border-border hover:border-slate-500 rounded-lg py-2 transition-colors"
           >
             + Add task
           </button>

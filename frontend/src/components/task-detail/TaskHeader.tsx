@@ -1,3 +1,4 @@
+import { Ban, Copy, Pause, Pencil, Play, RefreshCw, TriangleAlert } from 'lucide-react'
 import { labelDisplayName, labelDisplayNameByName } from '../../lib/labelDisplay'
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -11,7 +12,7 @@ import { useIsMobile } from '../../lib/useIsMobile'
 import { blockReasonLabel, isTransientBlockReason } from '../../lib/blockReason'
 import { formatRelativeCountdown } from '../../lib/format'
 import { canHumanMove } from '../../lib/humanMoves'
-import { Badge, Button, Field, controlClasses } from '../ui'
+import { Badge, Button, Field, controlClasses, Icon } from '../ui'
 
 export function Row({ label, children, wide = false }: { label: string; children: React.ReactNode; wide?: boolean }) {
   return (
@@ -178,27 +179,28 @@ export default function TaskHeader({
           <button
             onClick={onTogglePause}
             disabled={actionPending}
-            className={`text-xs disabled:opacity-50 ${task.paused ? 'text-success' : 'text-warning'}`}
+            className={`inline-flex items-center gap-1 text-xs disabled:opacity-50 ${task.paused ? 'text-success' : 'text-warning'}`}
             title={task.paused ? 'Resume task' : 'Pause task'}
           >
-            {task.paused ? '▶ Resume' : '⏸ Pause'}
+            <Icon icon={task.paused ? Play : Pause} size="sm" />
+            {task.paused ? 'Resume' : 'Pause'}
           </button>
           {isStartingColumn && !editingTask && (
             <button
               onClick={onStartEdit}
-              className="text-xs text-accent-fg"
+              className="inline-flex items-center gap-1 text-xs text-accent-fg"
               title="Edit task"
             >
-              ✎ Edit
+              <Icon icon={Pencil} size="sm" />Edit
             </button>
           )}
           {onDuplicate && (
             <button
               onClick={onDuplicate}
-              className="text-xs text-accent-fg"
+              className="inline-flex items-center gap-1 text-xs text-accent-fg"
               title="Duplicate task — opens a pre-filled New Task form"
             >
-              ⧉ Duplicate
+              <Icon icon={Copy} size="sm" />Duplicate
             </button>
           )}
           <button
@@ -284,7 +286,7 @@ export default function TaskHeader({
           <h1 className="text-lg font-semibold text-fg leading-snug">{task.title}</h1>
           {task.block_reason ? (
             <Badge tone="danger" className="gap-1.5 px-2 py-1 mt-2">
-              <span>🚫 Not dispatching — {blockReasonLabel(task.block_reason)}:</span>
+              <span className="inline-flex items-center gap-1"><Icon icon={Ban} size="sm" />Not dispatching — {blockReasonLabel(task.block_reason)}:</span>
               <span className="text-fg">{task.block_reason.message}</span>
               {task.block_reason.clears_at && isTransientBlockReason(task.block_reason) && (
                 <span className="text-danger/80">
@@ -295,7 +297,7 @@ export default function TaskHeader({
           ) : (
             task.paused && (
               <Badge tone="warning" className="mt-2">
-                ⏸ Paused — agents will not pick up this task
+                <Icon icon={Pause} size="sm" />Paused — agents will not pick up this task
               </Badge>
             )
           )}
@@ -413,10 +415,10 @@ export default function TaskHeader({
                 )}
                 <button
                   onClick={onSyncGitState}
-                  className="text-xs text-fg-subtle hover:text-fg transition-colors"
+                  className="inline-flex items-center gap-1 text-xs text-fg-subtle hover:text-fg transition-colors"
                   title="Sync PR state from GitHub"
                 >
-                  ↻ Sync
+                  <Icon icon={RefreshCw} size="sm" />Sync
                 </button>
               </div>
             </Row>
@@ -477,7 +479,7 @@ export default function TaskHeader({
                 tone="warning"
                 title="The source issue closed or no longer matches the repo's issue sync filter. The task was left as-is (or archived/moved, per the repo's setting) rather than silently orphaned."
               >
-                ⚠ source issue closed or unlabeled
+                <Icon icon={TriangleAlert} size="sm" className="inline -mt-0.5 mr-1" />source issue closed or unlabeled
               </Badge>
             )}
           </Row>

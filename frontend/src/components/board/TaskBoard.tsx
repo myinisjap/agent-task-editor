@@ -1,3 +1,5 @@
+import { ChevronLeft, ChevronRight, X } from 'lucide-react'
+import Icon from '../ui/Icon'
 import { labelDisplayName } from '../../lib/labelDisplay'
 import { useState, useEffect, useMemo } from 'react'
 import type { ReactNode } from 'react'
@@ -66,19 +68,21 @@ function MobileColumnNav({
         <button
           disabled={currentIndex === 0}
           onClick={onPrev}
-          className="px-3 py-1.5 text-sm rounded bg-slate-800 text-slate-300 disabled:opacity-30 active:bg-slate-700"
+          aria-label="Previous column"
+          className="px-3 py-1.5 text-sm rounded bg-surface-sunken text-fg-muted disabled:opacity-30 active:bg-border"
         >
-          ◀
+          <Icon icon={ChevronLeft} size="md" />
         </button>
-        <span className="text-sm font-semibold text-slate-200">
+        <span className="text-sm font-semibold text-fg">
           {label} ({currentIndex + 1}/{total})
         </span>
         <button
           disabled={currentIndex === total - 1}
           onClick={onNext}
-          className="px-3 py-1.5 text-sm rounded bg-slate-800 text-slate-300 disabled:opacity-30 active:bg-slate-700"
+          aria-label="Next column"
+          className="px-3 py-1.5 text-sm rounded bg-surface-sunken text-fg-muted disabled:opacity-30 active:bg-border"
         >
-          ▶
+          <Icon icon={ChevronRight} size="md" />
         </button>
       </div>
       <div className="flex justify-center gap-1.5">
@@ -433,8 +437,8 @@ function TaskBoardInner({
             }
             return (
               <section key={lane.repoId || 'unknown'} data-testid="repo-lane" className="shrink-0">
-                <h2 className="text-sm font-semibold text-slate-300 mb-1 px-1">
-                  {lane.name} <span className="text-xs font-normal text-slate-500">({lane.tasks.length})</span>
+                <h2 className="text-sm font-semibold text-fg-muted mb-1 px-1">
+                  {lane.name} <span className="text-xs font-normal text-fg-subtle">({lane.tasks.length})</span>
                 </h2>
                 <div className="flex gap-3">
                   {renderDesktopColumns((n) => m.get(n) ?? EMPTY_TASKS, lane.repoId || 'unknown', li === 0)}
@@ -584,9 +588,9 @@ export default function TaskBoard(props: Props) {
             type="button"
             onClick={() => setMoveError(null)}
             aria-label="Dismiss"
-            className="text-red-300 hover:text-red-100"
+            className="text-danger hover:text-red-100"
           >
-            ✕
+            <Icon icon={X} size="sm" />
           </button>
         </div>
       )}

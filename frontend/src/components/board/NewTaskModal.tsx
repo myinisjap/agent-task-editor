@@ -1,3 +1,5 @@
+import { X } from 'lucide-react'
+import Icon from '../ui/Icon'
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../../api/client'
 import type { Repo, Task, TaskTemplate, Workflow } from '../../api/client'
@@ -229,13 +231,13 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
       onClose={onClose}
       ariaLabel={source ? 'Duplicate Task' : 'New Task'}
       initialFocusRef={titleRef}
-      className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-md mx-4 max-h-[90vh] flex flex-col"
+      className="bg-surface-raised border border-border rounded-xl shadow-2xl w-full max-w-md mx-4 max-h-[90vh] flex flex-col"
     >
-      <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700">
-        <h2 className="text-sm font-semibold text-slate-100">{source ? 'Duplicate Task' : 'New Task'}</h2>
+      <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+        <h2 className="text-sm font-semibold text-fg">{source ? 'Duplicate Task' : 'New Task'}</h2>
         <button
           onClick={onClose}
-          className="text-slate-500 hover:text-slate-300 transition-colors text-lg leading-none"
+          className="text-fg-subtle hover:text-fg-muted transition-colors text-lg leading-none"
         >
           ×
         </button>
@@ -244,12 +246,12 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
       <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4 overflow-y-auto overflow-x-hidden">
         {templates.length > 0 && (
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400">Template</label>
+            <label className="text-xs font-medium text-fg-muted">Template</label>
             <div className="flex items-center gap-2">
               <select
                 value={templateId}
                 onChange={(e) => applyTemplate(e.target.value)}
-                className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="flex-1 bg-surface-sunken border border-border rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 <option value="">— none —</option>
                 {templates.map((t) => (
@@ -260,10 +262,11 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
                 <button
                   type="button"
                   onClick={deleteTemplate}
-                  className="text-slate-500 hover:text-red-400 transition-colors text-sm"
+                  className="text-fg-subtle hover:text-danger transition-colors text-sm"
                   title="Delete this template"
+                  aria-label="Delete this template"
                 >
-                  ✕
+                  <Icon icon={X} size="sm" />
                 </button>
               )}
             </div>
@@ -271,35 +274,35 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
         )}
 
         <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-medium text-slate-400">Title</label>
+          <label className="text-xs font-medium text-fg-muted">Title</label>
           <input
             ref={titleRef}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Short task description"
             required
-            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            className="bg-surface-sunken border border-border rounded-lg px-3 py-2 text-sm text-fg placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-accent"
           />
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-medium text-slate-400">Description</label>
+          <label className="text-xs font-medium text-fg-muted">Description</label>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="Additional context for the agent (optional)"
             rows={3}
-            className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-none"
+            className="bg-surface-sunken border border-border rounded-lg px-3 py-2 text-sm text-fg placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-accent resize-none"
           />
         </div>
 
         <div className="flex flex-wrap gap-3">
           <div className="flex flex-col gap-1.5 flex-1 min-w-[45%]">
-            <label className="text-xs font-medium text-slate-400">Type</label>
+            <label className="text-xs font-medium text-fg-muted">Type</label>
             <select
               value={type}
               onChange={(e) => setType(e.target.value as typeof type)}
-              className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className="w-full min-w-0 bg-surface-sunken border border-border rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:ring-1 focus:ring-accent"
             >
               <option value="feature">Feature</option>
               <option value="bug">Bug</option>
@@ -309,11 +312,11 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
           </div>
 
           <div className="flex flex-col gap-1.5 flex-1 min-w-[45%]">
-            <label className="text-xs font-medium text-slate-400">Priority</label>
+            <label className="text-xs font-medium text-fg-muted">Priority</label>
             <select
               value={priority}
               onChange={(e) => setPriority(Number(e.target.value))}
-              className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className="w-full min-w-0 bg-surface-sunken border border-border rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:ring-1 focus:ring-accent"
             >
               {PRIORITY_LEVELS.map((p) => (
                 <option key={p.value} value={p.value}>{p.label}</option>
@@ -322,15 +325,15 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
           </div>
 
           <div className="flex flex-col gap-1.5 flex-1 min-w-[45%]">
-            <label className="text-xs font-medium text-slate-400">Repo</label>
+            <label className="text-xs font-medium text-fg-muted">Repo</label>
             {repos.length === 0 ? (
-              <div className="text-xs text-slate-500 py-2">No repos configured</div>
+              <div className="text-xs text-fg-subtle py-2">No repos configured</div>
             ) : (
               <select
                 data-testid="new-task-repo-select"
                 value={repoId}
                 onChange={(e) => setRepoId(e.target.value)}
-                className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full min-w-0 bg-surface-sunken border border-border rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 {repos.map((r) => (
                   <option key={r.id} value={r.id}>{r.name}</option>
@@ -340,15 +343,15 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
           </div>
 
           <div className="flex flex-col gap-1.5 flex-1 min-w-[45%]">
-            <label className="text-xs font-medium text-slate-400">Workflow</label>
+            <label className="text-xs font-medium text-fg-muted">Workflow</label>
             {workflows.length === 0 ? (
-              <div className="text-xs text-slate-500 py-2">No workflows configured</div>
+              <div className="text-xs text-fg-subtle py-2">No workflows configured</div>
             ) : (
               <select
                 data-testid="new-task-workflow-select"
                 value={workflowId}
                 onChange={(e) => setWorkflowId(e.target.value)}
-                className="w-full min-w-0 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full min-w-0 bg-surface-sunken border border-border rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 {workflows.map((w) => (
                   <option key={w.id} value={w.id}>{w.name}</option>
@@ -360,14 +363,14 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
 
         {/* Image Attachments */}
         <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-medium text-slate-400">Attachments</label>
+          <label className="text-xs font-medium text-fg-muted">Attachments</label>
           <div
-            className="border border-dashed border-slate-600 rounded-lg p-3 text-center cursor-pointer hover:border-slate-500 transition-colors"
+            className="border border-dashed border-border rounded-lg p-3 text-center cursor-pointer hover:border-slate-500 transition-colors"
             onClick={() => fileInputRef.current?.click()}
             onDrop={handleDrop}
             onDragOver={handleDragOver}
           >
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-fg-subtle">
               Click or drag &amp; drop images here
             </p>
             <p className="text-xs text-slate-700 mt-0.5">
@@ -397,17 +400,17 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
                     <img
                       src={safeSrc}
                       alt={attachments[i]?.name}
-                      className="w-16 h-16 object-cover rounded border border-slate-700"
+                      className="w-16 h-16 object-cover rounded border border-border"
                     />
                     <button
                       type="button"
                       onClick={() => removeAttachment(i)}
-                      className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 hover:bg-red-500 rounded-full text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="absolute -top-1 -right-1 w-4 h-4 bg-danger-solid hover:bg-danger-solid/90 rounded-full text-on-accent text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
                       title="Remove"
                     >
                       ×
                     </button>
-                    <p className="text-xs text-slate-600 mt-0.5 truncate w-16 text-center">{attachments[i]?.name}</p>
+                    <p className="text-xs text-fg-subtle mt-0.5 truncate w-16 text-center">{attachments[i]?.name}</p>
                   </div>
                 )
               })}
@@ -415,14 +418,14 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
           )}
         </div>
 
-        {error && <p className="text-xs text-red-400">{error}</p>}
+        {error && <p className="text-xs text-danger">{error}</p>}
 
         <div className="flex items-center gap-2 pt-1">
           <button
             type="button"
             onClick={saveAsTemplate}
             disabled={!title.trim()}
-            className="px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1.5 text-sm text-fg-muted hover:text-fg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             title="Save the current title/description/type as a reusable template"
           >
             Save as template
@@ -431,14 +434,14 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
           <button
             type="button"
             onClick={onClose}
-            className="px-3 py-1.5 text-sm text-slate-400 hover:text-slate-200 transition-colors"
+            className="px-3 py-1.5 text-sm text-fg-muted hover:text-fg transition-colors"
           >
             Cancel
           </button>
           <button
             type="submit"
             disabled={submitting || !title.trim() || !repoId}
-            className="px-4 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+            className="px-4 py-1.5 text-sm bg-accent hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed text-on-accent rounded-lg transition-colors"
           >
             {submitting ? 'Creating…' : 'Create'}
           </button>

@@ -107,9 +107,9 @@ describe('AgentLogEntry system events', () => {
     render(<>{rows.map((r) => <AgentLogEntry key={r.key} row={r} />)}</>)
     const [err, info] = screen.getAllByTestId('system-event')
     expect(err.dataset.severity).toBe('error')
-    expect(err.innerHTML).toContain('text-red-')
+    expect(err.innerHTML).toContain('text-danger')
     expect(info.dataset.severity).toBe('info')
-    expect(info.innerHTML).not.toContain('text-red-')
+    expect(info.innerHTML).not.toContain('text-danger')
   })
 })
 

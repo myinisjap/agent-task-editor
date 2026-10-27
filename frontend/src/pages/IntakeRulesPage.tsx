@@ -1,4 +1,4 @@
-import { Check } from 'lucide-react'
+import { Check, ChevronDown, ChevronUp } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Button, PageFrame, Icon } from '../components/ui'
 import {
@@ -586,16 +586,18 @@ export default function IntakeRulesPage() {
                     disabled={idx === 0}
                     className="text-fg-subtle hover:text-accent-fg disabled:opacity-30 disabled:cursor-not-allowed text-xs leading-none"
                     title="Move up"
+                    aria-label="Move up"
                   >
-                    ▲
+                    <Icon icon={ChevronUp} size="sm" />
                   </button>
                   <button
                     onClick={() => move(rule, 1)}
                     disabled={idx === rules.length - 1}
                     className="text-fg-subtle hover:text-accent-fg disabled:opacity-30 disabled:cursor-not-allowed text-xs leading-none"
                     title="Move down"
+                    aria-label="Move down"
                   >
-                    ▼
+                    <Icon icon={ChevronDown} size="sm" />
                   </button>
                 </div>
                 <div className="flex-1 min-w-0">

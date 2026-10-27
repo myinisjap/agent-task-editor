@@ -1,3 +1,5 @@
+import { ChevronDown, ChevronRight } from 'lucide-react'
+import Icon from '../ui/Icon'
 import { useId, useState, type ReactNode } from 'react'
 
 export const DETAILS_OPEN_KEY = 'taskDetail.details.open'
@@ -39,9 +41,9 @@ export default function DetailsDisclosure({
         aria-controls={panelId}
         className="flex items-center gap-2 text-left text-xs min-w-0"
       >
-        <span aria-hidden="true" className="text-slate-500">{open ? '▾' : '▸'}</span>
-        <span className="font-semibold text-slate-300">Details</span>
-        <span className="text-slate-500 truncate">{hint}</span>
+        <span aria-hidden="true" className="text-fg-subtle"><Icon icon={open ? ChevronDown : ChevronRight} size="sm" /></span>
+        <span className="font-semibold text-fg-muted">Details</span>
+        <span className="text-fg-subtle truncate">{hint}</span>
       </button>
       <div id={panelId} className="flex flex-col gap-4 min-w-0">
         {open && children}
