@@ -184,7 +184,7 @@ function summarize(kind: StepKind, rows: LogRow[]): string {
       return rows.length === 1 ? firstLine(rowText(first), 200) : `${rows.length} system events`
     case 'tool': {
       const names = rows.map((r) => toolName(r) ?? '').filter(Boolean)
-      return `Used ${listNames(names.map((n) => n.replace(/^mcp__[^_]+(?:-[^_]+)*__/, '')))}`
+      return `Used ${listNames(names.map((n) => stripMcpPrefix(n)))}`
     }
   }
 }
@@ -421,4 +421,11 @@ export function truncateOutput(
   if (head.length > maxChars) head = head.slice(0, maxChars)
   const shown = head.split('\n').length
   return { head, truncated: true, hiddenLines: Math.max(0, lines.length - shown) }
+}
+
+/** "mcp__server__tool" -> "tool" (string ops, no regex backtracking). */
+function stripMcpPrefix(name: string): string {
+  if (!name.startsWith('mcp__')) return name
+  const i = name.indexOf('__', 5)
+  return i < 0 ? name : name.slice(i + 2)
 }
