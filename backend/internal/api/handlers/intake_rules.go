@@ -118,6 +118,7 @@ var validMatchSources = map[string]bool{
 	"manual":   true,
 	"issue":    true,
 	"schedule": true,
+	"webhook":  true,
 	"subtask":  true,
 }
 
@@ -218,6 +219,9 @@ func (h *IntakeRulesHandler) validate(ctx context.Context, body intakeRuleBody) 
 		// requiring an author-association constraint there would be
 		// nonsensical (schedules have no author) and would make an
 		// intentionally-supported configuration impossible to save.
+		if body.MatchSource == "webhook" && !isGate {
+			return "", http.StatusBadRequest, "webhook events have no author association, so a rule cannot auto-start them: target the workflow's human-review (agent_ignore) label, or set the intake endpoint's own target_label instead."
+		}
 		if body.MatchSource != "schedule" {
 			probe := gen.IntakeRule{MatchAuthorAssoc: encodeOrEmpty(body.MatchAuthorAssoc)}
 			if !intake.AutoStartAllowed(probe, isGate) {

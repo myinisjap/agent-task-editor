@@ -1,5 +1,5 @@
 // Package intake implements the match->apply rule engine evaluated at
-// task-creation time for the 'issue' and 'schedule' sources (see migration
+// task-creation time for the 'issue', 'schedule' and 'webhook' sources (see migration
 // 051 and docs/task-sources.md). It is a leaf package: it imports only
 // internal/storage/gen and the standard library, so tasksource, schedule,
 // and the API handlers can all depend on it with no import cycle risk (the
@@ -48,7 +48,7 @@ import (
 
 // Candidate is the information available about an incoming item at the
 // point a rule sweep needs to decide how to shape it. Source is one of
-// "manual", "issue", "schedule", "subtask" (only "issue" and "schedule" are
+// "manual", "issue", "schedule", "webhook", "subtask" (only "issue", "schedule" and "webhook" are
 // currently evaluated against rules — see the package doc on
 // tasksource/schedule integration). RepoID is the target repo. AuthorAssoc
 // is the reporting item's author association as reported by the forge
