@@ -427,7 +427,7 @@ export default function BoardPage() {
             title={condensed ? 'Switch to expanded view' : 'Switch to condensed view'}
             className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md border transition-colors ${
               condensed
-                ? 'bg-indigo-700 border-indigo-500 text-indigo-100 hover:bg-indigo-600'
+                ? 'bg-indigo-600 border-indigo-500 text-indigo-100 hover:bg-indigo-600'
                 : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
             }`}
           >
@@ -476,7 +476,7 @@ export default function BoardPage() {
           onClick={() => setShowArchived(!showArchived)}
           className={`text-xs px-2.5 py-1 rounded border transition-colors ${
             showArchived
-              ? 'bg-indigo-700 border-indigo-500 text-indigo-100 hover:bg-indigo-600'
+              ? 'bg-indigo-600 border-indigo-500 text-indigo-100 hover:bg-indigo-600'
               : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
           }`}
           title="Show archived tasks on the board"

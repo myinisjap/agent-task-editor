@@ -60,5 +60,6 @@ export default async function globalSetup() {
   // Exposed to tests via process.env (Playwright config/tests run in the
   // same Node process as globalSetup).
   process.env.E2E_REPO_NAME = REPO_NAME
+  process.env.E2E_REPO_ID = repo!.id
   process.env.E2E_WORKFLOW_ID = workflowId
 }

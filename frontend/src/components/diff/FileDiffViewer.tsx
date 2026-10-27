@@ -206,7 +206,7 @@ function CommentEditor({ onSave, onCancel, lineLabel }: CommentEditorProps) {
               type="button"
               disabled={!text.trim()}
               onClick={() => onSave(text.trim())}
-              className="px-2.5 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-50"
+              className="px-2.5 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-black disabled:opacity-50"
             >
               Save comment
             </button>
@@ -353,7 +353,7 @@ function FileBlock({ file, comments, onAddComment, onRemoveComment, onReopenComm
                 <button
                   type="button"
                   onClick={openCommentEditorForSelection}
-                  className="text-xs px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-500 text-white"
+                  className="text-xs px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-500 text-black"
                 >
                   Comment on selection
                 </button>

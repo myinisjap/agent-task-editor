@@ -39,6 +39,8 @@ triggers the "Release" workflow the same way.
 - Escalation ladder: agent configs can define `escalation_ladder` rungs (provider config + effort) used after consecutive failures / review bounce-backs on that stage; the rung is recorded on each run, shown in Task Detail, and summarized on Agent Performance. Empty by default (no behaviour change).
 
 ### Fixed
+- Light mode: secondary buttons, active nav/tab items, hover link colours and -700/-800 accent buttons no longer show white text on light grey or pastel fills (now `text-slate-50` or -600 fills; amber buttons use dark text).
+- Added an axe `color-contrast` e2e spec (Inbox, Board, Task Detail, Pipeline, Settings → Health, both themes) with an explicit allowlist of known existing violations, plus a static vitest guard against `text-white` on flipping fills.
 
 - **Board card titles no longer get crushed by status badges.** The title now has its own line (up to 3 lines) and badges wrap in a row below it, in both expanded and condensed modes and on phones. A waiting task now shows one "needs you" badge carrying the escalation reason, instead of both the escalation badge and a separate "Needs you" badge.
 - **Parents no longer auto-advance to testing when subtasks finish** (they get an integration run on their current label; agent_ignore parents keep the old behaviour), and a parent or overlap-serialized sibling can no longer be dispatched between a subtask reaching a terminal label and its branch being merged back (subtask blockers now count as satisfied only once merged).

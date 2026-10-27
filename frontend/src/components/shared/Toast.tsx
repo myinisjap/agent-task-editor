@@ -24,7 +24,7 @@ export default function Toast({
       className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-50 max-w-[90vw] flex items-center gap-3 rounded-lg bg-emerald-900 border border-emerald-700 text-emerald-100 text-sm px-4 py-2 shadow-lg"
     >
       <span className="break-words">{message}</span>
-      <button onClick={onDismiss} aria-label="Dismiss" className="text-emerald-300 hover:text-white">
+      <button onClick={onDismiss} aria-label="Dismiss" className="text-emerald-300 hover:text-emerald-50">
         ×
       </button>
     </div>
