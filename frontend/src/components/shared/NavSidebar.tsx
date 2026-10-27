@@ -9,6 +9,7 @@ import type { WSStatus } from '../../api/ws'
 import { useNeedsMeSync } from '../../lib/useNeedsMeSync'
 import { useInboxSync } from '../../lib/useInboxSync'
 import { useInboxCount } from '../../stores/inbox'
+import { Badge, Button } from '../ui'
 
 interface NavGroup {
   key: string
@@ -44,9 +45,9 @@ const groups: NavGroup[] = [
 const STORAGE_KEY = 'nav-open-groups'
 
 const WS_STATUS_CONFIG: Record<WSStatus, { label: string; dotClassName: string }> = {
-  open: { label: 'Live', dotClassName: 'bg-emerald-400' },
-  connecting: { label: 'Reconnecting…', dotClassName: 'bg-amber-400 animate-pulse' },
-  closed: { label: 'Offline', dotClassName: 'bg-red-400' },
+  open: { label: 'Live', dotClassName: 'bg-success' },
+  connecting: { label: 'Reconnecting…', dotClassName: 'bg-warning animate-pulse' },
+  closed: { label: 'Offline', dotClassName: 'bg-danger' },
 }
 
 /** Which group (if any) contains the given pathname. */
@@ -138,8 +139,8 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
   const linkClassName = ({ isActive }: { isActive: boolean }) =>
     `px-3 py-2 rounded-md text-sm font-medium transition-colors ${
       isActive
-        ? 'bg-slate-700 text-slate-50'
-        : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800'
+        ? 'bg-surface-sunken text-fg'
+        : 'text-fg-muted hover:text-fg hover:bg-surface-sunken'
     }`
 
   return (
@@ -155,7 +156,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
       {/* Sidebar */}
       <aside
         className={`
-          flex flex-col bg-slate-900 border-r border-slate-700 p-4 gap-1 z-40
+          flex flex-col bg-surface-raised border-r border-border p-4 gap-1 z-40
           fixed inset-y-0 left-0 w-52 transition-transform duration-200 ease-in-out
           md:relative md:translate-x-0 md:shrink-0
           ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
@@ -163,11 +164,11 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
       >
         {/* Header row with title and mobile close button */}
         <div className="flex items-center justify-between mb-6 px-2">
-          <div className="text-slate-100 font-bold text-lg">AgentEditor</div>
+          <div className="text-fg font-bold text-lg">AgentEditor</div>
           <button
             onClick={() => setIsOpen(false)}
             aria-label="Close menu"
-            className="md:hidden text-slate-400 hover:text-slate-100 p-1 rounded"
+            className="md:hidden text-fg-muted hover:text-fg p-1 rounded"
           >
             ✕
           </button>
@@ -184,13 +185,16 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
           >
             {inboxLink.label}
             {inboxCount > 0 && (
-              <span
-                className="ml-2 inline-flex items-center justify-center min-w-[1.25rem] px-1.5 py-0.5 rounded-full bg-pink-600 text-white text-[10px] font-semibold"
+              <Badge
+                tone="accent"
+                variant="solid"
+                size="xs"
+                className="ml-2 justify-center min-w-[1.25rem] rounded-full font-semibold"
                 title={`${inboxCount} item${inboxCount === 1 ? '' : 's'} waiting on you`}
                 aria-label={`${inboxCount} items waiting on you`}
               >
                 {inboxCount}
-              </span>
+              </Badge>
             )}
           </NavLink>
 
@@ -207,8 +211,8 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
                   role="img"
                   aria-label={healthSeverity === 'error' ? 'Health check failing' : 'Health check warning'}
                   className={healthCount > 0
-                    ? `ml-2 inline-block min-w-[1.25rem] rounded-full px-1 text-center text-[10px] font-semibold leading-4 align-middle text-white ${healthSeverity === 'error' ? 'bg-red-600' : 'bg-amber-500'}`
-                    : `ml-2 inline-block w-2 h-2 rounded-full align-middle ${healthSeverity === 'error' ? 'bg-red-500' : 'bg-amber-400'}`}
+                    ? `ml-2 inline-block min-w-[1.25rem] rounded-full px-1 text-center text-[10px] font-semibold leading-4 align-middle ${healthSeverity === 'error' ? 'bg-danger-solid text-on-accent' : 'bg-warning-soft text-warning border border-warning/40'}`
+                    : `ml-2 inline-block w-2 h-2 rounded-full align-middle ${healthSeverity === 'error' ? 'bg-danger' : 'bg-warning'}`}
                 >
                   {healthCount > 0 ? healthCount : null}
                 </span>
@@ -226,7 +230,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
                   onClick={() => toggleGroup(group.key)}
                   aria-expanded={isGroupOpen}
                   aria-controls={panelId}
-                  className="flex items-center justify-between px-3 py-2 rounded-md text-xs font-semibold uppercase tracking-wide text-slate-500 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+                  className="flex items-center justify-between px-3 py-2 rounded-md text-xs font-semibold uppercase tracking-wide text-fg-subtle hover:text-fg hover:bg-surface-sunken transition-colors"
                 >
                   <span>
                     {group.label}
@@ -259,7 +263,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
         </div>
 
         <div
-          className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-400 shrink-0"
+          className="flex items-center gap-2 px-3 py-2 text-xs font-medium text-fg-muted shrink-0"
           title={`WebSocket: ${WS_STATUS_CONFIG[wsStatus].label}`}
         >
           <span
@@ -272,7 +276,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
         {notificationsUnavailable ? (
           <div
             title={NOTIFICATIONS_UNAVAILABLE[notificationsUnavailable].title}
-            className="mt-auto flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-500 shrink-0"
+            className="mt-auto flex items-center gap-2 px-3 py-2 text-sm font-medium text-fg-subtle shrink-0"
           >
             <span aria-hidden="true">🔕</span>
             <span>{NOTIFICATIONS_UNAVAILABLE[notificationsUnavailable].label}</span>
@@ -284,20 +288,16 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
                 id="notifications-blocked-help"
                 role="dialog"
                 aria-label="How to enable notifications"
-                className="mb-1 rounded-md border border-amber-700 bg-slate-800 p-3 text-xs text-slate-300"
+                className="mb-1 rounded-md border border-warning/50 bg-surface-sunken p-3 text-xs text-fg-muted"
               >
                 <p>
                   Notifications are blocked for this site in your browser. To turn them on: click the lock /
                   site-settings icon in the address bar → Notifications → Allow, then reload. On mobile: browser
                   Settings → Site settings → Notifications.
                 </p>
-                <button
-                  type="button"
-                  onClick={recheckNotifications}
-                  className="mt-2 rounded border border-slate-600 px-2 py-0.5 hover:bg-slate-700"
-                >
+                <Button size="sm" variant="secondary" onClick={recheckNotifications} className="mt-2 px-2 py-0.5">
                   Check again
-                </button>
+                </Button>
               </div>
             )}
             <button
@@ -305,7 +305,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
               onClick={() => setNotifHelpOpen((v) => !v)}
               aria-expanded={notifHelpOpen}
               aria-controls="notifications-blocked-help"
-              className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-amber-300 hover:bg-slate-800 transition-colors"
+              className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-warning hover:bg-surface-sunken transition-colors"
             >
               <span aria-hidden="true">🔕</span>
               <span>Notifications blocked</span>
@@ -317,7 +317,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
             onClick={toggleNotifications}
             aria-label={notificationsEnabled ? 'Disable notifications' : 'Enable notifications'}
             title={notificationsEnabled ? 'Disable notifications' : 'Get notified in your browser when a task needs a human'}
-            className="mt-auto flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors shrink-0"
+            className="mt-auto flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-fg-muted hover:text-fg hover:bg-surface-sunken transition-colors shrink-0"
           >
             <span aria-hidden="true">{notificationsEnabled ? '🔔' : '🔕'}</span>
             <span>
@@ -330,7 +330,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
           onClick={toggleTheme}
           aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
           title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-          className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors shrink-0"
+          className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-fg-muted hover:text-fg hover:bg-surface-sunken transition-colors shrink-0"
         >
           <span aria-hidden="true">{theme === 'dark' ? '☀️' : '🌙'}</span>
           <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>

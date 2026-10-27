@@ -11,11 +11,12 @@ import { useIsMobile } from '../../lib/useIsMobile'
 import { blockReasonLabel, isTransientBlockReason } from '../../lib/blockReason'
 import { formatRelativeCountdown } from '../../lib/format'
 import { canHumanMove } from '../../lib/humanMoves'
+import { Badge, Button, Field, controlClasses } from '../ui'
 
 export function Row({ label, children, wide = false }: { label: string; children: React.ReactNode; wide?: boolean }) {
   return (
     <div className={`flex items-center gap-2 min-w-0 ${wide ? 'lg:col-span-2' : ''}`}>
-      <span className="text-xs text-slate-500 w-16 shrink-0">{label}</span>
+      <span className="text-xs text-fg-subtle w-16 shrink-0">{label}</span>
       {children}
     </div>
   )
@@ -169,7 +170,7 @@ export default function TaskHeader({
       <div className="flex items-center justify-between">
         <button
           onClick={onBack}
-          className="text-xs text-slate-500 hover:text-slate-300 text-left"
+          className="text-xs text-fg-subtle hover:text-fg text-left"
         >
           ← Board
         </button>
@@ -177,7 +178,7 @@ export default function TaskHeader({
           <button
             onClick={onTogglePause}
             disabled={actionPending}
-            className={`text-xs disabled:opacity-50 ${task.paused ? 'text-emerald-400 hover:text-emerald-300' : 'text-amber-400 hover:text-amber-300'}`}
+            className={`text-xs disabled:opacity-50 ${task.paused ? 'text-success' : 'text-warning'}`}
             title={task.paused ? 'Resume task' : 'Pause task'}
           >
             {task.paused ? '▶ Resume' : '⏸ Pause'}
@@ -185,7 +186,7 @@ export default function TaskHeader({
           {isStartingColumn && !editingTask && (
             <button
               onClick={onStartEdit}
-              className="text-xs text-indigo-400 hover:text-indigo-300"
+              className="text-xs text-accent-fg"
               title="Edit task"
             >
               ✎ Edit
@@ -194,7 +195,7 @@ export default function TaskHeader({
           {onDuplicate && (
             <button
               onClick={onDuplicate}
-              className="text-xs text-indigo-400 hover:text-indigo-300"
+              className="text-xs text-accent-fg"
               title="Duplicate task — opens a pre-filled New Task form"
             >
               ⧉ Duplicate
@@ -202,7 +203,7 @@ export default function TaskHeader({
           )}
           <button
             onClick={onDelete}
-            className="text-xs text-red-400 hover:text-red-300"
+            className="text-xs text-danger hover:opacity-80"
           >
             Delete
           </button>
@@ -211,54 +212,44 @@ export default function TaskHeader({
 
       {editingTask ? (
         <div className="flex flex-col gap-3">
-          <div>
-            <label className="text-xs text-slate-500 mb-1 block">Title</label>
+          <Field label="Title">
             <input
               autoFocus
               value={editTitle}
               onChange={(e) => setEditTitle(e.target.value)}
-              className="w-full text-sm bg-slate-800 border border-slate-600 rounded px-3 py-2 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-400"
+              className={controlClasses}
               placeholder="Task title"
             />
-          </div>
-          <div>
-            <label className="text-xs text-slate-500 mb-1 block">Description</label>
+          </Field>
+          <Field label="Description">
             <textarea
               value={editDesc}
               onChange={(e) => setEditDesc(e.target.value)}
               rows={4}
-              className="w-full text-sm bg-slate-800 border border-slate-600 rounded px-3 py-2 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-400 resize-none"
+              className={`${controlClasses} resize-none`}
               placeholder="Description (optional)"
             />
-          </div>
-          <div>
-            <label className="text-xs text-slate-500 mb-1 block">Type</label>
-            <select
-              value={editType}
-              onChange={(e) => setEditType(e.target.value)}
-              className="w-full text-sm bg-slate-800 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-400"
-            >
+          </Field>
+          <Field label="Type">
+            <select value={editType} onChange={(e) => setEditType(e.target.value)} className={controlClasses}>
               {['feature', 'bug', 'chore', 'spike'].map((t) => (
                 <option key={t} value={t}>{t}</option>
               ))}
             </select>
-          </div>
+          </Field>
           {repos.length > 0 && (
-            <div>
-              <label className="text-xs text-slate-500 mb-1 block">Repo</label>
-              <select
-                value={editRepoId}
-                onChange={(e) => setEditRepoId(e.target.value)}
-                className="w-full text-sm bg-slate-800 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-400"
-              >
+            <Field label="Repo">
+              <select value={editRepoId} onChange={(e) => setEditRepoId(e.target.value)} className={controlClasses}>
                 {repos.map((r) => (
                   <option key={r.id} value={r.id}>{r.name}</option>
                 ))}
               </select>
-            </div>
+            </Field>
           )}
-          <div>
-            <label className="text-xs text-slate-500 mb-1 block">Max cost (USD)</label>
+          <Field
+            label="Max cost (USD)"
+            hint="Advisory budget cap checked by the dispatcher before each dispatch. Empty/0 = unlimited."
+          >
             <input
               type="number"
               step="0.01"
@@ -266,61 +257,46 @@ export default function TaskHeader({
               value={editMaxCostUsd}
               onChange={(e) => setEditMaxCostUsd(e.target.value)}
               placeholder="Unlimited"
-              className="w-full text-sm bg-slate-800 border border-slate-600 rounded px-3 py-2 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-400"
+              className={controlClasses}
             />
-            <p className="mt-1 text-xs text-slate-500">Advisory budget cap checked by the dispatcher before each dispatch. Empty/0 = unlimited.</p>
-          </div>
-          <div>
-            <label className="text-xs text-slate-500 mb-1 block">Priority</label>
-            <select
-              value={editPriority}
-              onChange={(e) => setEditPriority(Number(e.target.value))}
-              className="w-full text-sm bg-slate-800 border border-slate-600 rounded px-3 py-2 text-slate-100 focus:outline-none focus:border-indigo-400"
-            >
+          </Field>
+          <Field label="Priority" hint="Dispatch order only — never preempts an already-running task.">
+            <select value={editPriority} onChange={(e) => setEditPriority(Number(e.target.value))} className={controlClasses}>
               {PRIORITY_LEVELS.map((p) => (
                 <option key={p.value} value={p.value}>{p.label}</option>
               ))}
             </select>
-            <p className="mt-1 text-xs text-slate-500">Dispatch order only — never preempts an already-running task.</p>
-          </div>
+          </Field>
           {taskSaveError && (
-            <p className="text-xs text-red-400">{taskSaveError}</p>
+            <p className="text-xs text-danger">{taskSaveError}</p>
           )}
           <div className="flex gap-2 justify-end">
-            <button
-              onClick={onCancelEdit}
-              disabled={taskSaving}
-              className="px-3 py-1.5 text-xs rounded bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-50 transition-colors"
-            >
+            <Button size="sm" variant="secondary" onClick={onCancelEdit} disabled={taskSaving}>
               Cancel
-            </button>
-            <button
-              onClick={onTaskSave}
-              disabled={taskSaving || !editTitle.trim()}
-              className="px-3 py-1.5 text-xs rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 transition-colors"
-            >
+            </Button>
+            <Button size="sm" variant="primary" onClick={onTaskSave} disabled={taskSaving || !editTitle.trim()}>
               {taskSaving ? 'Saving…' : 'Save changes'}
-            </button>
+            </Button>
           </div>
         </div>
       ) : (
         <div>
-          <h1 className="text-lg font-semibold text-slate-100 leading-snug">{task.title}</h1>
+          <h1 className="text-lg font-semibold text-fg leading-snug">{task.title}</h1>
           {task.block_reason ? (
-            <div className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg font-medium bg-red-900/40 text-red-300 mt-2">
+            <Badge tone="danger" className="gap-1.5 px-2 py-1 mt-2">
               <span>🚫 Not dispatching — {blockReasonLabel(task.block_reason)}:</span>
-              <span className="text-red-200/90">{task.block_reason.message}</span>
+              <span className="text-fg">{task.block_reason.message}</span>
               {task.block_reason.clears_at && isTransientBlockReason(task.block_reason) && (
-                <span className="text-red-400/80">
+                <span className="text-danger/80">
                   (clears {formatRelativeCountdown(task.block_reason.clears_at)})
                 </span>
               )}
-            </div>
+            </Badge>
           ) : (
             task.paused && (
-              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold bg-amber-900/70 text-amber-300 mt-2">
+              <Badge tone="warning" className="mt-2">
                 ⏸ Paused — agents will not pick up this task
-              </span>
+              </Badge>
             )
           )}
           {task.description && (
@@ -329,16 +305,16 @@ export default function TaskHeader({
                 <button
                   type="button"
                   onClick={() => setDescModalOpen(true)}
-                  className="text-left w-full cursor-pointer hover:bg-slate-700/50 transition-colors rounded"
+                  className="text-left w-full cursor-pointer hover:bg-surface-sunken transition-colors rounded"
                   title="Click to expand"
                 >
-                  <p className="text-sm text-slate-400 bg-slate-800 rounded p-2 whitespace-pre-wrap max-h-24 overflow-hidden">
+                  <p className="text-sm text-fg-muted bg-surface-sunken rounded p-2 whitespace-pre-wrap max-h-24 overflow-hidden">
                     {task.description}
                   </p>
                 </button>
               </div>
             ) : (
-              <p className="text-sm text-slate-400 mt-2">{task.description}</p>
+              <p className="text-sm text-fg-muted mt-2">{task.description}</p>
             )
           )}
           {descModalOpen && task.description && (
@@ -354,7 +330,7 @@ export default function TaskHeader({
                     key={rel}
                     src={blobUrl}
                     alt="attachment"
-                    className="max-h-48 rounded border border-slate-700 cursor-pointer hover:border-slate-500 transition-colors"
+                    className="max-h-48 rounded border border-border cursor-pointer hover:border-fg-subtle transition-colors"
                     onClick={() => window.open(blobUrl, '_blank')}
                     title="Click to open full size"
                   />
@@ -367,9 +343,9 @@ export default function TaskHeader({
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-2 min-w-0">
         <Row label="Label" wide>
-          <span className="text-xs px-2 py-0.5 rounded-full font-medium text-white bg-slate-600">
+          <Badge tone="neutral">
             {labelDisplayNameByName(task.label, labels)}
-          </span>
+          </Badge>
           {moveTargets.length > 0 && (
             <select
               defaultValue=""
@@ -380,7 +356,7 @@ export default function TaskHeader({
                   e.target.value = ''
                 }
               }}
-              className="text-xs bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer disabled:opacity-50"
+              className={`${controlClasses} text-xs px-2 py-1 w-auto cursor-pointer`}
             >
               <option value="" disabled>Move to…</option>
               {moveTargets.map((l) => (
@@ -389,9 +365,9 @@ export default function TaskHeader({
             </select>
           )}
         </Row>
-        <Row label="Type"><span className="text-xs text-slate-300">{task.type}</span></Row>
+        <Row label="Type"><span className="text-xs text-fg">{task.type}</span></Row>
         <Row label="Priority">
-          <span className="text-xs text-slate-300">
+          <span className="text-xs text-fg">
             {priorityLabel(task.priority)}
             {!task.block_reason && task.queue_position != null
               ? ` — #${task.queue_position + 1} in dispatch queue`
@@ -400,11 +376,11 @@ export default function TaskHeader({
         </Row>
         {task.block_reason?.code === 'dependency' && (
           <Row label="Blocked" wide>
-            <span className="text-xs text-red-300">See Dependencies under Details below for the blocking task(s).</span>
+            <span className="text-xs text-danger">See Dependencies under Details below for the blocking task(s).</span>
           </Row>
         )}
         <Row label="Cost">
-          <span className="text-xs text-slate-300">
+          <span className="text-xs text-fg">
             ${cumulativeCost.toFixed(2)}
             {task.max_cost_usd ? ` / $${task.max_cost_usd.toFixed(2)} budget` : ''}
           </span>
@@ -420,23 +396,24 @@ export default function TaskHeader({
         {task.branch && (
           <>
             <Row label="Branch">
-              <span className="text-xs font-mono text-slate-300 truncate min-w-0" title={task.branch}>{task.branch}</span>
+              <span className="text-xs font-mono text-fg truncate min-w-0" title={task.branch}>{task.branch}</span>
             </Row>
             <Row label="Git">
               <div className="flex items-center gap-2">
                 <GitStateBadge branch={task.branch} gitState={task.git_state} prMergeable={task.pr_mergeable} />
-                <span className="text-xs text-slate-400">{task.git_state || 'branched'}</span>
+                <span className="text-xs text-fg-muted">{task.git_state || 'branched'}</span>
                 {task.git_state === 'pr_open' && task.pr_mergeable === 'conflicting' && (
-                  <span
-                    className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-400 font-medium"
+                  <Badge
+                    tone="danger"
+                    size="xs"
                     title="GitHub reports this PR no longer merges cleanly into its base branch"
                   >
                     merge conflict
-                  </span>
+                  </Badge>
                 )}
                 <button
                   onClick={onSyncGitState}
-                  className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                  className="text-xs text-fg-subtle hover:text-fg transition-colors"
                   title="Sync PR state from GitHub"
                 >
                   ↻ Sync
@@ -449,7 +426,7 @@ export default function TaskHeader({
                   href={task.pr_url}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors truncate"
+                  className="text-xs text-accent-fg transition-colors truncate"
                 >
                   {task.pr_url.replace('https://github.com/', '')} ↗
                 </a>
@@ -457,7 +434,7 @@ export default function TaskHeader({
                 <button
                   onClick={onCreatePR}
                   disabled={creatingPR}
-                  className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors disabled:opacity-50"
+                  className="text-xs text-accent-fg transition-colors disabled:opacity-50"
                   title="Push the branch and open a GitHub pull request"
                 >
                   {creatingPR ? 'Creating PR…' : '+ Create PR'}
@@ -469,14 +446,14 @@ export default function TaskHeader({
         )}
         {task.agent_notes && (
           <div className="lg:col-span-2">
-            <p className="text-xs text-slate-500 mb-1" style={{ minHeight: '1.5em' }}>Agent Notes</p>
+            <p className="text-xs text-fg-subtle mb-1" style={{ minHeight: '1.5em' }}>Agent Notes</p>
             <button
               type="button"
               onClick={() => setNotesModalOpen(true)}
-              className="text-left w-full cursor-pointer hover:bg-slate-700/50 transition-colors rounded"
+              className="text-left w-full cursor-pointer hover:bg-surface-sunken transition-colors rounded"
               title="Click to expand"
             >
-              <pre className="text-xs text-slate-300 bg-slate-800 rounded p-2 whitespace-pre-wrap max-h-60 overflow-hidden font-sans">
+              <pre className="text-xs text-fg bg-surface-sunken rounded p-2 whitespace-pre-wrap max-h-60 overflow-hidden font-sans">
                 {task.agent_notes}
               </pre>
             </button>
@@ -491,17 +468,17 @@ export default function TaskHeader({
               href={`https://github.com/${task.source_ref.replace('#', '/issues/')}`}
               target="_blank"
               rel="noreferrer"
-              className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+              className="text-xs text-accent-fg transition-colors"
             >
               {task.source_ref}
             </a>
             {task.source_state === 'gone' && (
-              <span
-                className="text-xs px-2 py-0.5 rounded-full font-medium bg-amber-900/70 text-amber-300"
+              <Badge
+                tone="warning"
                 title="The source issue closed or no longer matches the repo's issue sync filter. The task was left as-is (or archived/moved, per the repo's setting) rather than silently orphaned."
               >
                 ⚠ source issue closed or unlabeled
-              </span>
+              </Badge>
             )}
           </Row>
         )}
@@ -509,7 +486,7 @@ export default function TaskHeader({
           <Row label="Intake rule">
             <Link
               to="/settings/intake-rules"
-              className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+              className="text-xs text-accent-fg transition-colors"
               title="This task's label/priority/template/workflow were shaped by this intake rule at creation — see Settings → Intake Rules."
             >
               {task.matched_rule_name || task.matched_rule_id}
@@ -517,7 +494,7 @@ export default function TaskHeader({
           </Row>
         )}
         <Row label="Created">
-          <span className="text-xs text-slate-400">{new Date(task.created_at).toLocaleDateString()}</span>
+          <span className="text-xs text-fg-muted">{new Date(task.created_at).toLocaleDateString()}</span>
         </Row>
       </div>
     </>

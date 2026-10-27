@@ -29,6 +29,7 @@ src/
 │   ├── diff/          FileDiffViewer (syntax-highlighted git diff + inline review comments)
 │   ├── inbox/         DecisionContext (Decide row summary), InboxPreview (desktop right-pane preview)
 │   ├── lessons/       LessonForm, LessonsPanel (repo/global lessons), RememberLessonModal
+│   ├── ui/            Button, Badge, Card, Field, PageFrame + design tokens (see ui/README.md)
 │   ├── skills/        SkillPicker (chip multi-select for agent/repo skills)
 │   └── shared/        ApiTokenGate, GitHubAuthWarning, NavSidebar, Toast, WorkflowFlowchart
 ├── pages/
@@ -134,7 +135,9 @@ can't silently diverge.
 
 Authored **dark-first** with Tailwind `slate` plus accents. The light theme is derived by remapping `--color-<name>-<shade>` variables under a `.light` root class in `src/index.css` (regenerate with `node scripts/gen-light-theme.mjs` after a Tailwind upgrade). Prefer `slate`/accent utilities over hardcoded hex, and don't add per-component `dark:` variants. `src/stores/theme.ts` persists the choice; an inline script in `index.html` applies the class before first paint.
 
-**Contrast rule:** `white`/`black` are not remapped, and shades 50–400 / 700–900 flip while 500/600 stay put. So never put `text-white` on slate/neutral fills or on any -700/-800/-900 fill (it becomes white-on-pastel in light mode). Use `text-slate-50` (it flips) on slate fills, and keep `text-white` only on saturated -500/-600 fills. Avoid `hover:bg-slate-600` behind flipping text (600 does not flip). Never stack `text-white` with another text colour on one element (CSS order wins, not class order). `src/theme/textOnFill.test.ts` and `e2e/contrast.spec.ts` (axe `color-contrast`, both themes) enforce this.
+**Semantic tokens (ADR 0039):** new and migrated code uses the OKLCH tokens declared in `@theme` in `src/index.css` (`bg-surface`/`-raised`/`-sunken`, `text-fg`/`-muted`/`-subtle`, `border-border`, status `text-<tone>` + `bg-<tone>-soft`, `bg-accent text-on-accent`) and the `components/ui` primitives; light values live in a hand-written `.light` block separate from the generated slate remap. Token contrast is enforced by `src/theme/tokens.test.ts`; see `src/components/ui/README.md`. The slate remap and `gen-light-theme.mjs` stay for unmigrated code, and the contrast rule below applies to it.
+
+**Contrast rule (slate/accent classes):** `white`/`black` are not remapped, and shades 50–400 / 700–900 flip while 500/600 stay put. So never put `text-white` on slate/neutral fills or on any -700/-800/-900 fill (it becomes white-on-pastel in light mode). Use `text-slate-50` (it flips) on slate fills, and keep `text-white` only on saturated -500/-600 fills. Avoid `hover:bg-slate-600` behind flipping text (600 does not flip). Never stack `text-white` with another text colour on one element (CSS order wins, not class order). `src/theme/textOnFill.test.ts` and `e2e/contrast.spec.ts` (axe `color-contrast`, both themes) enforce this.
 
 ## State Management Pattern
 
