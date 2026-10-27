@@ -160,11 +160,11 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     },
     commandAllowlist: {
       support: 'partial',
-      note: 'Mapped to opencode\'s "permission.bash" config: listed patterns get "allow" plus a catch-all "*": "deny" default. opencode\'s pattern-matching semantics (most-specific-wins vs. first-match, and whether "*" is treated as a wildcard default) have not been verified live.',
+      note: 'Mapped to opencode\'s "permission.bash" config: listed patterns get "allow" after a catch-all "*": "deny" default. Rules are emitted in opencode\'s last-match-wins order (https://opencode.ai/docs/permissions/): "*" first, allow entries next, deny entries last.',
     },
     commandDenylist: {
       support: 'partial',
-      note: 'Mapped to opencode\'s "permission.bash" config as "deny" entries (wins over an overlapping allowlist entry). opencode run auto-rejects "ask" permissions headless since --auto is deliberately never passed, so a deny entry genuinely blocks the pattern — but opencode\'s pattern-matching semantics have not been verified live.',
+      note: 'Mapped to opencode\'s "permission.bash" config as "deny" entries emitted last, so under opencode\'s last-match-wins evaluation they always win over an overlapping allowlist entry. opencode run auto-rejects "ask" permissions headless since --auto is deliberately never passed, so a deny entry genuinely blocks the pattern.',
     },
     costTracking: {
       support: 'full',

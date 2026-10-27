@@ -441,6 +441,40 @@ Delete a template. Returns `204`.
 
 ---
 
+## Repo Lessons
+
+Short curated lessons injected into agent prompts; see [lessons.md](lessons.md).
+A lesson has `repo_id` (null = global), `kind`
+(`convention|trap|command|decision|preference`), `body` (max 300 characters),
+`path_globs[]`, `stages[]`, `citations[]`, `source` (`human|agent|distiller`),
+`source_task_id`, `status` (`proposed|active|stale|retired`), `injected_count`,
+`created_at`, `updated_at`, `last_checked_at`. Lists are not paginated.
+
+### `GET /repos/{id}/lessons`
+List the repo's own lessons (not global ones), newest first. Optional `?status=`.
+`404` if the repo is missing, `400` for an invalid status.
+
+### `POST /repos/{id}/lessons`
+Create a repo lesson. `kind` and `body` are required; `status` defaults to
+`active`, `source` to `human`, `citations` to `[]`. Returns `201`; `400` for an
+invalid kind/status/source, empty or over-long body, non-array citations, or
+globs/stages containing commas or newlines; `404` if the repo is missing.
+
+### `GET /lessons`
+List global lessons (`repo_id` null). Optional `?status=`.
+
+### `POST /lessons`
+Create a global lesson (same body as above). Returns `201`.
+
+### `PATCH /lessons/{id}`
+Partial update: omitted fields are kept. `repo_id` cannot change. `404` if
+missing, `400` on invalid values.
+
+### `DELETE /lessons/{id}`
+Returns `204`, or `404` if missing.
+
+---
+
 ## Task Schedules
 
 Recurring instantiation of a task template against a repo on a cron

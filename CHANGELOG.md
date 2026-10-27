@@ -19,7 +19,14 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+
+- **Repo lessons.** Short, human-curated per-repo (or global) lessons stored in `repo_lessons` and managed via `GET/POST /repos/{id}/lessons`, `GET/POST /lessons`, `PATCH/DELETE /lessons/{id}`. Active lessons matching the run's label (and, when set, the task's changed files) are injected into agent prompts under `REPO LESSONS`, capped at 15 lessons / about 2,000 characters. UI comes in a follow-up. Task runs keep Claude Code auto-memory off via `--bare` (now covered by a test and documented).
+- Escalation ladder: agent configs can define `escalation_ladder` rungs (provider config + effort) used after consecutive failures / review bounce-backs on that stage; the rung is recorded on each run, shown in Task Detail, and summarized on Agent Performance. Empty by default (no behaviour change).
+
 ### Fixed
+
+- **opencode command denylist now always beats an overlapping allowlist entry.** The `permission.bash` block was serialised as a Go map (keys sorted alphabetically) but opencode applies the last matching rule, so a deny like `rm *` could be overridden by an allow like `rm tmp/*`. Rules are now emitted in a fixed order: `*` first, then allow, then deny.
 
 - **Stale review feedback no longer follows every later run.** Feedback from a failed run, a failed verify, a PR review or a rejection is now dropped once a run that received it completes successfully, instead of being copied onto every later run (it showed up as `FEEDBACK FROM PRIOR REVIEW` long after it was fixed). Retries after a transient error and replies to a run waiting on a human still see it.
 - **Agents can write to repos' `.git` again after host-side git use.** With `AGENT_FIX_REPO_PERMS=auto` the entrypoint skipped any repo whose top-level dir was already group-writable, so `.git/objects/xx` dirs created by git on the host (umask `022`) stayed owner-only and agent runs failed at `git add`/merge with a permission error. The entrypoint now re-opens `.git` whenever any directory in it lacks group write and sets `core.sharedRepository=group` on each repo, so git keeps new object dirs group-writable.
@@ -27,7 +34,6 @@ triggers the "Release" workflow the same way.
 
 ### Added
 
-- Escalation ladder: agent configs can define `escalation_ladder` rungs (provider config + effort) used after consecutive failures / review bounce-backs on that stage; the rung is recorded on each run, shown in Task Detail, and summarized on Agent Performance. Empty by default (no behaviour change).
 - **`BACKEND_MEMORY_LIMIT`** sets the backend container's memory ceiling in both compose files (default `4g`, unchanged), so it can be raised from `.env` without editing the compose file.
 - **`--mcp-profile` flag on `dev.sh` and `run.sh`.** Sets the remote MCP connector's tool set per invocation instead of relying on `MCP_TOOL_PROFILE` in `.env`: `./dev.sh --with-remote-mcp --mcp-profile admin start`. Accepts `readonly`, `full` or `admin`; any other value exits 1. Passing it without `--with-remote-mcp` prints a warning and is ignored, since it only affects the remote endpoint. Omitting it changes nothing — the value from `.env`/compose still applies (backend default: `readonly`). Widening the profile is deliberately an explicit per-run choice: `admin` adds workflow/repo/agent/template/schedule writes to a publicly reachable endpoint whose only gate is the OAuth check against `MCP_ALLOWED_EMAILS`.
 - **Opt-in tool profiles for the stdio board MCP.** `mcp-board` (Chat tab and Claude Desktop) reads a new `TOOL_PROFILE` env var: unset or `create` keeps today's three tools (`list_repos`, `list_workflows`, `create_task`); `readonly`, `full` and `admin` expose the same tool sets as the remote connector's `MCP_TOOL_PROFILE`, along with its server instructions. An unknown value exits with an error. The in-app Chat tab now defaults to the `full` profile: set the backend setting `MCP_BOARD_TOOL_PROFILE` (passed through in both compose files) to `create`, `readonly`, `full` or `admin` to change it; the session's scoped token is widened to exactly the REST calls that profile's tools make (an exact method+path allowlist; no DELETE or other routes) unless it is `create`. Set `create` if chat sessions read untrusted repo code. Claude Desktop keeps `create` as the default. See `docs/board-mcp.md`.

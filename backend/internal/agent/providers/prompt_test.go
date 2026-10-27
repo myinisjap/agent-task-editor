@@ -229,3 +229,34 @@ func TestBuildPrompt_HumanDecisions(t *testing.T) {
 		t.Error("section should be absent when empty")
 	}
 }
+
+func TestBuildPrompt_RepoLessons(t *testing.T) {
+	plan := "prior notes"
+	in := agent.RunInput{
+		Task:           agent.Task{Title: "T"},
+		PriorPlan:      &plan,
+		HumanDecisions: []agent.HumanDecision{{Question: "q", Reply: "r"}},
+		RepoLessons: []agent.RepoLesson{
+			{ID: "1", Kind: "trap", Body: "line one\nline two"},
+			{ID: "2", Kind: "command", Body: "make test"},
+		},
+	}
+	out := buildPrompt(in)
+	heading := "REPO LESSONS (conventions learned from past tasks in this repo; if one contradicts the code, trust the code and say so in your notes):\n- [trap] line one line two\n- [command] make test\n\n---\n\n"
+	if !strings.Contains(out, heading) {
+		t.Fatalf("section missing/incorrect:\n%s", out)
+	}
+	hd := strings.Index(out, "HUMAN DECISIONS")
+	rl := strings.Index(out, "REPO LESSONS")
+	np := strings.Index(out, "NOTES FROM PRIOR AGENT")
+	if hd < 0 || hd >= rl || rl >= np {
+		t.Fatalf("bad order: hd=%d rl=%d np=%d", hd, rl, np)
+	}
+	if strings.Contains(buildResumePrompt(in), "REPO LESSONS") {
+		t.Fatal("resume prompt must not contain lessons")
+	}
+	in.RepoLessons = nil
+	if strings.Contains(buildPrompt(in), "REPO LESSONS") {
+		t.Fatal("section must be absent without lessons")
+	}
+}

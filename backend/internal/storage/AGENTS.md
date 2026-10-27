@@ -34,6 +34,7 @@ SQLite with WAL (Write-Ahead Logging) enabled for better concurrent read perform
 - `repos.sql` — repository CRUD
 - `runs.sql` — agent run CRUD and log storage
 - `dashboard.sql` — aggregate queries for the dashboard
+- `repo_lessons.sql` — curated per-repo/global lessons injected into agent prompts
 - `review_comments.sql` — inline diff review comment CRUD, both locally-created and GitHub-ingested
 - `pr_review_state.sql` — per-task GitHub PR review/check ingestion cursor (`task_pr_review_state`)
 

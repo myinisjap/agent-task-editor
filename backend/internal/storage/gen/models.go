@@ -170,6 +170,23 @@ type Repo struct {
 	VerifyTimeoutSeconds          int64     `json:"verify_timeout_seconds"`
 }
 
+type RepoLesson struct {
+	ID            string     `json:"id"`
+	RepoID        *string    `json:"repo_id"`
+	Kind          string     `json:"kind"`
+	Body          string     `json:"body"`
+	PathGlobs     string     `json:"path_globs"`
+	Stages        string     `json:"stages"`
+	Citations     string     `json:"citations"`
+	Source        string     `json:"source"`
+	SourceTaskID  *string    `json:"source_task_id"`
+	Status        string     `json:"status"`
+	InjectedCount int64      `json:"injected_count"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	LastCheckedAt *time.Time `json:"last_checked_at"`
+}
+
 type RunVerification struct {
 	RunID      string    `json:"run_id"`
 	TaskID     string    `json:"task_id"`
