@@ -136,7 +136,9 @@ If no matching transition is defined for the current label, the endpoint returns
 
 ## Review brief
 
-When a task sits on a **human-gate** label (no agent-triggerable way out and at least one human transition, the same rule as `GET /needs-me` `human_gate`; `agent_ignore` backlog labels excluded), the Task Detail page shows a compact **Review brief** at the top of the Overview tab and above the diff on the Diff tab, and the Inbox shows the flag chips on the row. It is computed from existing data with **no LLM calls**, and it is **advisory only**: nothing is ever approved or blocked because of a flag.
+When a task sits on a **human-gate** label (no agent-triggerable way out and at least one human transition, the same rule as `GET /needs-me` `human_gate`; `agent_ignore` backlog labels excluded), the Task Detail page shows a compact **Review brief** below the task header on the Overview tab and above the diff on the Diff tab, and the Inbox shows the flag chips on the row. It is computed from existing data with **no LLM calls**, and it is **advisory only**: nothing is ever approved or blocked because of a flag.
+
+On screens at least 1280px wide, a task on a human gate (strict rule: every exit is a human transition, or `agent_ignore`) gets a decision-first layout: a header with title, state, repo, cost, run count and the Approve / Request changes buttons ("Approve and open PR" when the target label opens a PR); the diff (with preview strip) or, on plan-review labels, the plan in the main pane with logs and details as tabs; and a sticky right rail with the brief, verification and runs. Narrower screens keep the tabbed layout.
 
 The brief is served by `GET /tasks/{id}/review-brief`; the Inbox gets flag codes only (`risk_flags` on `/needs-me` items, human-gate items only).
 

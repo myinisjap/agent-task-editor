@@ -19,6 +19,10 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Changed
+
+- **Decision-first review on Task Detail (desktop).** Tasks waiting at a human gate get a review layout at ≥1280px: header with title, state, repo, cost, run count and Approve ("Approve and open PR" when the next label opens a PR) / Request changes; the diff (with preview strip) or plan in the main pane, logs/details as tabs; and a sticky right rail with the review brief, verification and runs. The review brief now always sits below the task title.
+
 ### Added
 
 - **Planner fan-out.** `create_subtask` takes an optional `file_scope` (globs): it is stated in the subtask's prompt and files changed outside it are listed as a warning in the subtask's notes after its run. Subtasks whose scopes overlap a sibling's automatically depend on it (run sequentially) and the tool result says so. Once all subtasks are merged back the parent gets an integration run (prompt lists each subtask, scope, branch, notes and the merged diff stat; the repo verify command runs as usual) instead of auto-advancing. New `task_fanout` table (migration 077); `file_scope`/`integration_status` on tasks. Docs: planner guidance on when to fan out (3+ independent parts on disjoint files).

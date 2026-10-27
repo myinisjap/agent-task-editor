@@ -7,7 +7,9 @@ import { useProviderConfigsStore } from '../stores/providerConfigs'
 import DependenciesPanel from '../components/DependenciesPanel'
 import SubtasksPanel from '../components/SubtasksPanel'
 import TaskHeader from '../components/task-detail/TaskHeader'
-import { humanActionsFor } from '../lib/humanGate'
+import { humanActionsFor, isHumanGateLabel as isStrictHumanGate, humanPathTargetLabel } from '../lib/humanGate'
+import { useIsWideDesktop } from '../lib/useMediaQuery'
+import ReviewLayout from '../components/task-detail/ReviewLayout'
 import TaskActions from '../components/task-detail/TaskActions'
 import RunHistoryList from '../components/task-detail/RunHistoryList'
 import ForceMoveControl from '../components/task-detail/ForceMoveControl'
@@ -67,6 +69,8 @@ export default function TaskDetailPage() {
   // stage/run doesn't linger indefinitely.
   const [costWarning, setCostWarning] = useState<{ spentUsd: number; budgetUsd: number } | null>(null)
   const [verificationKey, setVerificationKey] = useState(0)
+  // Must stay above the `if (!task) return` early return (rules of hooks).
+  const isWide = useIsWideDesktop()
   const { configs: agentConfigs, fetch: fetchAgents } = useAgentsStore()
   const { configs: providerConfigs, fetch: fetchProviderConfigs } = useProviderConfigsStore()
   const { diffComments, openComments, refreshComments, handleAddComment, handleRemoveComment, handleReopenComment } = useDiffComments(id)
@@ -483,44 +487,8 @@ export default function TaskDetailPage() {
   const canRemember = !!task.repo_id
   const rememberRepoName = repos.find((r) => r.id === task.repo_id)?.name
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'logs', label: 'Logs' },
-    { id: 'diff', label: 'Diff' },
-  ]
-
-  return (
-    <div className="flex h-full overflow-hidden flex-col min-w-0">
-      {/* Tab bar */}
-      <div className="shrink-0 flex items-center gap-2 border-b border-slate-800 px-4 pt-3 w-full overflow-x-hidden">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setActiveTab(t.id)}
-            className={`flex-grow min-w-0 md:min-w-[100px] px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
-              activeTab === t.id
-                ? 'bg-slate-800 text-slate-100 border-b-2 border-slate-400'
-                : 'text-slate-500 hover:text-slate-300'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-        <HelpButton onClick={() => setShowHelp(true)} title="About this task" />
-      </div>
-
-      {showHelp && (
-        <HelpModal title="About Task Detail" onClose={() => setShowHelp(false)}>
-          <TaskDetailHelp />
-        </HelpModal>
-      )}
-
-      {/* Tab content */}
-      <div className="flex-1 overflow-hidden">
-        {/* Overview tab */}
-        {activeTab === 'overview' && (
-          <div className="h-full overflow-y-auto overflow-x-hidden p-3 md:p-5 flex flex-col gap-4 min-w-0">
-            {showBrief && <ReviewBriefCard taskId={task?.id} refreshKey={briefKey} />}
+  const overviewSections = (inReview: boolean) => (
+    <>
             <TaskHeader
               task={task}
               repos={repos}
@@ -556,6 +524,8 @@ export default function TaskDetailPage() {
               onDuplicate={() => setDuplicating(true)}
             />
 
+            {!inReview && showBrief && <ReviewBriefCard taskId={task?.id} refreshKey={briefKey} />}
+
             {duplicating && task && (
               <NewTaskModal source={task} onClose={() => setDuplicating(false)} />
             )}
@@ -571,6 +541,7 @@ export default function TaskDetailPage() {
               onChanged={() => { if (id) api.tasks.get(id).then(setTask).catch(() => {}) }}
             />
 
+            {!inReview && (
             <RunHistoryList
               runs={runs}
               agentConfigs={agentConfigs}
@@ -583,6 +554,7 @@ export default function TaskDetailPage() {
               onRerun={handleRerun}
               actionPending={actionPending}
             />
+            )}
 
             <SourceUpdateNotice task={task} onChanged={setTask} />
 
@@ -597,6 +569,100 @@ export default function TaskDetailPage() {
             <LabelHistoryList history={labelHistory} onRemember={canRemember ? setRememberText : undefined} />
 
             <SourceCommentsList comments={sourceComments} />
+    </>
+  )
+
+  const onGate = isStrictHumanGate(workflow ?? undefined, task.label)
+  // Escalated waiting_human runs need the Reply UI, so they keep the tabbed layout.
+  const useReviewLayout = isWide && onGate && !needsHuman
+  // Heuristic: plan-review labels (e.g. review-plan) show the plan; all other gates show the diff.
+  const reviewMode: 'plan' | 'diff' = /plan/i.test(task.label) ? 'plan' : 'diff'
+  const approveTarget = humanPathTargetLabel(workflow ?? undefined, task.label, 'success')
+  const approveLabel = approveTarget?.create_pr ? 'Approve and open PR' : 'Approve'
+
+  const tabs: { id: Tab; label: string }[] = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'logs', label: 'Logs' },
+    { id: 'diff', label: 'Diff' },
+  ]
+
+  const reviewLayoutNode = (
+    <ReviewLayout
+      task={task}
+      repoName={rememberRepoName}
+      runs={runs}
+      agentConfigs={agentConfigs}
+      providerConfigs={providerConfigs}
+      selectedRun={selectedRun}
+      onSelectRun={setSelectedRun}
+      isRunning={!!isRunning}
+      canRerun={canRerun}
+      onStop={handleStop}
+      onRerun={handleRerun}
+      canApprove={humanActions.canApprove}
+      canReject={humanActions.canReject}
+      approveLabel={approveLabel}
+      onApprove={handleApprove}
+      rejectNote={rejectNote}
+      setRejectNote={setRejectNote}
+      onReject={handleReject}
+      openCommentsCount={openComments.length}
+      actionError={actionError}
+      actionPending={actionPending}
+      diffComments={diffComments}
+      onAddComment={handleAddComment}
+      onRemoveComment={handleRemoveComment}
+      onReopenComment={handleReopenComment}
+      onCreatePR={handleCreatePR}
+      creatingPR={creatingPR}
+      verificationKey={verificationKey}
+      briefKey={briefKey}
+      mode={reviewMode}
+      onBack={() => navigate('/board')}
+      onHelp={() => setShowHelp(true)}
+      details={overviewSections(true)}
+    />
+  )
+
+  return (
+    <div className="flex h-full overflow-hidden flex-col min-w-0">
+      {useReviewLayout ? (
+        <div className="flex-1 min-h-0">{reviewLayoutNode}</div>
+      ) : (
+      <>
+      {/* Tab bar */}
+      <div className="shrink-0 flex items-center gap-2 border-b border-slate-800 px-4 pt-3 w-full overflow-x-hidden">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setActiveTab(t.id)}
+            className={`flex-grow min-w-0 md:min-w-[100px] px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
+              activeTab === t.id
+                ? 'bg-slate-800 text-slate-100 border-b-2 border-slate-400'
+                : 'text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+        <HelpButton onClick={() => setShowHelp(true)} title="About this task" />
+      </div>
+
+      </>
+      )}
+
+      {showHelp && (
+        <HelpModal title="About Task Detail" onClose={() => setShowHelp(false)}>
+          <TaskDetailHelp />
+        </HelpModal>
+      )}
+
+      {!useReviewLayout && (
+      <div className="flex-1 overflow-hidden">
+        {/* Overview tab */}
+        {activeTab === 'overview' && (
+          <div className="h-full overflow-y-auto overflow-x-hidden p-3 md:p-5 flex flex-col gap-4 min-w-0">
+            {overviewSections(false)}
           </div>
         )}
 
@@ -622,6 +688,7 @@ export default function TaskDetailPage() {
           />
         )}
       </div>
+      )}
 
       {/* Cost early-warning banner — crossed the configurable warn_ratio threshold
           (default 80%) of the effective cost budget, but not yet exhausted. See
@@ -633,7 +700,7 @@ export default function TaskDetailPage() {
       )}
 
       {/* Approval panel — shown when agent needs human or task is at a human-gate label */}
-      {(needsHuman || isHumanGateLabel) && (
+      {!useReviewLayout && (needsHuman || isHumanGateLabel) && (
         <TaskActions
           activeRun={activeRun}
           needsHuman={!!needsHuman}
