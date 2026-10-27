@@ -949,6 +949,10 @@ func TestPool_OldestRunID(t *testing.T) {
 	}
 	waitForStatus(t, q, runID, "cancelled")
 
+	deadline := time.Now().Add(5 * time.Second)
+	for pool.OldestRunID() != "" && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
 	if got := pool.OldestRunID(); got != "" {
 		t.Errorf("expected no oldest run after cancel, got %q", got)
 	}
