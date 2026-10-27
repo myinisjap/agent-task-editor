@@ -190,7 +190,7 @@ The full profile has everything the stdio server has, plus (read tools first):
 | `get_workflow` | One workflow as the YAML document the workflow editor's YAML tab shows |
 | `list_agents` | Agent configs: which labels each works on, enabled, provider and model (no prompts or env) |
 | `list_provider_configs` | Provider configs an agent can run on: id, name, provider, model (never their env) |
-| `get_agent` | One agent config in full, including its system prompt (provider env stripped) |
+| `get_agent` | One agent config in full, including its system prompt (provider env stripped); includes `running_experiment` (share, tasks per arm) while an A/B experiment runs |
 | `get_repo` | One repo's settings, including `clone_status` / `clone_error` |
 | `detect_repo_runtime` | Suggested toolchain pins from the repo's manifest files; changes nothing |
 | `list_needs_me` | Tasks waiting on a human (task id, title, label, reason) — the "what needs me?" opener |

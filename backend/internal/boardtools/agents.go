@@ -24,7 +24,7 @@ func init() {
 	})
 	register(Tool{
 		Name:        "get_agent",
-		Description: "Get one agent config in full, including its system prompt. Provider environment values are not returned.",
+		Description: "Get one agent config in full, including its system prompt. Provider environment values are not returned. Includes running_experiment (share, tasks per arm) when an A/B experiment is running.",
 		InputSchema: obj(map[string]any{"agent_id": str("Agent ID (from list_agents)")}, "agent_id"),
 		ReadOnly:    true,
 		call:        (*Client).getAgent,

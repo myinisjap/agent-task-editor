@@ -43,6 +43,7 @@ SELECT ar.id AS run_id,
        ar.created_at AS created_at,
        ar.ladder_rung AS ladder_rung,
        ar.agent_config_version AS agent_config_version,
+       ar.experiment_arm AS experiment_arm,
        CAST(COALESCE(ar.provider_config_id, ac.provider_config_id, '') AS TEXT) AS provider_config_id
 FROM agent_runs ar
 LEFT JOIN agent_configs ac ON ac.id = ar.agent_config_id

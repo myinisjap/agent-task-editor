@@ -137,6 +137,9 @@ type groupInfo struct {
 	dim      string // raw dimension value ("" for config mode)
 	version  *int64
 	unversed bool
+	// candidate marks an un-promoted A/B-experiment candidate-arm run (NULL
+	// version by design).
+	candidate bool
 }
 
 // taskAgg accumulates per-task state while walking that task's runs and
@@ -276,6 +279,9 @@ func (h *OutcomeQualityHandler) compute(ctx context.Context, repoID, groupBy str
 			if run.AgentConfigVersion != nil {
 				g.version = run.AgentConfigVersion
 				g.dim = strconv.FormatInt(*run.AgentConfigVersion, 10)
+			} else if run.ExperimentArm != nil && *run.ExperimentArm == "candidate" {
+				g.candidate = true
+				g.dim = "candidate"
 			} else {
 				g.unversed = true
 				g.dim = "unversioned"
@@ -502,7 +508,9 @@ func (h *OutcomeQualityHandler) compute(ctx context.Context, repoID, groupBy str
 		switch groupBy {
 		case groupByVersion:
 			row.Version = acc.info.version
-			if acc.info.unversed {
+			if acc.info.candidate {
+				row.GroupValue = "candidate (experiment)"
+			} else if acc.info.unversed {
 				row.GroupValue = "unversioned"
 			} else {
 				row.GroupValue = "v" + acc.info.dim
@@ -564,7 +572,7 @@ func (h *OutcomeQualityHandler) compute(ctx context.Context, repoID, groupBy str
 			if groupBy == groupByVersion {
 				switch {
 				case a.Version == nil && b.Version == nil:
-					return false
+					return a.GroupValue < b.GroupValue
 				case a.Version == nil:
 					return false // unversioned last
 				case b.Version == nil:

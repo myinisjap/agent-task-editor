@@ -853,6 +853,14 @@ clears it.
 - `GET /agents/{id}/versions/{version}` — one version (`400` non-integer, `404` unknown).
 - `POST /agents/{id}/versions/{version}/restore` — body `{note?}`; applies the snapshot as a new version and returns the updated config (`400` if it references a deleted provider config).
 
+`GET /agents/{id}` also carries `running_experiment` (`{id, share_percent, started_at, note, control_tasks, candidate_tasks}` or null). A/B experiments (see [agents.md#experiments-ab](agents.md#experiments-ab)); runs carry `experiment_id` / `experiment_arm`:
+
+- `GET /agents/{id}/experiments` — newest first, without results.
+- `POST /agents/{id}/experiments` — body `{candidate: AgentConfigSnapshot, share_percent: 1-90, note?}`; `201` with the experiment (`400` invalid share/candidate or identical to the current config, `404`, `409` one already running).
+- `GET /agents/{id}/experiments/{experimentId}` — the experiment with per-arm `results`.
+- `POST /agents/{id}/experiments/{experimentId}/stop` — `409` unless running.
+- `POST /agents/{id}/experiments/{experimentId}/promote` — body `{note?}`; writes the candidate as a new version, returns `{experiment, config}` (`400` if it references a deleted provider config, `409` unless running).
+
 `max_retries`/`retry_backoff_secs` configure auto-retry for *transient*
 provider errors (rate limits, network blips, upstream 5xx) — see
 [agents.md#retry-policy](agents.md#retry-policy). Both are optional on

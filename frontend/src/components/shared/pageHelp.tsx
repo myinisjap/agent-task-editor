@@ -304,6 +304,17 @@ export function AgentsHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Experiments</h3>
+        <p>
+          Try a candidate config on a share (1–90%) of the tasks that newly reach this agent&apos;s
+          label while the rest keep the current config. A task keeps its arm for every later run.
+          Compare first-pass success, rework, human-touch, cost to done and duration per arm
+          (flagged &quot;not enough data&quot; under 10 done tasks per arm), then <strong>Stop</strong>{' '}
+          or <strong>Promote</strong> the candidate as the agent&apos;s new version. One experiment
+          runs per agent.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">History</h3>
         <p>
           Each behavioural change (prompt, provider, fallbacks, ladder, effort, limits, permissions,

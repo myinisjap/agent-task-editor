@@ -76,3 +76,13 @@ func TestAgentTools(t *testing.T) {
 		}
 	}
 }
+
+func TestGetAgentIncludesRunningExperiment(t *testing.T) {
+	c, _ := stubAPI(t, map[string]string{
+		"GET /api/v1/agents/a1": `{"id":"a1","name":"Coder","running_experiment":{"id":"e1","share_percent":30,"control_tasks":4,"candidate_tasks":2},"provider_config":{"id":"p1","env":"{}"}}`,
+	})
+	text, isErr := c.Call(Select(AdminRemoteTools), "get_agent", json.RawMessage(`{"agent_id":"a1"}`))
+	if isErr || !strings.Contains(text, `"running_experiment"`) || !strings.Contains(text, `"share_percent":30`) || strings.Contains(text, `"env"`) {
+		t.Errorf("get_agent: %q", text)
+	}
+}

@@ -111,6 +111,8 @@ type agentConfigView struct {
 	// CurrentVersion is the latest version number in the config's history
 	// (nil when it has none yet).
 	CurrentVersion *int64 `json:"current_version"`
+	// RunningExperiment summarises the running A/B experiment (GET /agents/{id} only).
+	RunningExperiment *runningExperimentSummary `json:"running_experiment"`
 }
 
 // safeConfig builds the response view for an agent config, looking up its
@@ -294,7 +296,9 @@ func (h *AgentsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusNotFound, "agent config not found")
 		return
 	}
-	JSON(w, http.StatusOK, h.safeConfig(r, cfg))
+	view := h.safeConfig(r, cfg)
+	view.RunningExperiment = h.runningSummary(r.Context(), cfg.ID)
+	JSON(w, http.StatusOK, view)
 }
 
 func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {

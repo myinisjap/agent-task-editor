@@ -52,6 +52,27 @@ type AgentConfigVersion struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
+type AgentExperiment struct {
+	ID                string     `json:"id"`
+	AgentConfigID     string     `json:"agent_config_id"`
+	CandidateSnapshot string     `json:"candidate_snapshot"`
+	BaseVersion       *int64     `json:"base_version"`
+	SharePercent      int64      `json:"share_percent"`
+	Status            string     `json:"status"`
+	Note              *string    `json:"note"`
+	ActorID           *string    `json:"actor_id"`
+	PromotedVersion   *int64     `json:"promoted_version"`
+	StartedAt         time.Time  `json:"started_at"`
+	StoppedAt         *time.Time `json:"stopped_at"`
+}
+
+type AgentExperimentAssignment struct {
+	ExperimentID string    `json:"experiment_id"`
+	TaskID       string    `json:"task_id"`
+	Arm          string    `json:"arm"`
+	AssignedAt   time.Time `json:"assigned_at"`
+}
+
 type AgentLog struct {
 	ID         string    `json:"id"`
 	AgentRunID string    `json:"agent_run_id"`
@@ -89,6 +110,8 @@ type AgentRun struct {
 	SessionCostUsd     *float64   `json:"session_cost_usd"`
 	LadderRung         *int64     `json:"ladder_rung"`
 	AgentConfigVersion *int64     `json:"agent_config_version"`
+	ExperimentID       *string    `json:"experiment_id"`
+	ExperimentArm      *string    `json:"experiment_arm"`
 }
 
 type BackupSetting struct {

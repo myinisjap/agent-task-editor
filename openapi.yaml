@@ -987,6 +987,64 @@ components:
         actor_id: { type: string, nullable: true }
         note: { type: string, nullable: true }
         created_at: { type: string, format: date-time }
+    AgentExperimentArmStats:
+      type: object
+      required: [tasks, tasks_done, first_pass_success_rate_percent, rework_rate_percent, human_touch_rate_percent, avg_cost_to_done_usd, avg_duration_secs, not_enough_data]
+      properties:
+        tasks: { type: integer, description: "Assigned, non-archived tasks." }
+        tasks_done: { type: integer, description: "Assigned tasks whose current label is terminal." }
+        first_pass_success_rate_percent: { type: number, format: double, description: "Of done tasks, share where the agent had exactly one run and it completed." }
+        rework_rate_percent: { type: number, format: double, description: "Of done tasks, share with a transition into an already-visited label." }
+        human_touch_rate_percent: { type: number, format: double, description: "Of done tasks, share with any human-triggered transition." }
+        avg_cost_to_done_usd: { type: number, format: double, description: "Mean total cost of all runs on each done task." }
+        avg_duration_secs: { type: number, format: double, description: "Mean duration of the agent's finished runs in this arm." }
+        not_enough_data: { type: boolean, description: "True when tasks_done is below min_tasks_per_arm." }
+    AgentExperimentResults:
+      type: object
+      required: [control, candidate, min_tasks_per_arm]
+      properties:
+        control: { $ref: "#/components/schemas/AgentExperimentArmStats" }
+        candidate: { $ref: "#/components/schemas/AgentExperimentArmStats" }
+        min_tasks_per_arm: { type: integer }
+    AgentExperiment:
+      type: object
+      required: [id, agent_config_id, candidate_snapshot, share_percent, status, started_at]
+      properties:
+        id: { type: string }
+        agent_config_id: { type: string }
+        candidate_snapshot: { $ref: "#/components/schemas/AgentConfigSnapshot" }
+        base_version: { type: integer, nullable: true, description: "Latest version when the experiment started (informational)." }
+        share_percent: { type: integer, minimum: 1, maximum: 90 }
+        status: { type: string, enum: [running, stopped, promoted] }
+        note: { type: string, nullable: true }
+        actor_id: { type: string, nullable: true }
+        promoted_version: { type: integer, nullable: true }
+        started_at: { type: string, format: date-time }
+        stopped_at: { type: string, format: date-time, nullable: true }
+        results: { $ref: "#/components/schemas/AgentExperimentResults" }
+    AgentExperimentStart:
+      type: object
+      required: [candidate, share_percent]
+      properties:
+        candidate: { $ref: "#/components/schemas/AgentConfigSnapshot" }
+        share_percent: { type: integer, minimum: 1, maximum: 90, description: "Percent of newly arriving tasks assigned to the candidate arm." }
+        note: { type: string }
+    AgentExperimentPromoteResponse:
+      type: object
+      required: [experiment, config]
+      properties:
+        experiment: { $ref: "#/components/schemas/AgentExperiment" }
+        config: { $ref: "#/components/schemas/AgentConfig" }
+    RunningExperimentSummary:
+      type: object
+      required: [id, share_percent, started_at, control_tasks, candidate_tasks]
+      properties:
+        id: { type: string }
+        share_percent: { type: integer }
+        started_at: { type: string, format: date-time }
+        note: { type: string, nullable: true }
+        control_tasks: { type: integer }
+        candidate_tasks: { type: integer }
     EscalationRung:
       type: object
       required: [provider_config_id]
@@ -1004,6 +1062,10 @@ components:
       type: object
       properties:
         current_version: { type: integer, nullable: true, description: "Latest version number in the config's version history (null when it has none yet). Create/update bodies accept an optional `note` recorded on the new version." }
+        running_experiment:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/RunningExperimentSummary" }]
+          description: "Summary of the running A/B experiment; populated on GET /agents/{id} only (null otherwise)."
         id:            { type: string }
         name:          { type: string }
         provider_config_id:
@@ -1538,6 +1600,8 @@ components:
         provider_config_id: { type: string, nullable: true, description: "Provider config the run used (the agent config's primary or one of its fallbacks); null for runs from before provider fallbacks." }
         ladder_rung:      { type: integer, nullable: true, description: "Escalation ladder rung the run used (0 = the agent config's own provider/effort); null when the agent config had no ladder." }
         agent_config_version: { type: integer, nullable: true, description: "Agent config version the run was dispatched with; null for runs from before version history." }
+        experiment_id: { type: string, nullable: true, description: "A/B experiment the run belonged to; null when none." }
+        experiment_arm: { type: string, nullable: true, enum: [control, candidate], description: "Experiment arm; candidate runs have a null agent_config_version until the experiment is promoted." }
         status:           { type: string, enum: [pending, running, completed, failed, waiting_human, cancelled, interrupted] }
         feedback:         { type: string, nullable: true }
         stored_info:      { type: string, nullable: true, description: "Free-form info the agent stored for this run (via the MCP store_info tool); null when none." }
@@ -4437,6 +4501,112 @@ paths:
               schema: { $ref: "#/components/schemas/AgentConfig" }
         "400": { description: Snapshot references a deleted provider config or is otherwise invalid }
         "404": { description: Not found }
+
+  /agents/{id}/experiments:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: List an agent config's A/B experiments (newest first, without results)
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AgentExperiment" } }
+        "404": { description: Not found }
+    post:
+      summary: Start an A/B experiment
+      description: >
+        Runs the candidate snapshot on a deterministic share of tasks that first
+        reach this agent's label; the rest keep the current config. At most one
+        experiment runs per agent config.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentExperimentStart" }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentExperiment" }
+        "400": { description: Invalid share, invalid candidate, or candidate identical to the current config }
+        "404": { description: Not found }
+        "409": { description: An experiment is already running for this agent }
+
+  /agents/{id}/experiments/{experimentId}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: experimentId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get one experiment with per-arm results
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentExperiment" }
+        "404": { description: Not found }
+
+  /agents/{id}/experiments/{experimentId}/stop:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: experimentId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      summary: Stop a running experiment (all later runs use the current config)
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentExperiment" }
+        "404": { description: Not found }
+        "409": { description: Experiment is not running }
+
+  /agents/{id}/experiments/{experimentId}/promote:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: experimentId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      summary: Promote the candidate to the agent's new version
+      description: >
+        Applies the candidate onto the current config (like a version restore),
+        records a new version, marks the experiment promoted and tags the
+        candidate-arm runs with the new version.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentExperimentPromoteResponse" }
+        "400": { description: Candidate references a deleted provider config or is otherwise invalid }
+        "404": { description: Not found }
+        "409": { description: Experiment is not running }
 
   /agents/models:
     get:

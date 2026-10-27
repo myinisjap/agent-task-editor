@@ -3924,6 +3924,275 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/{id}/experiments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** List an agent config's A/B experiments (newest first, without results) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentExperiment"][];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Start an A/B experiment
+         * @description Runs the candidate snapshot on a deterministic share of tasks that first reach this agent's label; the rest keep the current config. At most one experiment runs per agent config.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AgentExperimentStart"];
+                };
+            };
+            responses: {
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentExperiment"];
+                    };
+                };
+                /** @description Invalid share */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description An experiment is already running for this agent */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/experiments/{experimentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                experimentId: string;
+            };
+            cookie?: never;
+        };
+        /** Get one experiment with per-arm results */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    experimentId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentExperiment"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/experiments/{experimentId}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                experimentId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop a running experiment (all later runs use the current config) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    experimentId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentExperiment"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Experiment is not running */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/experiments/{experimentId}/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                experimentId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Promote the candidate to the agent's new version
+         * @description Applies the candidate onto the current config (like a version restore), records a new version, marks the experiment promoted and tags the candidate-arm runs with the new version.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    experimentId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        note?: string;
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentExperimentPromoteResponse"];
+                    };
+                };
+                /** @description Candidate references a deleted provider config or is otherwise invalid */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Experiment is not running */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/models": {
         parameters: {
             query?: never;
@@ -6684,6 +6953,81 @@ export interface components {
             /** Format: date-time */
             created_at: string;
         };
+        AgentExperimentArmStats: {
+            /** @description Assigned, non-archived tasks. */
+            tasks: number;
+            /** @description Assigned tasks whose current label is terminal. */
+            tasks_done: number;
+            /**
+             * Format: double
+             * @description Of done tasks, share where the agent had exactly one run and it completed.
+             */
+            first_pass_success_rate_percent: number;
+            /**
+             * Format: double
+             * @description Of done tasks, share with a transition into an already-visited label.
+             */
+            rework_rate_percent: number;
+            /**
+             * Format: double
+             * @description Of done tasks, share with any human-triggered transition.
+             */
+            human_touch_rate_percent: number;
+            /**
+             * Format: double
+             * @description Mean total cost of all runs on each done task.
+             */
+            avg_cost_to_done_usd: number;
+            /**
+             * Format: double
+             * @description Mean duration of the agent's finished runs in this arm.
+             */
+            avg_duration_secs: number;
+            /** @description True when tasks_done is below min_tasks_per_arm. */
+            not_enough_data: boolean;
+        };
+        AgentExperimentResults: {
+            control: components["schemas"]["AgentExperimentArmStats"];
+            candidate: components["schemas"]["AgentExperimentArmStats"];
+            min_tasks_per_arm: number;
+        };
+        AgentExperiment: {
+            id: string;
+            agent_config_id: string;
+            candidate_snapshot: components["schemas"]["AgentConfigSnapshot"];
+            /** @description Latest version when the experiment started (informational). */
+            base_version?: number | null;
+            share_percent: number;
+            /** @enum {string} */
+            status: "running" | "stopped" | "promoted";
+            note?: string | null;
+            actor_id?: string | null;
+            promoted_version?: number | null;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            stopped_at?: string | null;
+            results?: components["schemas"]["AgentExperimentResults"];
+        };
+        AgentExperimentStart: {
+            candidate: components["schemas"]["AgentConfigSnapshot"];
+            /** @description Percent of newly arriving tasks assigned to the candidate arm. */
+            share_percent: number;
+            note?: string;
+        };
+        AgentExperimentPromoteResponse: {
+            experiment: components["schemas"]["AgentExperiment"];
+            config: components["schemas"]["AgentConfig"];
+        };
+        RunningExperimentSummary: {
+            id: string;
+            share_percent: number;
+            /** Format: date-time */
+            started_at: string;
+            note?: string | null;
+            control_tasks: number;
+            candidate_tasks: number;
+        };
         EscalationRung: {
             /** @description Existing provider config used on this rung. */
             provider_config_id: string;
@@ -6698,6 +7042,8 @@ export interface components {
         AgentConfig: {
             /** @description Latest version number in the config's version history (null when it has none yet). Create/update bodies accept an optional `note` recorded on the new version. */
             current_version?: number | null;
+            /** @description Summary of the running A/B experiment; populated on GET /agents/{id} only (null otherwise). */
+            running_experiment?: components["schemas"]["RunningExperimentSummary"] | null;
             id: string;
             name: string;
             /** @description References a ProviderConfig (provider/model/env), which is created and managed separately via /provider-configs and may be shared with other agent configs or chat sessions. */
@@ -6951,6 +7297,13 @@ export interface components {
             ladder_rung?: number | null;
             /** @description Agent config version the run was dispatched with; null for runs from before version history. */
             agent_config_version?: number | null;
+            /** @description A/B experiment the run belonged to; null when none. */
+            experiment_id?: string | null;
+            /**
+             * @description Experiment arm; candidate runs have a null agent_config_version until the experiment is promoted.
+             * @enum {string|null}
+             */
+            experiment_arm?: "control" | "candidate" | null;
             /** @enum {string} */
             status: "pending" | "running" | "completed" | "failed" | "waiting_human" | "cancelled" | "interrupted";
             feedback?: string | null;

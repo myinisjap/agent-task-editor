@@ -221,8 +221,9 @@ func (d *Dispatcher) sweep(ctx context.Context) {
 		return
 	}
 
+	exps := d.loadRunningExperiments(ctx)
 	for _, t := range tasks {
-		d.dispatch(ctx, t, configs, pools, inUse)
+		d.dispatch(ctx, t, configs, pools, inUse, exps)
 	}
 }
 
@@ -255,7 +256,7 @@ func (d *Dispatcher) repoAtLimit(repo gen.Repo, inUse map[string]int64) bool {
 	return inUse[repo.ID] >= int64(limit)
 }
 
-func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.AgentConfig, pools usagePools, inUse map[string]int64) {
+func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.AgentConfig, pools usagePools, inUse map[string]int64, exps map[string]*gen.AgentExperiment) {
 	log := slog.With("component", "dispatcher", "task_id", t.ID)
 
 	if t.Paused != 0 { // defense-in-depth; ListAgentPickupTasks already filters paused tasks
@@ -293,9 +294,14 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	var matched *gen.AgentConfig
 	var providerConfigID string
 	var ladderRung *int
+	var chosenArm experimentArm
 	failedAttempts := -1 // computed lazily, once per task per sweep
 candidates:
-	for _, cand := range matches {
+	for _, base := range matches {
+		// Overlay the experiment candidate (if this task is in that arm) on a
+		// copy; never mutate the shared configs slice.
+		eff, arm := d.resolveExperiment(ctx, t, *base, exps[base.ID])
+		cand := &eff
 		pcIDs := agentProviderIDs(cand)
 		ladder := ParseLadder(cand.EscalationLadder)
 		rung := 0
@@ -317,7 +323,7 @@ candidates:
 				log.Info("dispatcher: skipping provider that is paused, trying next", "agent_config_id", cand.ID, "provider_config_id", pcID)
 				continue
 			}
-			matched, providerConfigID = cand, pcID
+			matched, providerConfigID, chosenArm = cand, pcID, arm
 			if len(ladder) > 0 {
 				r := rung
 				ladderRung = &r
@@ -340,7 +346,7 @@ candidates:
 	// phantom-run write fails, and a read failure while computing spend
 	// returns (false, err). Either way an unverifiable budget must not let a
 	// run start, so any error skips dispatch this sweep (retried next sweep).
-	if blocked, err := d.checkCostBudget(ctx, t, *matched); err != nil {
+	if blocked, err := d.checkCostBudget(ctx, t, *matched, chosenArm); err != nil {
 		log.Error("dispatcher: cost budget check failed, skipping dispatch this sweep", "err", err, "blocked", blocked)
 		return
 	} else if blocked {
@@ -362,7 +368,7 @@ candidates:
 		return
 	}
 
-	if _, err := d.startRun(ctx, t, *matched, runOptions{providerConfigID: providerConfigID, ladderRung: ladderRung}); err != nil {
+	if _, err := d.startRun(ctx, t, *matched, runOptions{providerConfigID: providerConfigID, ladderRung: ladderRung, experiment: chosenArm}); err != nil {
 		if errors.Is(err, ErrDispatchConflict) {
 			log.Debug("dispatcher: skipping, task changed since it was listed (lost dispatch claim)")
 			return
@@ -482,7 +488,7 @@ func (d *Dispatcher) resolveCostWarnRatio(ctx context.Context) float64 {
 // own (possibly incomplete) recorded spend, the ordinary "budget exhausted"
 // escalation below already covers it, so unknown-cost runs are never used
 // to mask an otherwise-exhausted budget.
-func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched gen.AgentConfig) (bool, error) {
+func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched gen.AgentConfig, arm experimentArm) (bool, error) {
 	budget := effectiveBudget(t.MaxCostUsd, matched.MaxCostUsd)
 	if budget <= 0 {
 		return false, nil
@@ -503,7 +509,7 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 		if unknownRuns > 0 {
 			msg := fmt.Sprintf("cost budget cannot be enforced: %d run(s) have unknown cost - add pricing for the model at Configuration -> Pricing", unknownRuns)
 			log.Warn("dispatcher: skipping dispatch, task has cost-unknown runs under an active budget", "spent", spent, "budget", budget, "unknown_runs", unknownRuns)
-			return d.escalateCostBudget(ctx, t, matched, ReasonCostUnknown, msg, "cost-unknown")
+			return d.escalateCostBudget(ctx, t, matched, arm, ReasonCostUnknown, msg, "cost-unknown")
 		}
 
 		warnRatio := d.resolveCostWarnRatio(ctx)
@@ -524,7 +530,7 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 	}
 	msg := fmt.Sprintf("budget exhausted: $%.2f of $%.2f", spent, budget)
 	log.Warn("dispatcher: skipping dispatch, cost budget exhausted", "spent", spent, "budget", budget)
-	return d.escalateCostBudget(ctx, t, matched, ReasonCostBudget, msg, "budget-exhausted")
+	return d.escalateCostBudget(ctx, t, matched, arm, ReasonCostBudget, msg, "budget-exhausted")
 }
 
 // escalateCostBudget creates a "phantom" agent_runs row directly in
@@ -536,7 +542,7 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 // Returns true (skip dispatch) alongside any error, matching
 // checkCostBudget's contract that a failure here should still prevent
 // dispatch this sweep.
-func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched gen.AgentConfig, code EscalationReason, msg, reason string) (bool, error) {
+func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched gen.AgentConfig, arm experimentArm, code EscalationReason, msg, reason string) (bool, error) {
 	runID := uuid.NewString()
 	if _, err := d.q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
 		ID:            runID,
@@ -545,8 +551,15 @@ func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched
 	}); err != nil {
 		return true, fmt.Errorf("create %s run: %w", reason, err)
 	}
-	if err := d.q.SetAgentRunConfigVersion(ctx, gen.SetAgentRunConfigVersionParams{AgentConfigID: matched.ID, ID: runID}); err != nil {
-		slog.Warn("tag cost-budget run with config version", "run", runID, "err", err)
+	if arm.Arm != ArmCandidate {
+		if err := d.q.SetAgentRunConfigVersion(ctx, gen.SetAgentRunConfigVersionParams{AgentConfigID: matched.ID, ID: runID}); err != nil {
+			slog.Warn("tag cost-budget run with config version", "run", runID, "err", err)
+		}
+	}
+	if arm.ExperimentID != "" {
+		if err := d.q.SetAgentRunExperiment(ctx, gen.SetAgentRunExperimentParams{ExperimentID: &arm.ExperimentID, ExperimentArm: &arm.Arm, ID: runID}); err != nil {
+			slog.Warn("tag cost-budget run with experiment", "run", runID, "err", err)
+		}
 	}
 	// Lock the task on this run, same as a real waiting_human escalation —
 	// stays locked until a human acts (raises the budget, or replies via
@@ -838,6 +851,11 @@ func (d *Dispatcher) DispatchReply(ctx context.Context, taskID, message string) 
 	// Reply on the provider that asked, so its session can be resumed, as
 	// long as it is still in the agent config's list.
 	opts := runOptions{humanReply: &message}
+	if exp, eerr := d.q.GetRunningAgentExperiment(ctx, matched.ID); eerr == nil {
+		eff, arm := d.resolveExperiment(ctx, t, *matched, &exp)
+		matched = &eff
+		opts.experiment = arm
+	}
 	if run.ProviderConfigID != nil && run.AgentConfigID != nil && *run.AgentConfigID == matched.ID {
 		ladder := ParseLadder(matched.EscalationLadder)
 		pcIDs := agentProviderIDs(matched)
@@ -894,6 +912,8 @@ type runOptions struct {
 	// ladderRung is the escalation-ladder rung in effect (nil = agent config has
 	// no ladder).
 	ladderRung *int
+	// experiment is the A/B experiment arm the run belongs to (zero = none).
+	experiment experimentArm
 }
 
 // startRun creates the run row,
@@ -933,7 +953,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		feedback = prior.Feedback
 	}
 
-	if err := d.persistRunRow(ctx, t, matched, pcID, runID, feedback, opts.ladderRung); err != nil {
+	if err := d.persistRunRow(ctx, t, matched, pcID, runID, feedback, opts.ladderRung, opts.experiment); err != nil {
 		return "", err
 	}
 
@@ -1304,7 +1324,7 @@ func (d *Dispatcher) sessionCostBaseline(ctx context.Context, taskID, sessionID 
 // meantime, zero rows are affected, the transaction (including the just-created
 // run row) is rolled back, and ErrDispatchConflict is returned so the caller
 // does not start the run.
-func (d *Dispatcher) persistRunRow(ctx context.Context, t gen.Task, matched gen.AgentConfig, providerConfigID, runID string, feedback *string, ladderRung *int) error {
+func (d *Dispatcher) persistRunRow(ctx context.Context, t gen.Task, matched gen.AgentConfig, providerConfigID, runID string, feedback *string, ladderRung *int, arm experimentArm) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -1328,12 +1348,22 @@ func (d *Dispatcher) persistRunRow(ctx context.Context, t gen.Task, matched gen.
 	}
 	// Tag with the config's latest version at dispatch time (a concurrent edit
 	// racing this is negligible). Stays NULL when the config has no versions.
-	if err := tq.SetAgentRunConfigVersion(ctx, gen.SetAgentRunConfigVersionParams{
-		AgentConfigID: matched.ID,
-		ID:            runID,
-	}); err != nil {
-		_ = tx.Rollback()
-		return fmt.Errorf("set agent run config version: %w", err)
+	// Candidate-arm runs stay NULL until the experiment is promoted (which
+	// backfills the new version).
+	if arm.Arm != ArmCandidate {
+		if err := tq.SetAgentRunConfigVersion(ctx, gen.SetAgentRunConfigVersionParams{
+			AgentConfigID: matched.ID,
+			ID:            runID,
+		}); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("set agent run config version: %w", err)
+		}
+	}
+	if arm.ExperimentID != "" {
+		if err := tq.SetAgentRunExperiment(ctx, gen.SetAgentRunExperimentParams{ExperimentID: &arm.ExperimentID, ExperimentArm: &arm.Arm, ID: runID}); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("set agent run experiment: %w", err)
+		}
 	}
 	if ladderRung != nil {
 		r := int64(*ladderRung)

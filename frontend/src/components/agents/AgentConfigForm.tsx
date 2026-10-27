@@ -6,11 +6,12 @@ import PluginMcpPicker from './PluginMcpPicker'
 import CommandFilterEditor from './CommandFilterEditor'
 import LabelPicker from './LabelPicker'
 import AgentHistoryPanel from './AgentHistoryPanel'
+import AgentExperimentPanel from './AgentExperimentPanel'
 import SkillPicker from '../skills/SkillPicker'
 import { getCapability } from '../../lib/providerCapabilities'
 import { providerListGaps } from '../../lib/providerListGaps'
 
-export type FormState = Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config' | 'current_version'>
+export type FormState = Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config' | 'current_version' | 'running_experiment'>
 
 export default function AgentConfigForm({
   selected,
@@ -559,6 +560,16 @@ export default function AgentConfigForm({
 
       {selected && onRestored && (
         <AgentHistoryPanel agentId={selected.id} onRestored={onRestored} reloadKey={historyReloadKey} />
+      )}
+
+      {selected && onRestored && (
+        <AgentExperimentPanel
+          agentId={selected.id}
+          config={selected}
+          providerConfigs={providerConfigs}
+          onPromoted={onRestored}
+          reloadKey={historyReloadKey}
+        />
       )}
     </div>
   )
