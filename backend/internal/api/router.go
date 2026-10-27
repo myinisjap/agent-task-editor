@@ -333,6 +333,8 @@ func NewRouter(deps RouterDeps) http.Handler {
 
 			// Ingested source-issue comment thread (see tasksource.Importer)
 			r.Get("/tasks/{id}/source-comments", tasksH.ListSourceComments)
+			// Human replies to waiting_human runs (for "Remember for this repo").
+			r.Get("/tasks/{id}/human-decisions", tasksH.ListHumanDecisions)
 
 			// Mints a short-lived, single-use ticket for authenticating the
 			// WebSocket upgrade (GET /ws?ticket=...) without putting the

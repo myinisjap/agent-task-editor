@@ -14,6 +14,12 @@ type Schemas = components['schemas']
 export type ProviderConfig = Schemas['ProviderConfig']
 export type ChatSession = Schemas['ChatSession']
 export type Task = Schemas['Task']
+export type RepoLesson = Schemas['RepoLesson']
+export type RepoLessonCreate = Schemas['RepoLessonCreate']
+export type RepoLessonUpdate = Schemas['RepoLessonUpdate']
+export type TaskHumanDecision = Schemas['TaskHumanDecision']
+export type LessonStatus = RepoLesson['status']
+export type LessonKind = RepoLesson['kind']
 export type BlockReason = Schemas['BlockReason']
 export type DependencyEdge = Schemas['DependencyEdge']
 export type TaskDependencies = Schemas['TaskDependencies']
@@ -320,6 +326,8 @@ export const api = {
     // hasn't opted into issue_comment_sync_enabled or nothing's been
     // ingested yet.
     sourceComments: (id: string) => request<TaskSourceComment[]>(`/tasks/${id}/source-comments`),
+    // humanDecisions lists the human replies to the task's waiting_human runs.
+    humanDecisions: (id: string) => request<TaskHumanDecision[]>(`/tasks/${id}/human-decisions`),
     // cancelRun signals an in-flight run to stop. The pool marks the run
     // "cancelled" and pauses the task asynchronously, then broadcasts
     // task.agent_done, so callers rely on the WS event rather than the response.
@@ -424,12 +432,22 @@ export const api = {
 
       request<Repo>(`/repos/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/repos/${id}`, { method: 'DELETE' }),
+    lessons: (id: string, status?: LessonStatus) =>
+      request<RepoLesson[]>(`/repos/${id}/lessons${status ? `?status=${status}` : ''}`),
+    createLesson: (id: string, body: RepoLessonCreate) =>
+      request<RepoLesson>(`/repos/${id}/lessons`, { method: 'POST', body: JSON.stringify(body) }),
     tree: (id: string, ref = 'HEAD') => request<{ ref: string; files: string[] }>(`/repos/${id}/tree?ref=${ref}`),
     // Manifest-scan-only detection (go.mod, .nvmrc, .python-version, etc.) —
     // never writes runtime_languages; the caller pre-fills the form and the
     // human still saves explicitly.
     detectRuntime: (id: string) =>
       request<{ suggestions?: (RuntimeLanguagePin & { source: string })[] }>(`/repos/${id}/runtime/detect`, { method: 'POST' }),
+  },
+  lessons: {
+    listGlobal: (status?: LessonStatus) => request<RepoLesson[]>(`/lessons${status ? `?status=${status}` : ''}`),
+    createGlobal: (body: RepoLessonCreate) => request<RepoLesson>('/lessons', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id: string, body: RepoLessonUpdate) => request<RepoLesson>(`/lessons/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    delete: (id: string) => request<void>(`/lessons/${id}`, { method: 'DELETE' }),
   },
   templates: {
     list: () => request<TaskTemplate[]>('/templates'),

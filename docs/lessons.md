@@ -51,6 +51,12 @@ Resumed provider sessions do not get the section (the conversation already has
 it) and do not increment `injected_count`. Lessons can go stale, so agents are
 told to trust the code over a lesson and to say so in their notes.
 
+## UI
+
+- **Repos page** — each repo has a **Lessons** button that opens a panel to add, edit, retire/reactivate and delete lessons, filter by status, and see each lesson's kind, body, scope (path globs, stages) and injected count.
+- **Settings → Lessons** — the same controls for global (repo-less) lessons.
+- **Task Detail → Remember for this repo** — shown next to each human reply (the "Human decisions" list, backed by `GET /tasks/{id}/human-decisions`) and each human label-history note (e.g. rejections). It opens a form prefilled with that text (trimmed to 300 characters, kind `preference`) and creates an active lesson with `source_task_id` set to the task.
+
 ## API
 
 ```bash
@@ -64,7 +70,7 @@ curl -X POST $ATE/api/v1/lessons -H "Authorization: Bearer $TOKEN" \
 curl -X PATCH $ATE/api/v1/lessons/$ID -H "Authorization: Bearer $TOKEN" -d '{"status":"retired"}'
 ```
 
-See [api.md](api.md#repo-lessons). A UI and LLM-proposed lessons (with Inbox
-approval) come in later phases.
+See [api.md](api.md#repo-lessons). LLM-proposed lessons (with Inbox
+approval) come in a later phase.
 
 Task runs also keep Claude Code's own auto-memory off, see [providers/claude.md](providers/claude.md#auto-memory).
