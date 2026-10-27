@@ -271,6 +271,23 @@ details.
 }
 ```
 
+### `task.preview`
+A preview screenshot capture started (`status: "running"`) or finished
+(`ok` or `failed`); see
+[workflows.md § Preview screenshots](workflows.md#preview-screenshots).
+Refetch `GET /tasks/{id}/previews`.
+
+```json
+{
+  "type": "task.preview",
+  "payload": {
+    "task_id": "uuid",
+    "capture_id": "uuid",
+    "status": "ok"
+  }
+}
+```
+
 ### `task.rate_limited`
 An agent run was rate-limited by the provider and will be retried automatically.
 

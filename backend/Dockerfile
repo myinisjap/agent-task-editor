@@ -154,6 +154,23 @@ RUN if [ "$INSTALL_QWEN_CLI" = "true" ]; then npm install -g @qwen-code/qwen-cod
 RUN if [ "$INSTALL_OPENCODE_CLI" = "true" ]; then npm install -g opencode-ai@${OPENCODE_CLI_VERSION}; fi
 ENV SHELL=/bin/sh
 
+# Preview screenshots (docs/runtime.md#preview-screenshots): headless Chromium
+# via playwright-core, driven by preview/capture.mjs, so the review brief can
+# show UI screenshots. This adds roughly 300-400 MB to the image; opt out with
+#   INSTALL_PREVIEW_BROWSER=false docker compose build
+# (the feature then reports "preview failed: preview browser not installed").
+# Keep PLAYWRIGHT_VERSION in step with frontend/package.json's @playwright/test.
+ARG INSTALL_PREVIEW_BROWSER=true
+ARG PLAYWRIGHT_VERSION=1.62.1
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+COPY preview/capture.mjs /opt/preview-capture/capture.mjs
+RUN if [ "$INSTALL_PREVIEW_BROWSER" = "true" ]; then \
+      cd /opt/preview-capture && npm init -y >/dev/null && \
+      npm install --no-audit --no-fund playwright-core@${PLAYWRIGHT_VERSION} && \
+      npx playwright-core install --with-deps chromium && \
+      rm -rf /var/lib/apt/lists/*; \
+    fi && chmod -R a+rX /opt/preview-capture && { [ ! -d /opt/ms-playwright ] || chmod -R a+rX /opt/ms-playwright; }
+
 # Bring in the same Go toolchain used to build this image's own server binary
 # (golang:1.27-bookworm builder stage above) so agents can build/test/vet Go
 # repos they're assigned to work on. Copying from the builder stage (rather

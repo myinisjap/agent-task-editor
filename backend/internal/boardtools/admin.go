@@ -120,6 +120,9 @@ func repoProps(create bool) map[string]any {
 		"workflow_id":            str("Workflow new tasks in this repo use (from list_workflows; on update, empty string clears it)"),
 		"verify_command":         str("Shell command run in the task's worktree after an agent reports success, e.g. \"make test\"; non-zero exit sends the work back. Empty disables it."),
 		"verify_timeout_seconds": map[string]any{"type": "integer", "description": "Verify command timeout, 1-3600 (default 600)"},
+		"preview_command":        str("Shell command that starts the app's dev server in the task worktree; must listen on $PORT (127.0.0.1). With preview_routes it enables screenshots in the review brief."),
+		"preview_routes":         str("Newline-separated paths to screenshot, e.g. \"/\\n/tasks\""),
+		"preview_paths_glob":     str("Newline-separated globs deciding when a diff is a UI change (empty = frontend/**, web/**, src/**/*.{tsx,jsx,vue,svelte,css})"),
 		"max_concurrent_runs":    map[string]any{"type": "integer", "description": "Max agent runs at once in this repo (default: the server's MAX_WORKERS)"},
 		"runtime_languages": map[string]any{
 			"type":        "array",
@@ -146,6 +149,7 @@ func withRepoID(p map[string]any) map[string]any {
 // repoFields are the add_repo/update_repo arguments forwarded to the API.
 var repoFields = []string{
 	"name", "path", "remote_url", "workflow_id", "verify_command", "verify_timeout_seconds",
+	"preview_command", "preview_routes", "preview_paths_glob",
 	"max_concurrent_runs", "runtime_languages", "issue_sync_enabled", "issue_sync_label",
 }
 

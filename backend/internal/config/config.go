@@ -51,10 +51,13 @@ type Config struct {
 	MaxWorkers          int    `yaml:"max_workers"`
 	RepoBaseDir         string `yaml:"repo_base_dir"`
 	UploadDir           string `yaml:"upload_dir"`
+	// PreviewCaptureScript is the Playwright capture script run by preview
+	// screenshots (PREVIEW_CAPTURE_SCRIPT).
+	PreviewCaptureScript string        `yaml:"preview_capture_script"`
+	GitHubSyncInterval   time.Duration `yaml:"github_sync_interval"`
+	IssueSyncInterval    time.Duration `yaml:"issue_sync_interval"`
 	// SkillsDir (SKILLS_DIR) holds skill folders; default "skills".
-	SkillsDir          string        `yaml:"skills_dir"`
-	GitHubSyncInterval time.Duration `yaml:"github_sync_interval"`
-	IssueSyncInterval  time.Duration `yaml:"issue_sync_interval"`
+	SkillsDir string `yaml:"skills_dir"`
 	// ScheduleInterval is how often the task-schedule sweep runs (see
 	// internal/schedule.Scheduler), checking every enabled task_schedule for
 	// due firings. Cron expressions are minute-granularity, so this only
@@ -303,6 +306,9 @@ func Load(path string) (Config, error) {
 			}
 		}
 		cfg.RepoBaseDir = v
+	}
+	if v := os.Getenv("PREVIEW_CAPTURE_SCRIPT"); v != "" {
+		cfg.PreviewCaptureScript = v
 	}
 	if v := os.Getenv("UPLOAD_DIR"); v != "" {
 		cfg.UploadDir = v

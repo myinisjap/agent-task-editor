@@ -691,6 +691,17 @@ process exited on its own), `output` (tail of combined stdout/stderr, max
 `verify_command` and `verify_timeout_seconds`; workflow labels carry
 `verify_mode` and `verify_command`.
 
+### `GET /tasks/{id}/previews`
+The latest preview screenshot capture, `{"capture": null}` when none.
+`capture` has `id`, `status` (`running`, `ok`, `failed`), `error` (the failure
+reason; for `ok` it lists routes that failed), `created_at`, `finished_at` and
+`images` (`id`, `route`, `variant` = `after`, `width`, `height`, `url` served by
+`GET /uploads/{task_id}/{filename}`). See
+[workflows.md § Preview screenshots](workflows.md#preview-screenshots). Repos
+carry `preview_command`, `preview_routes` (newline-separated paths, max 20) and
+`preview_paths_glob` (newline-separated, empty = defaults); all three are
+accepted on `POST`/`PATCH /repos`.
+
 ### `POST /tasks/{id}/runs/{run_id}/cancel`
 Stop a running agent run (kill switch). The pool cancels the run's context —
 killing CLI provider subprocesses and aborting HTTP provider requests — then,

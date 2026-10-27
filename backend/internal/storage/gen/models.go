@@ -200,6 +200,9 @@ type Repo struct {
 	RuntimeLanguages              string    `json:"runtime_languages"`
 	VerifyCommand                 string    `json:"verify_command"`
 	VerifyTimeoutSeconds          int64     `json:"verify_timeout_seconds"`
+	PreviewCommand                string    `json:"preview_command"`
+	PreviewRoutes                 string    `json:"preview_routes"`
+	PreviewPathsGlob              string    `json:"preview_paths_glob"`
 }
 
 type RepoLesson struct {
@@ -372,6 +375,28 @@ type TaskPrReviewState struct {
 	LastConflictSha       *string   `json:"last_conflict_sha"`
 	LastPrUpdatedAt       *string   `json:"last_pr_updated_at"`
 	LastChecksPolledAt    *string   `json:"last_checks_polled_at"`
+}
+
+type TaskPreviewCapture struct {
+	ID         string     `json:"id"`
+	TaskID     string     `json:"task_id"`
+	RunID      *string    `json:"run_id"`
+	Status     string     `json:"status"`
+	Error      string     `json:"error"`
+	CreatedAt  time.Time  `json:"created_at"`
+	FinishedAt *time.Time `json:"finished_at"`
+}
+
+type TaskPreviewImage struct {
+	ID        string    `json:"id"`
+	CaptureID string    `json:"capture_id"`
+	TaskID    string    `json:"task_id"`
+	Route     string    `json:"route"`
+	Variant   string    `json:"variant"`
+	Width     int64     `json:"width"`
+	Height    int64     `json:"height"`
+	Path      string    `json:"path"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type TaskReviewComment struct {

@@ -77,6 +77,7 @@ sql:
       - "internal/storage/migrations/075_agent_config_versions.up.sql"
       - "internal/storage/migrations/076_intake_endpoints.up.sql"
       - "internal/storage/migrations/077_subtask_fanout.up.sql"
+      - "internal/storage/migrations/078_repo_preview.up.sql"
     gen:
       go:
         package: "gen"

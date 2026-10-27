@@ -25,6 +25,7 @@ const (
 	TypeSystemCostBudgetTripped  = "system.cost_budget_tripped"
 	TypeTaskReviewCommentsChange = "task.review_comments_changed"
 	TypeTaskVerification         = "task.verification"
+	TypeTaskPreview              = "task.preview"
 	TypeTaskRateLimited          = "task.rate_limited"
 	TypeProviderPauseChanged     = "provider.pause_changed"
 	TypeTaskGitStateChanged      = "task.git_state_changed"
@@ -236,4 +237,12 @@ func ToMap(payload any) map[string]any {
 		return nil
 	}
 	return m
+}
+
+// TaskPreview is the payload of task.preview: a preview screenshot capture
+// started or finished for a task. Status is running | ok | failed.
+type TaskPreview struct {
+	TaskID    string `json:"task_id"`
+	CaptureID string `json:"capture_id"`
+	Status    string `json:"status"`
 }

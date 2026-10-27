@@ -68,6 +68,9 @@ type EditForm = {
   // timeout is a string so the input can be blank (server default 600s).
   verify_command: string
   verify_timeout_seconds: string
+  preview_command: string
+  preview_routes: string
+  preview_paths_glob: string
 }
 
 const BLANK_FORM: EditForm = {
@@ -88,6 +91,9 @@ const BLANK_FORM: EditForm = {
   runtimeRows: [],
   verify_command: '',
   verify_timeout_seconds: '',
+  preview_command: '',
+  preview_routes: '',
+  preview_paths_glob: '',
 }
 
 export default function ReposPage() {
@@ -186,6 +192,9 @@ export default function ReposPage() {
         runtime_languages: form.runtimeRows.map(({ id, version }) => ({ id, version })),
         verify_command: form.verify_command.trim() || undefined,
         verify_timeout_seconds: form.verify_timeout_seconds.trim() ? Number(form.verify_timeout_seconds) : undefined,
+        preview_command: form.preview_command.trim() || undefined,
+        preview_routes: form.preview_routes.trim() || undefined,
+        preview_paths_glob: form.preview_paths_glob.trim() || undefined,
       })
       setRepos((r) => [...r, repo])
       setShowForm(false)
@@ -217,6 +226,9 @@ export default function ReposPage() {
       runtimeRows: parseRuntimeLanguages(repo.runtime_languages),
       verify_command: repo.verify_command ?? '',
       verify_timeout_seconds: repo.verify_timeout_seconds ? String(repo.verify_timeout_seconds) : '',
+      preview_command: repo.preview_command ?? '',
+      preview_routes: repo.preview_routes ?? '',
+      preview_paths_glob: repo.preview_paths_glob ?? '',
     })
     setEditError('')
     setEditDetectNote('')
@@ -267,6 +279,9 @@ export default function ReposPage() {
         runtime_languages: editForm.runtimeRows.map(({ id, version }) => ({ id, version })),
         verify_command: editForm.verify_command.trim(),
         verify_timeout_seconds: editForm.verify_timeout_seconds.trim() ? Number(editForm.verify_timeout_seconds) : undefined,
+        preview_command: editForm.preview_command.trim(),
+        preview_routes: editForm.preview_routes,
+        preview_paths_glob: editForm.preview_paths_glob,
       })
       setRepos((r) => r.map((x) => (x.id === editingId ? updated : x)))
       if (editSkillsLoaded) {
@@ -387,6 +402,58 @@ export default function ReposPage() {
             className={`${inputCls} max-w-[10rem]`}
           />
         </div>
+      </div>
+    )
+  }
+
+  // Renders the "Preview screenshots" section shared by the create and edit forms.
+  function renderPreviewSection(opts: {
+    command: string
+    routes: string
+    globs: string
+    setter: React.Dispatch<React.SetStateAction<EditForm>>
+  }) {
+    const { command, routes, globs, setter } = opts
+    return (
+      <div className="flex flex-col gap-2 sm:col-span-2 border-t border-slate-800 pt-4">
+        <label className="text-xs font-medium text-slate-400">
+          Preview command <span className="text-slate-600">(blank = no screenshots)</span>
+        </label>
+        <input
+          type="text"
+          value={command}
+          onChange={(e) => setter((f) => ({ ...f, preview_command: e.target.value }))}
+          placeholder="cd frontend && npm ci && npm run dev -- --port $PORT --host 127.0.0.1"
+          aria-label="Preview command"
+          className={`${inputCls} font-mono`}
+        />
+        <span className="text-xs text-slate-600">
+          When a run succeeds into a human gate and its diff touches UI files, this starts the app in the task
+          worktree (as the agent user, <code>$PORT</code> is a free port) and screenshots the routes below at desktop
+          and phone width for the review brief. Failures never block the task.
+        </span>
+        <label className="text-xs font-medium text-slate-400">
+          Preview routes <span className="text-slate-600">(one path per line)</span>
+        </label>
+        <textarea
+          value={routes}
+          onChange={(e) => setter((f) => ({ ...f, preview_routes: e.target.value }))}
+          placeholder={'/\n/inbox'}
+          aria-label="Preview routes"
+          rows={3}
+          className={`${inputCls} font-mono`}
+        />
+        <label className="text-xs font-medium text-slate-400">
+          UI path globs <span className="text-slate-600">(one per line; blank = defaults)</span>
+        </label>
+        <textarea
+          value={globs}
+          onChange={(e) => setter((f) => ({ ...f, preview_paths_glob: e.target.value }))}
+          placeholder={'frontend/**\nweb/**\nsrc/**/*.{tsx,jsx,vue,svelte,css}'}
+          aria-label="Preview path globs"
+          rows={3}
+          className={`${inputCls} font-mono`}
+        />
       </div>
     )
   }
@@ -699,6 +766,7 @@ export default function ReposPage() {
             })}
 
             {renderVerifySection({ command: form.verify_command, timeout: form.verify_timeout_seconds, setter: setForm })}
+            {renderPreviewSection({ command: form.preview_command, routes: form.preview_routes, globs: form.preview_paths_glob, setter: setForm })}
           </div>
 
           {error && <p className="text-xs text-red-400">{error}</p>}
@@ -1002,6 +1070,7 @@ export default function ReposPage() {
                     })}
 
                     {renderVerifySection({ command: editForm.verify_command, timeout: editForm.verify_timeout_seconds, setter: setEditForm })}
+                    {renderPreviewSection({ command: editForm.preview_command, routes: editForm.preview_routes, globs: editForm.preview_paths_glob, setter: setEditForm })}
 
                     <div className="sm:col-span-2">
                       <p className="text-xs font-medium text-slate-300 mb-1">Skills</p>

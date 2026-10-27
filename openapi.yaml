@@ -1371,6 +1371,21 @@ components:
         verify_timeout_seconds:
           type: integer
           description: Timeout for verify_command in seconds (1-3600, default 600).
+        preview_command:
+          type: string
+          description: >
+            Shell command that starts the app's dev server in the task's
+            worktree (run as the agent user, `$PORT` is a free port, bind
+            127.0.0.1). Empty (the default) disables preview screenshots.
+            See docs/workflows.md#preview-screenshots.
+        preview_routes:
+          type: string
+          description: Newline-separated paths to screenshot (each starts with /, at most 20).
+        preview_paths_glob:
+          type: string
+          description: >
+            Newline-separated globs deciding when a diff counts as a UI change.
+            Empty = frontend/**, web/**, src/**/*.{tsx,jsx,vue,svelte,css}.
         created_at:  { type: string, format: date-time }
       required: [id, name, path, created_at]
 
@@ -1396,6 +1411,31 @@ components:
         duration_ms: { type: integer }
         created_at:  { type: string, format: date-time }
       required: [run_id, task_id, command, status, exit_code, output, truncated, duration_ms, created_at]
+
+    TaskPreviewImage:
+      type: object
+      properties:
+        id:      { type: string }
+        route:   { type: string }
+        variant: { type: string, enum: [after, before], description: "Only after is produced today." }
+        width:   { type: integer }
+        height:  { type: integer }
+        url:     { type: string, description: "Served by GET /uploads/{task_id}/{filename}." }
+      required: [id, route, variant, width, height, url]
+
+    TaskPreviewCapture:
+      type: object
+      description: One preview screenshot capture for a task.
+      properties:
+        id:          { type: string }
+        status:      { type: string, enum: [running, ok, failed] }
+        error:       { type: string, description: "Short failure reason; for status ok it lists routes that failed (partial success)." }
+        created_at:  { type: string, format: date-time }
+        finished_at: { type: string, format: date-time, nullable: true }
+        images:
+          type: array
+          items: { $ref: "#/components/schemas/TaskPreviewImage" }
+      required: [id, status, error, created_at, finished_at, images]
 
     RuntimeLanguagePin:
       type: object
@@ -2111,6 +2151,7 @@ components:
         - $ref: "#/components/schemas/WsSystemCostBudgetTrippedEvent"
         - $ref: "#/components/schemas/WsTaskReviewCommentsChangedEvent"
         - $ref: "#/components/schemas/WsTaskVerificationEvent"
+        - $ref: "#/components/schemas/WsTaskPreviewEvent"
         - $ref: "#/components/schemas/WsTaskRateLimitedEvent"
         - $ref: "#/components/schemas/WsProviderPauseChangedEvent"
         - $ref: "#/components/schemas/WsTaskGitStateChangedEvent"
@@ -2138,6 +2179,7 @@ components:
           system.cost_budget_tripped: "#/components/schemas/WsSystemCostBudgetTrippedEvent"
           task.review_comments_changed: "#/components/schemas/WsTaskReviewCommentsChangedEvent"
           task.verification: "#/components/schemas/WsTaskVerificationEvent"
+          task.preview: "#/components/schemas/WsTaskPreviewEvent"
           task.rate_limited: "#/components/schemas/WsTaskRateLimitedEvent"
           provider.pause_changed: "#/components/schemas/WsProviderPauseChangedEvent"
           task.git_state_changed: "#/components/schemas/WsTaskGitStateChangedEvent"
@@ -2321,6 +2363,21 @@ components:
         run_id:  { type: string }
         status:  { type: string, enum: [pass, fail, timeout, error] }
       required: [task_id, run_id, status]
+
+    WsTaskPreviewEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.preview] }
+        payload: { $ref: "#/components/schemas/WsTaskPreviewPayload" }
+      required: [type, payload]
+    WsTaskPreviewPayload:
+      type: object
+      description: A preview screenshot capture started or finished (refetch GET /tasks/{id}/previews).
+      properties:
+        task_id:    { type: string }
+        capture_id: { type: string }
+        status:     { type: string, enum: [running, ok, failed] }
+      required: [task_id, capture_id, status]
 
     WsTaskRateLimitedEvent:
       type: object
@@ -3407,6 +3464,32 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/AgentRun" } }
+
+  /tasks/{id}/previews:
+    get:
+      summary: Latest preview screenshot capture for a task
+      description: >
+        Screenshots of the repo's preview routes at desktop (1280x800) and
+        phone (390x844) width, captured when a run succeeded into a human gate
+        and the diff touched UI files. capture is null when none was taken.
+        Failures never block the task; they appear as status failed.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  capture:
+                    nullable: true
+                    allOf:
+                      - $ref: "#/components/schemas/TaskPreviewCapture"
+                required: [capture]
 
   /tasks/{id}/verifications:
     get:
@@ -4497,6 +4580,7 @@ paths:
       description: >
         The body also accepts verify_command (string) and
         verify_timeout_seconds (integer, 1-3600); see the Repo schema.
+        It also accepts preview_command, preview_routes and preview_paths_glob (strings).
       responses:
         "201":
           content:
@@ -4560,6 +4644,15 @@ paths:
                   minimum: 1
                   maximum: 3600
                   description: Replaces the verify timeout. Omit to leave unchanged.
+                preview_command:
+                  type: string
+                  description: Replaces the preview command; empty string disables previews. Omit to leave unchanged.
+                preview_routes:
+                  type: string
+                  description: Replaces the newline-separated preview routes. Omit to leave unchanged.
+                preview_paths_glob:
+                  type: string
+                  description: Replaces the newline-separated UI path globs (empty = defaults). Omit to leave unchanged.
       responses:
         "200":
           content:

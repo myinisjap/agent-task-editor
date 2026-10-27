@@ -50,6 +50,8 @@ export type ReviewComment = Schemas['ReviewComment']
 export type TaskSourceComment = Schemas['TaskSourceComment']
 export type AgentRun = Schemas['AgentRun']
 export type RunVerification = Schemas['RunVerification']
+export type TaskPreviewCapture = Schemas['TaskPreviewCapture']
+export type TaskPreviewImage = Schemas['TaskPreviewImage']
 export type ReviewBrief = Schemas['ReviewBrief']
 export type RiskFlag = Schemas['RiskFlag']
 export type RiskFlagCode = Schemas['RiskFlagCode']
@@ -326,6 +328,9 @@ export const api = {
     // reviewBrief is the deterministic risk-flag/verification summary for a
     // task waiting on a human (GET /tasks/{id}/review-brief).
     reviewBrief: (id: string) => request<ReviewBrief>(`/tasks/${id}/review-brief`),
+    // previews is the latest preview screenshot capture (capture is null when
+    // none was taken).
+    previews: (id: string) => request<{ capture: TaskPreviewCapture | null }>(`/tasks/${id}/previews`),
     getRun: (id: string, runId: string) => request<AgentRun>(`/tasks/${id}/runs/${runId}`),
     // listLabelHistory returns the task's label-transition audit trail
     // (oldest first), including the resolved actor for human transitions.
@@ -439,12 +444,12 @@ export const api = {
   repos: {
     list: () => listAllPages<Repo>('/repos'),
     get: (id: string) => request<Repo>(`/repos/${id}`),
-    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number; runtime_languages?: RuntimeLanguagePin[]; verify_command?: string; verify_timeout_seconds?: number }) =>
+    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number; runtime_languages?: RuntimeLanguagePin[]; verify_command?: string; verify_timeout_seconds?: number; preview_command?: string; preview_routes?: string; preview_paths_glob?: string }) =>
       request<Repo>('/repos', { method: 'POST', body: JSON.stringify(body) }),
     // max_concurrent_runs: omit the key to leave it unchanged, or pass null to
     // clear it back to "use the global default" — the backend distinguishes
     // an omitted field from an explicit null (see ReposHandler.Update).
-    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number | null; runtime_languages?: RuntimeLanguagePin[]; verify_command?: string; verify_timeout_seconds?: number }) =>
+    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number | null; runtime_languages?: RuntimeLanguagePin[]; verify_command?: string; verify_timeout_seconds?: number; preview_command?: string; preview_routes?: string; preview_paths_glob?: string }) =>
 
       request<Repo>(`/repos/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/repos/${id}`, { method: 'DELETE' }),

@@ -228,7 +228,7 @@ export default function TaskDetailPage() {
         )
         refreshTask()
         refreshComments()
-      } else if (event.type === 'task.verification' && event.payload.task_id === id) {
+      } else if ((event.type === 'task.verification' || event.type === 'task.preview') && event.payload.task_id === id) {
         setVerificationKey((k) => k + 1)
       } else if (event.type === 'task.review_comments_changed' && event.payload.task_id === id) {
         refreshComments()
