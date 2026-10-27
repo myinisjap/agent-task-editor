@@ -79,6 +79,7 @@ type AgentLog struct {
 	Timestamp  time.Time `json:"timestamp"`
 	Type       string    `json:"type"`
 	Content    string    `json:"content"`
+	Seq        int64     `json:"seq"`
 }
 
 type AgentRateLimit struct {

@@ -198,6 +198,7 @@ type RepoClone struct {
 // Note the timestamp key is "at", unlike the REST AgentLog.
 type AgentLogEntry struct {
 	ID      string    `json:"id"`
+	Seq     int64     `json:"seq"`
 	Type    string    `json:"type"`
 	Content string    `json:"content"`
 	At      time.Time `json:"at"`

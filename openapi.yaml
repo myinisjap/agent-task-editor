@@ -1725,6 +1725,7 @@ components:
         timestamp:    { type: string, format: date-time }
         type:         { type: string, enum: [stdout, stderr, system, tool_call, tool_result] }
         content:      { type: string }
+        seq:          { type: integer, format: int64, description: "Monotonic per-entry sequence; tiebreak for entries with the same (second-resolution) timestamp." }
       required: [id, agent_run_id, timestamp, type, content]
 
     Dashboard:
@@ -2617,6 +2618,7 @@ components:
         type:    { type: string, enum: [stdout, stderr, system, tool_call, tool_result] }
         content: { type: string }
         at:      { type: string, format: date-time }
+        seq:     { type: integer, format: int64, description: "Monotonic per-entry sequence; tiebreak for entries with the same timestamp." }
       required: [id, type, content, at]
 
     WsAgentLogEvent:

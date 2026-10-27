@@ -247,7 +247,7 @@ describe('parseLogContent — result events', () => {
     const content = JSON.stringify({ type: 'result', subtype: 'error', is_error: true, result: 'boom happened\nmore detail' })
     const parsed = parseLogContent('system', content)
     if (parsed.kind !== 'system_event') throw new Error('expected system_event')
-    expect(parsed.event).toBe('Failed: boom happened')
+    expect(parsed.event).toBe('Run failed: boom happened')
   })
 })
 

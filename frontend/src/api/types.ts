@@ -7365,6 +7365,11 @@ export interface components {
             /** @enum {string} */
             type: "stdout" | "stderr" | "system" | "tool_call" | "tool_result";
             content: string;
+            /**
+             * Format: int64
+             * @description Monotonic per-entry sequence; tiebreak for entries with the same (second-resolution) timestamp.
+             */
+            seq?: number;
         };
         Dashboard: {
             /** @description Non-archived task counts by label name, summed across all workflows. */
@@ -7968,6 +7973,11 @@ export interface components {
             content: string;
             /** Format: date-time */
             at: string;
+            /**
+             * Format: int64
+             * @description Monotonic per-entry sequence; tiebreak for entries with the same timestamp.
+             */
+            seq?: number;
         };
         WsAgentLogEvent: {
             /**

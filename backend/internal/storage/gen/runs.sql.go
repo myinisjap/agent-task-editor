@@ -63,8 +63,8 @@ func (q *Queries) CountTaskCostUnknownRuns(ctx context.Context, taskID string) (
 }
 
 const createAgentLog = `-- name: CreateAgentLog :exec
-INSERT INTO agent_logs (id, agent_run_id, timestamp, type, content)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO agent_logs (id, agent_run_id, timestamp, type, content, seq)
+VALUES (?, ?, ?, ?, ?, ?)
 `
 
 type CreateAgentLogParams struct {
@@ -73,6 +73,7 @@ type CreateAgentLogParams struct {
 	Timestamp  time.Time `json:"timestamp"`
 	Type       string    `json:"type"`
 	Content    string    `json:"content"`
+	Seq        int64     `json:"seq"`
 }
 
 func (q *Queries) CreateAgentLog(ctx context.Context, arg CreateAgentLogParams) error {
@@ -82,6 +83,7 @@ func (q *Queries) CreateAgentLog(ctx context.Context, arg CreateAgentLogParams) 
 		arg.Timestamp,
 		arg.Type,
 		arg.Content,
+		arg.Seq,
 	)
 	return err
 }
@@ -363,7 +365,7 @@ func (q *Queries) ListActiveAgentRuns(ctx context.Context) ([]ListActiveAgentRun
 }
 
 const listAgentLogs = `-- name: ListAgentLogs :many
-SELECT id, agent_run_id, timestamp, type, content FROM agent_logs WHERE agent_run_id = ? ORDER BY timestamp ASC
+SELECT id, agent_run_id, timestamp, type, content, seq FROM agent_logs WHERE agent_run_id = ? ORDER BY timestamp ASC, seq ASC, id ASC
 `
 
 func (q *Queries) ListAgentLogs(ctx context.Context, agentRunID string) ([]AgentLog, error) {
@@ -381,6 +383,7 @@ func (q *Queries) ListAgentLogs(ctx context.Context, agentRunID string) ([]Agent
 			&i.Timestamp,
 			&i.Type,
 			&i.Content,
+			&i.Seq,
 		); err != nil {
 			return nil, err
 		}
@@ -396,14 +399,17 @@ func (q *Queries) ListAgentLogs(ctx context.Context, agentRunID string) ([]Agent
 }
 
 const listAgentLogsPage = `-- name: ListAgentLogsPage :many
-SELECT l.id, l.agent_run_id, l.timestamp, l.type, l.content FROM agent_logs l
+SELECT l.id, l.agent_run_id, l.timestamp, l.type, l.content, l.seq FROM agent_logs l
 WHERE l.agent_run_id = ?1
   AND (
     ?2 = ''
     OR l.timestamp < (SELECT timestamp FROM agent_logs WHERE id = ?2)
-    OR (l.timestamp = (SELECT timestamp FROM agent_logs WHERE id = ?2) AND l.id < ?2)
+    OR (l.timestamp = (SELECT timestamp FROM agent_logs WHERE id = ?2) AND (
+      l.seq < (SELECT seq FROM agent_logs WHERE id = ?2)
+      OR (l.seq = (SELECT seq FROM agent_logs WHERE id = ?2) AND l.id < ?2)
+    ))
   )
-ORDER BY l.timestamp DESC, l.id DESC
+ORDER BY l.timestamp DESC, l.seq DESC, l.id DESC
 LIMIT ?3
 `
 
@@ -418,7 +424,7 @@ type ListAgentLogsPageParams struct {
 // oldest entry the caller already has). An empty cursor returns the newest
 // entries (the tail). Callers reverse the slice for chronological display and
 // use the oldest returned id as the next cursor to "load earlier". Ordering is
-// (timestamp, id) descending with id as a stable tiebreaker; the cursor
+// (timestamp, seq, id) descending with seq then id as stable tiebreakers; the cursor
 // comparison reads the anchor row's own timestamp so it matches the ORDER BY
 // regardless of timestamp text format. Positional params (?1 run_id, ?2 before
 // cursor, ?3 limit) are used instead of @named ones to sidestep a byte-offset
@@ -445,6 +451,7 @@ func (q *Queries) ListAgentLogsPage(ctx context.Context, arg ListAgentLogsPagePa
 			&i.Timestamp,
 			&i.Type,
 			&i.Content,
+			&i.Seq,
 		); err != nil {
 			return nil, err
 		}

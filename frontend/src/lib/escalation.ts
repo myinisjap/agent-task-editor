@@ -15,9 +15,33 @@ export type EscalationInfo = {
   action: EscalationAction
   /** Where 'fix' sends the user. */
   fix?: { to: string; text: string }
+  /** One line: what happened. */
+  explanation: string
+  /** One line: what to do about it. */
+  nextStep: string
 }
 
-const INFO: Record<EscalationReason, EscalationInfo> = {
+type Wording = { explanation: string; nextStep: string }
+
+const WORDING: Record<EscalationReason, Wording> = {
+  agent_question: { explanation: 'The agent paused because it needs an answer from you.', nextStep: 'Reply below; it continues in the same session.' },
+  auth_required: { explanation: 'The provider CLI has no valid login, so the run was refused.', nextStep: 'Log the CLI in (see Health), then retry.' },
+  repeated_failure: { explanation: 'The run failed several times in a row, so automatic retries stopped.', nextStep: 'Check the Logs tab for the error, then retry or reply with guidance.' },
+  rework_loop: { explanation: 'The task bounced between review and implementation too many times.', nextStep: "Reply with guidance on what's blocking it, or move the task yourself." },
+  cost_budget: { explanation: "The run stopped because it reached the agent's cost budget.", nextStep: 'Raise the budget on the agent, then retry.' },
+  cost_unknown: { explanation: 'The agent has a cost budget but there is no pricing for its model.', nextStep: 'Add pricing for the model, then retry.' },
+  provider_missing: { explanation: "The agent's provider is disabled or no longer exists.", nextStep: 'Enable or fix the provider, then retry.' },
+  runtime_prep: { explanation: "Installing the repo's toolchain failed before the agent started.", nextStep: "Check the repo's runtime settings, then retry." },
+  verify_error: { explanation: "The repo's verify command couldn't start (this is not a test failure).", nextStep: 'Fix the verify command on the repo, then retry.' },
+  max_turns: { explanation: 'The agent used all its allowed turns before finishing.', nextStep: 'Raise max turns or split the task, then retry.' },
+  transient_exhausted: { explanation: 'Network or provider errors kept coming back and retries ran out.', nextStep: 'Retry once the provider is healthy.' },
+  no_outcome: { explanation: 'The agent exited without reporting success or failure.', nextStep: 'Check the Logs tab, then retry.' },
+  rejected_transition: { explanation: "The agent asked for a move the workflow doesn't allow.", nextStep: 'Retry, or move the task yourself.' },
+}
+
+const FALLBACK_WORDING: Wording = { explanation: 'The agent paused and needs you.', nextStep: 'Open the task and reply.' }
+
+const BASE: Record<EscalationReason, Omit<EscalationInfo, 'explanation' | 'nextStep'>> = {
   agent_question: { short: 'Question', label: 'Agent asked a question', action: 'reply' },
   auth_required: {
     short: 'Not logged in',
@@ -68,6 +92,13 @@ const INFO: Record<EscalationReason, EscalationInfo> = {
   rejected_transition: { short: 'Move rejected', label: "Agent's requested move was rejected", action: 'retry' },
 }
 
+const INFO = Object.fromEntries(
+  (Object.keys(BASE) as EscalationReason[]).map((r) => [r, { ...BASE[r], ...WORDING[r] }]),
+) as Record<EscalationReason, EscalationInfo>
+
+/** Every known reason, for tests and exhaustive UIs. */
+export const ESCALATION_REASONS = Object.keys(INFO) as EscalationReason[]
+
 /**
  * Describes an escalation reason. Unknown or missing codes (runs recorded
  * before the field existed, or a newer server) fall back to the legacy
@@ -75,5 +106,5 @@ const INFO: Record<EscalationReason, EscalationInfo> = {
  */
 export function escalationInfo(reason: string | null | undefined): EscalationInfo {
   if (reason && reason in INFO) return INFO[reason as EscalationReason]
-  return { short: 'Needs you', label: 'Agent is waiting for your input', action: 'reply' }
+  return { short: 'Needs you', label: 'Agent is waiting for your input', action: 'reply', ...FALLBACK_WORDING }
 }

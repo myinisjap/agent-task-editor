@@ -326,6 +326,7 @@ func replayTaskLogs(ctx context.Context, c *Client, q *gen.Queries, taskID strin
 		log := logs[len(logs)-1-i]
 		entries[i] = wsevent.AgentLogEntry{
 			ID:      log.ID,
+			Seq:     log.Seq,
 			Type:    log.Type,
 			Content: log.Content,
 			At:      log.Timestamp,

@@ -19,6 +19,10 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Changed
+
+- **Readable run logs.** System events in the Logs tab now carry a severity (errors red, warnings amber, info neutral). Internal events (CLI pid, effort, UI invalidate, unknown CLI bookkeeping) only show with Debug on. Log entries get a monotonic `seq` (migration 080, on `AgentLog` and the `agent.log`/replay WebSocket entries) so same-second entries keep their real order (a failure no longer appears above "Session started"). The exit-error/outcome conflict line now reads "Run failed: <cli> exited with an error (it had reported "success")". Escalations in Inbox, Dashboard and Task Detail show a one-line explanation and next step for every reason.
+
 ### Added
 
 - **Planner fan-out.** `create_subtask` takes an optional `file_scope` (globs): it is stated in the subtask's prompt and files changed outside it are listed as a warning in the subtask's notes after its run. Subtasks whose scopes overlap a sibling's automatically depend on it (run sequentially) and the tool result says so. Once all subtasks are merged back the parent gets an integration run (prompt lists each subtask, scope, branch, notes and the merged diff stat; the repo verify command runs as usual) instead of auto-advancing. New `task_fanout` table (migration 077); `file_scope`/`integration_status` on tasks. Docs: planner guidance on when to fan out (3+ independent parts on disjoint files).
