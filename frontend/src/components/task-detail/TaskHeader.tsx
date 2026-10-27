@@ -201,7 +201,7 @@ export default function TaskHeader({
           )}
           <button
             onClick={onDelete}
-            className="text-xs text-red-700 hover:text-red-400"
+            className="text-xs text-red-400 hover:text-red-300"
           >
             Delete
           </button>
