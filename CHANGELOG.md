@@ -21,6 +21,7 @@ triggers the "Release" workflow the same way.
 
 ### Changed
 
+- **Inbox as a decision queue.** Inbox sections are now Decide / Answer / Fix setup; Decide rows show the review brief's one-line summary, diff size, cost, verify result, risk flags and preview count (new `GET /needs-me` fields) with Approve and Request changes (note); login/toolchain/budget escalations moved to Fix setup. Overview's own queue is replaced by a "Needs you (N)" link to the Inbox; the nav badge, tab badge, Overview and Inbox heading share one count.
 - **Decision-first review on Task Detail (desktop).** Tasks waiting at a human gate get a review layout at ≥1280px: header with title, state, repo, cost, run count and Approve ("Approve and open PR" when the next label opens a PR) / Request changes; the diff (with preview strip) or plan in the main pane, logs/details as tabs; and a sticky right rail with the review brief, verification and runs. The review brief now always sits below the task title.
 
 ### Added

@@ -2,12 +2,12 @@ import { labelDisplayNameByName } from '../lib/labelDisplay'
 import { useEffect, useState, type ReactNode, type MouseEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
-import RiskFlagChips from '../components/shared/RiskFlagChips'
 import { useNeedsMeStore } from '../stores/needsMe'
-import { useInboxStore } from '../stores/inbox'
+import { useInboxStore, useInboxSections } from '../stores/inbox'
+import DecisionContext from '../components/inbox/DecisionContext'
 import { useHealthStore } from '../stores/health'
 import { useWorkflowStore } from '../stores/workflow'
-import { buildInbox, inboxCount, itemActions } from '../lib/inbox'
+import { inboxCount, itemActions, SECTION_ORDER, type InboxEntry, type InboxSectionKey } from '../lib/inbox'
 import { needsMeReasonLabel } from '../lib/needsMe'
 import { formatRelativeAge } from '../lib/format'
 import { sideEffectText } from '../components/shared/SideEffectBadge'
@@ -18,13 +18,21 @@ const BTN = 'flex-1 md:flex-none inline-flex items-center justify-center min-h-[
 const PRIMARY = `${BTN} bg-sky-600 hover:bg-sky-500`
 const SECONDARY = `${BTN} bg-slate-700 hover:bg-slate-600 text-slate-100`
 
-function Section({ title, count, children }: { title: string; count: number; children: ReactNode }) {
+const SECTION_META: Record<InboxSectionKey, { title: string; subtitle: string }> = {
+  decide: { title: 'Decide', subtitle: 'Approve or request changes' },
+  answer: { title: 'Answer', subtitle: 'The agent asked something' },
+  fix: { title: 'Fix setup', subtitle: 'Something needs fixing before work can continue' },
+}
+
+function Section({ id, count, children }: { id: InboxSectionKey; count: number; children: ReactNode }) {
   if (count === 0) return null
+  const { title, subtitle } = SECTION_META[id]
   return (
-    <section className="mb-8" data-testid={`inbox-section-${title}`}>
-      <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">
+    <section className="mb-8" data-testid={`inbox-section-${id}`}>
+      <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">
         {title} ({count})
       </h2>
+      <p className="text-xs text-slate-500 mb-3">{subtitle}</p>
       <div className="flex flex-col gap-3">{children}</div>
     </section>
   )
@@ -32,7 +40,7 @@ function Section({ title, count, children }: { title: string; count: number; chi
 
 const isPhone = () => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(max-width: 767px)').matches
 
-function Row({ children, error, to }: { children: ReactNode; error?: string; to?: string }) {
+function Row({ children, error, to, extra }: { children: ReactNode; error?: string; to?: string; extra?: ReactNode }) {
   const navigate = useNavigate()
   // On phones the whole row taps through to the task; taps on inner links/buttons keep their own action.
   const onClick = (e: MouseEvent<HTMLDivElement>) => {
@@ -43,23 +51,23 @@ function Row({ children, error, to }: { children: ReactNode; error?: string; to?
   return (
     <div className="bg-slate-900 border border-slate-700 rounded-lg p-4 min-w-0" data-testid="inbox-item" onClick={onClick}>
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 md:gap-4">{children}</div>
+      {extra}
       {error && <p role="alert" className="text-xs text-red-400 mt-2">{error}</p>}
     </div>
   )
 }
 
 export default function InboxPage() {
-  const needsMe = useNeedsMeStore((s) => s.items)
   const refreshNeedsMe = useNeedsMeStore((s) => s.refresh)
-  const failed = useInboxStore((s) => s.failedEffects)
-  const sourceEdits = useInboxStore((s) => s.sourceEdits)
   const refreshEffects = useInboxStore((s) => s.refresh)
-  const paused = useHealthStore((s) => s.paused)
   const resume = useHealthStore((s) => s.resume)
   const fetchHealth = useHealthStore((s) => s.fetch)
   const workflows = useWorkflowStore((s) => s.workflows)
+  const sections = useInboxSections()
   const [busy, setBusy] = useState<Record<string, boolean>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [noteOpen, setNoteOpen] = useState<Record<string, boolean>>({})
+  const [notes, setNotes] = useState<Record<string, string>>({})
 
   useEffect(() => {
     void refreshNeedsMe()
@@ -68,8 +76,7 @@ export default function InboxPage() {
     if (useWorkflowStore.getState().workflows.length === 0) void useWorkflowStore.getState().fetch()
   }, [refreshNeedsMe, refreshEffects, fetchHealth])
 
-  const groups = buildInbox(needsMe, failed, paused, sourceEdits)
-  const total = inboxCount(groups)
+  const total = inboxCount(sections)
 
   const run = async (key: string, fn: () => Promise<unknown>, after: () => Promise<unknown> | void) => {
     setErrors((e) => ({ ...e, [key]: '' }))
@@ -86,11 +93,40 @@ export default function InboxPage() {
 
   const refreshAll = () => Promise.all([refreshNeedsMe(), refreshEffects()])
 
+  const sendChanges = (id: string) =>
+    run(id, async () => {
+      await api.tasks.reject(id, (notes[id] ?? '').trim())
+      setNotes((n) => ({ ...n, [id]: '' }))
+      setNoteOpen((o) => ({ ...o, [id]: false }))
+    }, refreshAll)
+
   const renderNeedsMe = (item: NeedsMeItem) => {
     const wf = workflows.find((w) => w.id === item.workflow_id)
     const a = itemActions(item, wf)
+    const isGate = item.reason === 'human_gate'
+    const open = !!noteOpen[item.task_id]
+    const note = notes[item.task_id] ?? ''
+    const noteField = isGate && a.requestChanges && open && (
+      <div className="mt-3 flex flex-col md:flex-row gap-2" data-testid="request-changes-form">
+        <textarea
+          aria-label="Request changes note"
+          value={note}
+          onChange={(e) => setNotes((n) => ({ ...n, [item.task_id]: e.target.value }))}
+          placeholder="What needs to change?"
+          rows={2}
+          className="flex-1 text-xs bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-slate-500"
+        />
+        <button
+          disabled={busy[item.task_id] || !note.trim()}
+          onClick={() => sendChanges(item.task_id)}
+          className={`${BTN} bg-red-700 hover:bg-red-600`}
+        >
+          Send
+        </button>
+      </div>
+    )
     return (
-      <Row key={item.task_id} to={`/tasks/${item.task_id}`} error={errors[item.task_id]}>
+      <Row key={item.task_id} to={`/tasks/${item.task_id}`} error={errors[item.task_id]} extra={noteField || undefined}>
         <div className="min-w-0 break-words">
           <Link to={`/tasks/${item.task_id}`} className="text-sm font-medium text-slate-200 hover:text-white hover:underline">
             {item.task_title}
@@ -104,11 +140,7 @@ export default function InboxPage() {
             </span>
           )}
           {item.message && <p className="text-xs text-slate-400 mt-1">{item.message}</p>}
-          {item.risk_flags && item.risk_flags.length > 0 && (
-            <div className="mt-1">
-              <RiskFlagChips codes={item.risk_flags} />
-            </div>
-          )}
+          {isGate && <DecisionContext item={item} />}
         </div>
         <div className="md:shrink-0 flex flex-col items-stretch md:items-end gap-2">
           <span className="text-xs text-slate-500" title={new Date(item.since).toLocaleString()}>
@@ -137,6 +169,15 @@ export default function InboxPage() {
                 Approve
               </button>
             )}
+            {a.requestChanges && (
+              <button
+                disabled={busy[item.task_id]}
+                onClick={() => setNoteOpen((o) => ({ ...o, [item.task_id]: !o[item.task_id] }))}
+                className={`${BTN} bg-red-700 hover:bg-red-600`}
+              >
+                Request changes
+              </button>
+            )}
             {!a.reply && (
               <Link to={`/tasks/${item.task_id}`} className={SECONDARY}>Open</Link>
             )}
@@ -146,32 +187,22 @@ export default function InboxPage() {
     )
   }
 
-  return (
-    <div className="p-4 md:p-6 max-w-5xl mx-auto" data-testid="inbox-page">
-      <h1 className="text-xl font-semibold text-slate-100 mb-6">Inbox</h1>
-
-      {total === 0 && (
-        <div data-testid="inbox-empty" className="text-center text-slate-500 py-16">
-          <p className="text-sm text-slate-300">You&apos;re all caught up.</p>
-          <p className="text-xs mt-1">Nothing is waiting on you. New items appear here as agents need you.</p>
-        </div>
-      )}
-
-      <Section title="Needs a reply" count={groups.reply.length}>{groups.reply.map(renderNeedsMe)}</Section>
-      <Section title="Awaiting approval" count={groups.approval.length}>{groups.approval.map(renderNeedsMe)}</Section>
-      <Section title="PR conflicts" count={groups.pr_conflict.length}>{groups.pr_conflict.map(renderNeedsMe)}</Section>
-
-      <Section title="Failed side effects" count={groups.side_effect.length}>
-        {groups.side_effect.map(({ task, effects, since }) => (
-          <Row key={task.id} to={`/tasks/${task.id}`} error={errors[`fx:${task.id}`]}>
+  const renderEntry = (e: InboxEntry) => {
+    switch (e.kind) {
+      case 'needs_me':
+        return renderNeedsMe(e.item)
+      case 'side_effect': {
+        const { task, effects, since } = e.failed
+        return (
+          <Row key={`fx:${task.id}`} to={`/tasks/${task.id}`} error={errors[`fx:${task.id}`]}>
             <div className="min-w-0 break-words">
               <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-slate-200 hover:text-white hover:underline">
                 {task.title}
               </Link>
-              {effects.map((e) => (
-                <p key={e.kind} className="text-xs text-red-300 mt-1">
-                  {sideEffectText(e)}
-                  {e.last_error ? `: ${e.last_error}` : ''}
+              {effects.map((ef) => (
+                <p key={ef.kind} className="text-xs text-red-300 mt-1">
+                  {sideEffectText(ef)}
+                  {ef.last_error ? `: ${ef.last_error}` : ''}
                 </p>
               ))}
             </div>
@@ -193,12 +224,12 @@ export default function InboxPage() {
               </button>
             </div>
           </Row>
-        ))}
-      </Section>
-
-      <Section title="Source issue edited" count={groups.source_edit.length}>
-        {groups.source_edit.map(({ task, since }) => (
-          <Row key={task.id} to={`/tasks/${task.id}`} error={errors[`su:${task.id}`]}>
+        )
+      }
+      case 'source_edit': {
+        const { task, since } = e.edit
+        return (
+          <Row key={`su:${task.id}`} to={`/tasks/${task.id}`} error={errors[`su:${task.id}`]}>
             <div className="min-w-0 break-words">
               <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-slate-200 hover:text-white hover:underline">
                 {task.title}
@@ -228,12 +259,12 @@ export default function InboxPage() {
               </div>
             </div>
           </Row>
-        ))}
-      </Section>
-
-      <Section title="Paused providers" count={groups.provider.length}>
-        {groups.provider.map((p) => (
-          <Row key={p.provider} error={errors[`pv:${p.provider}`]}>
+        )
+      }
+      case 'provider': {
+        const p = e.provider
+        return (
+          <Row key={`pv:${p.provider}`} error={errors[`pv:${p.provider}`]}>
             <div className="min-w-0 break-words">
               <p className="text-sm font-medium text-slate-200">
                 {providerLabel(p.provider)} dispatch is paused
@@ -254,8 +285,28 @@ export default function InboxPage() {
               </button>
             </div>
           </Row>
-        ))}
-      </Section>
+        )
+      }
+    }
+  }
+
+  return (
+    <div className="p-4 md:p-6 max-w-5xl mx-auto" data-testid="inbox-page">
+      <div className="flex items-baseline gap-2 mb-6">
+        <h1 className="text-xl font-semibold text-slate-100">Inbox</h1>
+        <span data-testid="inbox-total" className="text-sm text-slate-400">({total})</span>
+      </div>
+
+      {total === 0 && (
+        <div data-testid="inbox-empty" className="text-center text-slate-500 py-16">
+          <p className="text-sm text-slate-300">You&apos;re all caught up.</p>
+          <p className="text-xs mt-1">Nothing is waiting on you. New items appear here as agents need you.</p>
+        </div>
+      )}
+
+      {SECTION_ORDER.map((k) => (
+        <Section key={k} id={k} count={sections[k].length}>{sections[k].map(renderEntry)}</Section>
+      ))}
     </div>
   )
 }

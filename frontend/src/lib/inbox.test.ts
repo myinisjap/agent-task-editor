@@ -37,28 +37,64 @@ describe('sourceEditTasks', () => {
     ])
     expect(out.map((o) => o.task.id)).toEqual(['old', 'new'])
     const g = buildInbox([], [], [], out)
-    expect(g.source_edit).toHaveLength(2)
+    expect(g.decide).toHaveLength(2)
     expect(inboxCount(g)).toBe(2)
   })
 })
 
-describe('buildInbox / inboxCount', () => {
-  it('groups by kind and totals', () => {
+const ids = (es: { kind: string; item?: NeedsMeItem }[]) => es.map((e) => e.item?.task_id ?? e.kind)
+
+describe('buildInbox sections / inboxCount', () => {
+  it('classifies needs-me items by action', () => {
     const g = buildInbox(
-      [item({ task_id: 'a', reason: 'waiting_human' }), item({ task_id: 'b' }), item({ task_id: 'c', reason: 'pr_conflict' })],
-      failedEffectTasks([task({ side_effects: [{ kind: 'terminal', status: 'failed', attempts: 5, next_at: '2026-01-01T00:00:00Z' }] })]),
-      [{ provider: 'claude', reason: 'x', paused_at: '2026-01-01T00:00:00Z' }],
+      [
+        item({ task_id: 'gate' }),
+        item({ task_id: 'q', reason: 'waiting_human', escalation_reason: 'agent_question' }),
+        item({ task_id: 'loop', reason: 'waiting_human', escalation_reason: 'rework_loop' }),
+        item({ task_id: 'nocode', reason: 'waiting_human' }),
+        item({ task_id: 'auth', reason: 'waiting_human', escalation_reason: 'auth_required' }),
+        item({ task_id: 'rt', reason: 'waiting_human', escalation_reason: 'runtime_prep' }),
+        item({ task_id: 'budget', reason: 'waiting_human', escalation_reason: 'cost_budget' }),
+        item({ task_id: 'rep', reason: 'waiting_human', escalation_reason: 'repeated_failure' }),
+        item({ task_id: 'pr', reason: 'pr_conflict' }),
+      ],
+      [],
+      [],
     )
-    expect(g.reply.map((i) => i.task_id)).toEqual(['a'])
-    expect(g.approval.map((i) => i.task_id)).toEqual(['b'])
-    expect(g.pr_conflict).toHaveLength(1)
+    expect(ids(g.decide as never)).toEqual(['gate'])
+    expect(ids(g.answer as never)).toEqual(['q', 'loop', 'nocode'])
+    expect(ids(g.fix as never)).toEqual(['auth', 'rt', 'budget', 'rep', 'pr'])
+  })
+
+  it('puts source edits in decide and failed effects / paused providers in fix', () => {
+    const edits = sourceEditTasks([task({ id: 'e', source_pending_update: { title: 't', description: 'd', type: 'task', created_at: '2026-01-01T00:00:00Z' } })])
+    const failed = failedEffectTasks([task({ side_effects: [{ kind: 'terminal', status: 'failed', attempts: 5, next_at: '2026-01-01T00:00:00Z' }] })])
+    const g = buildInbox([], failed, [{ provider: 'claude', reason: 'x', paused_at: '2026-01-02T00:00:00Z' }], edits)
+    expect(g.decide.map((e) => e.kind)).toEqual(['source_edit'])
+    expect(g.fix.map((e) => e.kind)).toEqual(['side_effect', 'provider'])
+  })
+
+  it('sorts oldest first within a section', () => {
+    const g = buildInbox(
+      [item({ task_id: 'new', since: '2026-01-03T00:00:00Z' }), item({ task_id: 'old', since: '2026-01-01T00:00:00Z' })],
+      [],
+      [],
+    )
+    expect(ids(g.decide as never)).toEqual(['old', 'new'])
+  })
+
+  it('count equals every input and the sum of the sections (no 4-vs-3 mismatch)', () => {
+    const needsMe = [item({ task_id: 'a', reason: 'waiting_human' }), item({ task_id: 'b' }), item({ task_id: 'c', reason: 'pr_conflict' })]
+    const failed = failedEffectTasks([task({ side_effects: [{ kind: 'terminal', status: 'failed', attempts: 5, next_at: '2026-01-01T00:00:00Z' }] })])
+    const paused = [{ provider: 'claude', reason: 'x', paused_at: '2026-01-01T00:00:00Z' }]
+    const g = buildInbox(needsMe, failed, paused)
     expect(inboxCount(g)).toBe(5)
+    expect(g.decide.length + g.answer.length + g.fix.length).toBe(5)
   })
   it('is empty when nothing waits', () => {
     expect(inboxCount(buildInbox([], [], []))).toBe(0)
   })
 })
-
 describe('itemActions', () => {
   it('human gate with a success transition offers approve', () => {
     expect(itemActions(item({}), wf([{ from_label: 'review', path: 'success' }])).approve).toBe(true)
@@ -87,5 +123,13 @@ describe('formatRelativeAge', () => {
     expect(formatRelativeAge('2026-01-10T10:00:00Z', now)).toBe('2h ago')
     expect(formatRelativeAge('2026-01-07T12:00:00Z', now)).toBe('3d ago')
     expect(formatRelativeAge('garbage', now)).toBe('just now')
+  })
+})
+
+describe('itemActions requestChanges', () => {
+  it('is offered on a gate only when a human failure transition exists', () => {
+    expect(itemActions(item({}), wf([{ from_label: 'review', path: 'success' }])).requestChanges).toBe(false)
+    const a = itemActions(item({}), wf([{ from_label: 'review', path: 'success' }, { from_label: 'review', path: 'failure' }]))
+    expect(a).toMatchObject({ approve: true, requestChanges: true })
   })
 })

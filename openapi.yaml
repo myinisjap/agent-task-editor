@@ -50,6 +50,31 @@ components:
           description: >-
             Review-brief flag codes; present only for human_gate items whose
             branch diff could be computed and raised at least one flag.
+        summary:
+          type: string
+          description: One-line agent summary from the review brief. human_gate items only, when the brief could be built and an agent summary exists.
+        changed:
+          type: object
+          required: [files, additions, deletions]
+          description: Diff size. human_gate items only, when the branch diff could be computed.
+          properties:
+            files: { type: integer }
+            additions: { type: integer }
+            deletions: { type: integer }
+        cost_usd:
+          type: number
+          format: double
+          description: Cost so far across the task's runs. human_gate items only, when the review brief could be built.
+        cost_unknown:
+          type: boolean
+          description: True when some run had unknown cost. human_gate items only, when the review brief could be built.
+        verification:
+          type: string
+          enum: [pass, fail, timeout, error, not_run]
+          description: Latest verify result. human_gate items only, when the review brief could be built.
+        preview_count:
+          type: integer
+          description: Images in the latest preview capture. human_gate items only, when the review brief could be built; omitted when 0.
     RiskFlagCode:
       type: string
       enum: [migration, auth_or_security, dependencies, tests_removed, ci_config, large_change, outside_plan_scope]

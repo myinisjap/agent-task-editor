@@ -1,6 +1,7 @@
+import { useMemo } from 'react'
 import { create } from 'zustand'
 import { api } from '../api/client'
-import { failedEffectTasks, sourceEditTasks, type FailedEffectTask, type SourceEditTask } from '../lib/inbox'
+import { buildInbox, failedEffectTasks, inboxCount, sourceEditTasks, type FailedEffectTask, type InboxSections, type SourceEditTask } from '../lib/inbox'
 import { useNeedsMeStore } from './needsMe'
 import { useHealthStore } from './health'
 
@@ -43,11 +44,16 @@ export const useInboxStore = create<InboxState>((set) => ({
   },
 }))
 
-/** Total number of things waiting on the human, for the nav badge. */
+/** The inbox bucketed into Decide / Answer / Fix setup. Selectors stay primitive-stable; the object is memoised. */
+export function useInboxSections(): InboxSections {
+  const needsMe = useNeedsMeStore((s) => s.items)
+  const failed = useInboxStore((s) => s.failedEffects)
+  const sourceEdits = useInboxStore((s) => s.sourceEdits)
+  const paused = useHealthStore((s) => s.paused)
+  return useMemo(() => buildInbox(needsMe, failed, paused, sourceEdits), [needsMe, failed, paused, sourceEdits])
+}
+
+/** Total number of things waiting on the human: nav badge, tab badge, Overview and Inbox heading. */
 export function useInboxCount(): number {
-  const needsMe = useNeedsMeStore((s) => s.items.length)
-  const failed = useInboxStore((s) => s.failedEffects.length)
-  const sourceEdits = useInboxStore((s) => s.sourceEdits.length)
-  const paused = useHealthStore((s) => s.paused.length)
-  return needsMe + failed + sourceEdits + paused
+  return inboxCount(useInboxSections())
 }

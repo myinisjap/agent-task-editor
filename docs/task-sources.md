@@ -300,7 +300,7 @@ would otherwise let anyone who can edit the issue change what an agent does
 after a human signed off). A task counts as approved when its label history
 contains a human-triggered move off a human-gate label (an `agent_ignore` label,
 or a non-terminal label whose every outgoing transition is human-triggered; the
-same rule as the Inbox's "Awaiting approval"). If the history cannot be read the
+same rule as the Inbox's "Decide" section). If the history cannot be read the
 task is treated as approved. Before approval, behaviour is exactly as described
 above.
 
@@ -310,7 +310,7 @@ info level, and publishes `task.updated`. The task then carries
 `source_pending_update` (`title`, `description`, `type`, `created_at`) on
 `GET /tasks` and `GET /tasks/{id}`, and the task detail page shows a notice
 "The source issue was edited after approval" with the current and new text. The
-Inbox lists it under "Source issue edited". A human then chooses:
+Inbox lists it under "Decide". A human then chooses:
 
 - `POST /api/v1/tasks/{id}/source-update/apply` writes the held text to the task
   and clears it.
