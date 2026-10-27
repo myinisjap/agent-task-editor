@@ -4,12 +4,14 @@ import { useAgentsStore } from '../stores/agents'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useTasksStore } from '../stores/tasks'
+import { showUndoToast } from '../stores/toast'
+import { errMessage } from '../lib/errMessage'
 import { useWorkflowStore } from '../stores/workflow'
 import { useReposStore } from '../stores/repos'
 import TaskBoard from '../components/board/TaskBoard'
 import NewTaskModal from '../components/board/NewTaskModal'
 import OnboardingChecklist from '../components/board/OnboardingChecklist'
-import { api, type BulkAction, type Task, type TaskCost } from '../api/client'
+import { api, type BulkAction, type BulkResult, type Task, type TaskCost } from '../api/client'
 import { wsClient } from '../api/ws'
 import HelpModal from '../components/shared/HelpModal'
 import { Button, Icon, PageFrame } from '../components/ui'
@@ -399,17 +401,50 @@ export default function BoardPage() {
     if (selectedIds.size === 0) return
     setBulkBusy(true)
     setBulkError('')
+    const refresh = () => fetchTasks(showArchived ? { archived: 'all' } : undefined)
+    // Capture the previous state now so Undo restores exactly what was there.
+    const prev = new Map(
+      useTasksStore
+        .getState()
+        .tasks.filter((t) => selectedIds.has(t.id))
+        .map((t) => [t.id, { label: t.label }] as const),
+    )
     try {
       const { results } = await api.tasks.bulk([...selectedIds], action, toLabel ? { to_label: toLabel } : undefined)
       const failed = results.filter((r) => !r.ok)
+      const okIds = results.filter((r) => r.ok).map((r) => r.id)
       if (failed.length > 0) {
         setBulkError(`${failed.length} of ${results.length} failed: ${failed[0].error}`)
       } else {
         setSelectedIds(new Set())
       }
-      await fetchTasks(showArchived ? { archived: 'all' } : undefined)
+      await refresh()
+      if (okIds.length > 0) {
+        const verb = { move: 'Moved', pause: 'Paused', resume: 'Resumed', archive: 'Archived', unarchive: 'Unarchived' }[action]
+        const inverse = { pause: 'resume', resume: 'pause', archive: 'unarchive', unarchive: 'archive' } as const
+        showUndoToast(`${verb} ${okIds.length} task${okIds.length === 1 ? '' : 's'}`, async () => {
+          const calls: Promise<{ results: BulkResult[] }>[] = []
+          if (action === 'move') {
+            const byLabel = new Map<string, string[]>()
+            for (const id of okIds) {
+              const l = prev.get(id)?.label
+              if (!l) continue
+              byLabel.set(l, [...(byLabel.get(l) ?? []), id])
+            }
+            for (const [l, ids] of byLabel) calls.push(api.tasks.bulk(ids, 'move', { to_label: l, note: 'Undo bulk move' }))
+          } else {
+            calls.push(api.tasks.bulk(okIds, inverse[action]))
+          }
+          const all = (await Promise.all(calls)).flatMap((r) => r.results)
+          await refresh()
+          const bad = all.filter((r) => !r.ok)
+          if (bad.length > 0) {
+            throw new Error(`${bad.length} of ${all.length} could not be undone: ${bad[0].error}`)
+          }
+        })
+      }
     } catch (e) {
-      setBulkError(String(e))
+      setBulkError(errMessage(e))
     } finally {
       setBulkBusy(false)
     }

@@ -25,6 +25,8 @@ export default function AgentConfigForm({
   saving,
   deleting,
   onSave,
+  error,
+  notice,
   onDelete,
   onToggleEnabled,
   helpButton,
@@ -45,6 +47,10 @@ export default function AgentConfigForm({
   saving: boolean
   deleting: boolean
   onSave: () => void
+  /** Inline error from the last save/toggle/delete. */
+  error?: string
+  /** Inline non-error notice (e.g. label-conflict warning) from the last save. */
+  notice?: string
   onDelete: () => void
   onToggleEnabled: () => void
   helpButton?: ReactNode
@@ -541,6 +547,8 @@ export default function AgentConfigForm({
         </div>
       )}
 
+      {error && <p role="alert" className="text-sm text-danger mt-4">{error}</p>}
+      {notice && <p role="status" className="text-sm text-warning mt-4">{notice}</p>}
       <div className="flex gap-3 mt-6">
         <button
           onClick={onSave}

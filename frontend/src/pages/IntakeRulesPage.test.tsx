@@ -191,11 +191,12 @@ describe('IntakeRulesPage', () => {
 
   it('deletes a rule', async () => {
     deleteMock.mockResolvedValue(undefined)
-    window.confirm = vi.fn().mockReturnValue(true)
     render(<IntakeRulesPage />)
     await screen.findByText('Bug triage')
 
     await userEvent.click(screen.getByText('Delete'))
+    expect(deleteMock).not.toHaveBeenCalled()
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete rule' }))
     await waitFor(() => expect(deleteMock).toHaveBeenCalledWith('rule-1'))
   })
 })

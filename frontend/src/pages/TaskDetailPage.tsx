@@ -19,6 +19,10 @@ import ForceMoveControl from '../components/task-detail/ForceMoveControl'
 import HumanDecisionsList from '../components/task-detail/HumanDecisionsList'
 import RememberLessonModal from '../components/lessons/RememberLessonModal'
 import Toast from '../components/shared/Toast'
+import ConfirmDialog from '../components/shared/ConfirmDialog'
+import { showError, showUndoToast } from '../stores/toast'
+import { errMessage } from '../lib/errMessage'
+import { canHumanMove } from '../lib/humanMoves'
 import LabelHistoryList from '../components/task-detail/LabelHistoryList'
 import SourceUpdateNotice from '../components/task-detail/SourceUpdateNotice'
 import SourceCommentsList from '../components/task-detail/SourceCommentsList'
@@ -67,6 +71,8 @@ export default function TaskDetailPage() {
   const [taskSaving, setTaskSaving] = useState(false)
   const [taskSaveError, setTaskSaveError] = useState('')
   const [actionError, setActionError] = useState('')
+  const [stopConfirmOpen, setStopConfirmOpen] = useState(false)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [duplicating, setDuplicating] = useState(false)
   // Set once a task.cost_warning event arrives for this task (crossed the
   // early-warning threshold — see GET/PUT /settings/cost-warning). Cleared
@@ -324,12 +330,13 @@ export default function TaskDetailPage() {
 
   const handleRerun = async () => {
     if (!id) return
+    setActionError('')
     setActionPending(true)
     try {
       await api.tasks.rerun(id)
       refreshRuns()
-    } catch (e: any) {
-      alert(e.message)
+    } catch (e: unknown) {
+      setActionError(errMessage(e))
     } finally {
       setActionPending(false)
     }
@@ -342,7 +349,7 @@ export default function TaskDetailPage() {
   }
 
   // Retry from an escalation banner: same re-dispatch as Rerun, but errors
-  // show inline in the banner rather than in an alert().
+  // show inline in the banner.
   const handleRetryEscalation = async () => {
     if (!id || !selectedRun) return
     setActionError('')
@@ -361,15 +368,21 @@ export default function TaskDetailPage() {
   // handleStop requests cancellation of the running agent run. The pool marks
   // the run "cancelled" and pauses the task; the resulting task.agent_done WS
   // event refreshes the run list and task, so we just fire the request.
-  const handleStop = async () => {
+  const handleStop = () => {
     if (!id || !selectedRun) return
-    if (!confirm('Stop this agent run? The task will be paused so it is not immediately re-dispatched.')) return
+    setStopConfirmOpen(true)
+  }
+
+  const performStop = async () => {
+    if (!id || !selectedRun) return
+    setStopConfirmOpen(false)
+    setActionError('')
     setActionPending(true)
     try {
       await api.tasks.cancelRun(id, selectedRun)
       refreshRuns()
-    } catch (e: any) {
-      alert(e.message)
+    } catch (e: unknown) {
+      setActionError(errMessage(e))
     } finally {
       setActionPending(false)
     }
@@ -439,7 +452,7 @@ export default function TaskDetailPage() {
       setTask((t) => t ? { ...t, pr_url: res.pr_url, git_state: res.git_state } : t)
       if (res.pr_url) window.open(res.pr_url, '_blank', 'noopener')
     } catch (e: any) {
-      alert(`Cannot create PR: ${e.message ?? e}`)
+      showError(`Cannot create PR: ${errMessage(e)}`)
     } finally {
       setCreatingPR(false)
     }
@@ -449,10 +462,14 @@ export default function TaskDetailPage() {
     if (!id || !task) return
     setActionPending(true)
     try {
-      const updated = await api.tasks.setPaused(id, !task.paused)
+      const prev = !!task.paused
+      const updated = await api.tasks.setPaused(id, !prev)
       setTask(updated)
-    } catch (e: any) {
-      alert(e.message ?? String(e))
+      showUndoToast(`${prev ? 'Resumed' : 'Paused'} "${task.title}"`, async () => {
+        setTask(await api.tasks.setPaused(id, prev))
+      })
+    } catch (e: unknown) {
+      showError(errMessage(e))
     } finally {
       setActionPending(false)
     }
@@ -465,12 +482,21 @@ export default function TaskDetailPage() {
     if (!id || !toLabel || toLabel === task?.label) return
     setActionPending(true)
     try {
+      const fromLabel = task!.label
       const updated = await api.tasks.moveLabel(id, toLabel)
       setTask(updated)
       refreshRuns()
       refreshLabelHistory()
-    } catch (e: any) {
-      alert(e.message ?? String(e))
+      // Only offer Undo when the workflow defines the reverse human move.
+      if (canHumanMove(workflow?.transitions ?? [], toLabel, fromLabel)) {
+        showUndoToast(`Moved "${task!.title}" to ${toLabel}`, async () => {
+          setTask(await api.tasks.moveLabel(id, fromLabel, 'Undo move'))
+          refreshRuns()
+          refreshLabelHistory()
+        })
+      }
+    } catch (e: unknown) {
+      showError(errMessage(e))
     } finally {
       setActionPending(false)
     }
@@ -483,10 +509,9 @@ export default function TaskDetailPage() {
       .catch(() => {})
   }
 
-  const handleDeleteTask = async () => {
-    if (!id || !window.confirm('Delete this task?')) return
-    await api.tasks.delete(id)
-    navigate('/board')
+  const handleDeleteTask = () => {
+    if (!id) return
+    setDeleteConfirmOpen(true)
   }
 
   const handleSelectRun = (runId: string) => {
@@ -498,10 +523,14 @@ export default function TaskDetailPage() {
     if (!id || !task) return
     setActionPending(true)
     try {
-      const updated = await api.tasks.setArchived(id, !task.archived)
+      const prev = !!task.archived
+      const updated = await api.tasks.setArchived(id, !prev)
       setTask(updated)
-    } catch (e: any) {
-      alert(e.message ?? String(e))
+      showUndoToast(`${prev ? 'Unarchived' : 'Archived'} "${task.title}"`, async () => {
+        setTask(await api.tasks.setArchived(id, prev))
+      })
+    } catch (e: unknown) {
+      showError(errMessage(e))
     } finally {
       setActionPending(false)
     }
@@ -809,6 +838,37 @@ export default function TaskDetailPage() {
             setToast(`Lesson saved for ${rememberRepoName ?? 'this repo'}`)
           }}
         />
+      )}
+      {stopConfirmOpen && (
+        <ConfirmDialog
+          destructive
+          title="Stop agent run?"
+          confirmLabel="Stop run"
+          onCancel={() => setStopConfirmOpen(false)}
+          onConfirm={performStop}
+        >
+          <p>
+            The running agent is cancelled and the task is paused so it isn&apos;t immediately re-dispatched. Work the agent
+            hasn&apos;t committed yet may be lost.
+          </p>
+        </ConfirmDialog>
+      )}
+      {deleteConfirmOpen && (
+        <ConfirmDialog
+          destructive
+          title="Delete task?"
+          confirmLabel="Delete task"
+          onCancel={() => setDeleteConfirmOpen(false)}
+          onConfirm={async () => {
+            await api.tasks.delete(task.id)
+            navigate('/board')
+          }}
+        >
+          <p>
+            &quot;{task.title}&quot; and its agent runs, logs and review comments will be permanently deleted. This
+            can&apos;t be undone.
+          </p>
+        </ConfirmDialog>
       )}
       {toast && <Toast message={toast} onDismiss={() => setToast(null)} />}
     </div>

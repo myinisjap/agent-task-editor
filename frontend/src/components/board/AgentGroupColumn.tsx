@@ -3,10 +3,9 @@ import Icon from '../ui/Icon'
 import { useCallback, useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import type { Task, WorkflowLabel } from '../../api/client'
-import { api } from '../../api/client'
-import { useTasksStore } from '../../stores/tasks'
 import { labelDisplayName, labelDisplayNameByName } from '../../lib/labelDisplay'
 import TaskCard from './TaskCard'
+import { useDeleteTaskConfirm } from './useDeleteTaskConfirm'
 import { columnWidthClass, type ColumnMode } from '../../lib/boardLayout'
 import { dropStateClass, type DropState } from './dropState'
 
@@ -42,18 +41,9 @@ export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLi
   const colMode: ColumnMode = mode
   const expandedTransient = mode !== 'full' && ((hovered && !dragging) || isOver)
   const compact = mode !== 'full' && !expandedTransient
-  const remove = useTasksStore((s) => s.remove)
   const groupTitle = labels.map(labelDisplayName).join(' · ')
 
-  const handleDelete = useCallback(async (taskId: string) => {
-    try {
-      await api.tasks.delete(taskId)
-      remove(taskId)
-    } catch (e) {
-      console.error('Failed to delete task:', e)
-      alert(String(e))
-    }
-  }, [remove])
+  const { requestDelete: handleDelete, dialog: deleteDialog } = useDeleteTaskConfirm()
 
   const handleToggleSelect = useCallback(
     (taskId: string, shiftKey: boolean) => {
@@ -106,6 +96,7 @@ export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLi
           <div className="text-center text-fg-subtle text-sm py-8">No tasks</div>
         )}
       </div>
+      {deleteDialog}
     </div>
   )
 }

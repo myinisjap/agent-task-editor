@@ -6,6 +6,7 @@ import ApiTokenGate from './components/shared/ApiTokenGate'
 import ErrorBoundary from './components/shared/ErrorBoundary'
 import HomeRoute from './components/shared/HomeRoute'
 import CommandHost from './components/shared/CommandHost'
+import ToastHost from './components/shared/ToastHost'
 import { useHealthPolling } from './stores/health'
 import ProviderPausedBanner from './components/shared/ProviderPausedBanner'
 import { useHumanNeededNotifications } from './lib/useHumanNeededNotifications'
@@ -112,6 +113,7 @@ export default function App() {
           </main>
           <BottomTabBar onMore={() => setMenuOpen(true)} />
           <CommandHost />
+          <ToastHost />
         </div>
       </ApiTokenGate>
     </BrowserRouter>

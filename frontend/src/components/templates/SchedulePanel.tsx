@@ -2,6 +2,7 @@ import { TriangleAlert } from 'lucide-react'
 import Icon from '../ui/Icon'
 import { useEffect, useState } from 'react'
 import { api, type TaskSchedule, type Repo, type Workflow } from '../../api/client'
+import ConfirmDialog from '../shared/ConfirmDialog'
 import { inputCls } from '../../pages/TemplatesPage'
 
 // Cron presets shown in the schedule editor. "custom" reveals a raw cron
@@ -39,6 +40,7 @@ export default function SchedulePanel({
   const [enabled, setEnabled] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [toDelete, setToDelete] = useState<TaskSchedule | null>(null)
 
   // target_label must be one of the selected repo's workflow's labels (the
   // API rejects anything else with a 400) — drive the picker off that
@@ -106,9 +108,9 @@ export default function SchedulePanel({
     onChange()
   }
 
-  async function handleDelete(sched: TaskSchedule) {
-    if (!confirm('Delete this schedule?')) return
+  async function performDelete(sched: TaskSchedule) {
     await api.schedules.delete(sched.id)
+    setToDelete(null)
     onChange()
   }
 
@@ -137,7 +139,7 @@ export default function SchedulePanel({
                 <input type="checkbox" checked={s.enabled} onChange={() => handleToggle(s)} className="accent-indigo-500" />
                 Enabled
               </label>
-              <button onClick={() => handleDelete(s)} className="text-fg-subtle hover:text-danger transition-colors shrink-0">
+              <button onClick={() => setToDelete(s)} className="text-fg-subtle hover:text-danger transition-colors shrink-0">
                 Delete
               </button>
             </div>
@@ -228,6 +230,21 @@ export default function SchedulePanel({
           </button>
         </div>
       </form>
+
+      {toDelete && (
+        <ConfirmDialog
+          destructive
+          title="Delete schedule?"
+          confirmLabel="Delete schedule"
+          onCancel={() => setToDelete(null)}
+          onConfirm={() => performDelete(toDelete)}
+        >
+          <p>
+            The schedule <span className="font-mono text-fg">{toDelete.cron_expr}</span> ({repoName(toDelete.repo_id)} →{' '}
+            {toDelete.target_label}) will be deleted and no more tasks will be created from it.
+          </p>
+        </ConfirmDialog>
+      )}
     </div>
   )
 }

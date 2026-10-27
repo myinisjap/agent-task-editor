@@ -364,7 +364,6 @@ describe('TaskCard action buttons keyboard reachability (#350)', () => {
 
   it('actually reaches and can activate the Delete button via sequential Tab presses once the card is focused', async () => {
     const onDelete = vi.fn()
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const user = userEvent.setup()
 
     render(
@@ -383,10 +382,8 @@ describe('TaskCard action buttons keyboard reachability (#350)', () => {
     expect(screen.getByTitle('Delete task')).toHaveFocus()
 
     await user.keyboard('{Enter}')
-    expect(confirmSpy).toHaveBeenCalled()
-    expect(onDelete).toHaveBeenCalledWith('task-1')
+    expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ id: 'task-1' }))
 
-    confirmSpy.mockRestore()
   })
 
   it('drops the action buttons back out of the tab order once focus moves off the card entirely', async () => {
@@ -513,5 +510,30 @@ describe('TaskCard header layout and single needs-you badge', () => {
     expect(badges.contains(title)).toBe(false)
     expect(title.parentElement?.contains(badges)).toBe(false)
     expect(badges.textContent).toContain('Paused')
+  })
+})
+
+describe('TaskCard archive with Undo toast', () => {
+  it('archives immediately and Undo restores the previous state', async () => {
+    const { api } = await import('../../api/client')
+    const { useToastStore } = await import('../../stores/toast')
+    const t = baseTask()
+    const archived = { ...t, archived: true }
+    vi.mocked(api.tasks.setArchived).mockReset()
+    vi.mocked(api.tasks.setArchived).mockResolvedValueOnce(archived).mockResolvedValueOnce(t)
+    useTasksStore.setState({ tasks: [t], loading: false, error: null })
+    useToastStore.setState({ toast: null })
+
+    render(
+      <MemoryRouter>
+        <TaskCard task={t} />
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Archive task/ }))
+    await vi.waitFor(() => expect(useToastStore.getState().toast?.action?.label).toBe('Undo'))
+    expect(api.tasks.setArchived).toHaveBeenCalledWith('task-1', true)
+
+    useToastStore.getState().toast!.action!.onClick()
+    await vi.waitFor(() => expect(api.tasks.setArchived).toHaveBeenCalledWith('task-1', false))
   })
 })

@@ -3,6 +3,7 @@ import { Button, PageFrame, controlClasses } from '../components/ui'
 import { api, type Repo, type Skill, type RuntimeLanguagePin, type Workflow } from '../api/client'
 import SkillPicker from '../components/skills/SkillPicker'
 import LessonsPanel from '../components/lessons/LessonsPanel'
+import ConfirmDialog from '../components/shared/ConfirmDialog'
 import HelpModal from '../components/shared/HelpModal'
 import { ReposHelp } from '../components/shared/pageHelp'
 
@@ -105,6 +106,7 @@ export default function ReposPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [showHelp, setShowHelp] = useState(false)
+  const [repoToRemove, setRepoToRemove] = useState<Repo | null>(null)
 
   // Inline edit state
   const [lessonsOpenId, setLessonsOpenId] = useState<string | null>(null)
@@ -353,10 +355,14 @@ export default function ReposPage() {
     }
   }
 
-  async function handleDelete(repo: Repo) {
-    if (!confirm(`Remove repo "${repo.name}"?`)) return
+  function handleDelete(repo: Repo) {
+    setRepoToRemove(repo)
+  }
+
+  async function performRemove(repo: Repo) {
     await api.repos.delete(repo.id)
     setRepos((r) => r.filter((x) => x.id !== repo.id))
+    setRepoToRemove(null)
   }
 
   const inputCls = controlClasses
@@ -1094,6 +1100,22 @@ export default function ReposPage() {
             </div>
           ))}
         </div>
+      )}
+      {repoToRemove && (
+        <ConfirmDialog
+          destructive
+          title={`Remove repo "${repoToRemove.name}"?`}
+          confirmLabel="Remove repo"
+          requireText={repoToRemove.name}
+          onCancel={() => setRepoToRemove(null)}
+          onConfirm={() => performRemove(repoToRemove)}
+        >
+          <p>
+            The repo and its lessons, skill attachments, task schedules, webhook endpoints and chat sessions are permanently
+            removed from this app (the files on disk are not touched). If tasks still reference it, the server will refuse
+            and say so.
+          </p>
+        </ConfirmDialog>
       )}
     </PageFrame>
   )

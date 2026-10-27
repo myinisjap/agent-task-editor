@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Button, PageFrame } from '../components/ui'
 import { api, type TaskTemplate, type TaskSchedule, type Repo, type Workflow } from '../api/client'
 import SchedulePanel from '../components/templates/SchedulePanel'
+import ConfirmDialog from '../components/shared/ConfirmDialog'
 import HelpModal from '../components/shared/HelpModal'
 import { TemplatesHelp } from '../components/shared/pageHelp'
 
@@ -13,6 +14,7 @@ export const inputCls =
   'bg-surface-sunken border border-border rounded-lg px-3 py-2 text-sm text-fg placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-accent'
 
 export default function TemplatesPage() {
+  const [templateToDelete, setTemplateToDelete] = useState<TaskTemplate | null>(null)
   const [templates, setTemplates] = useState<TaskTemplate[]>([])
   const [repos, setRepos] = useState<Repo[]>([])
   const [schedules, setSchedules] = useState<TaskSchedule[]>([])
@@ -105,11 +107,15 @@ export default function TemplatesPage() {
     }
   }
 
-  async function handleDeleteTemplate(tpl: TaskTemplate) {
-    if (!confirm(`Delete template "${tpl.name}"? Its schedules will be deleted too.`)) return
+  function handleDeleteTemplate(tpl: TaskTemplate) {
+    setTemplateToDelete(tpl)
+  }
+
+  async function performDeleteTemplate(tpl: TaskTemplate) {
     await api.templates.delete(tpl.id)
     setTemplates((t) => t.filter((x) => x.id !== tpl.id))
     setSchedules((s) => s.filter((x) => x.template_id !== tpl.id))
+    setTemplateToDelete(null)
   }
 
   return (
@@ -302,6 +308,25 @@ export default function TemplatesPage() {
           ))}
         </div>
       )}
+      {templateToDelete && (() => {
+        const n = schedules.filter((s) => s.template_id === templateToDelete.id).length
+        return (
+          <ConfirmDialog
+            destructive
+            title={`Delete template "${templateToDelete.name}"?`}
+            confirmLabel="Delete template"
+            onCancel={() => setTemplateToDelete(null)}
+            onConfirm={() => performDeleteTemplate(templateToDelete)}
+          >
+            <p>
+              {n > 0
+                ? `Its ${n} schedule${n === 1 ? '' : 's'} will be deleted too, so no more tasks will be created from it.`
+                : 'This template will be permanently deleted.'}{' '}
+              Tasks already created from it are not affected.
+            </p>
+          </ConfirmDialog>
+        )
+      })()}
     </PageFrame>
   )
 }

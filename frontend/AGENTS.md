@@ -32,7 +32,7 @@ src/
 │   ├── lessons/       LessonForm, LessonsPanel (repo/global lessons), RememberLessonModal
 │   ├── ui/            Button, Badge, Card, Field, PageFrame, Icon + design tokens (see ui/README.md)
 │   ├── skills/        SkillPicker (chip multi-select for agent/repo skills)
-│   └── shared/        ApiTokenGate, GitHubAuthWarning, NavSidebar, Toast, CommandPalette, CommandHost, ShortcutSheet (Cmd/Ctrl+K palette, global shortcuts host, shortcut sheet), WorkflowFlowchart
+│   └── shared/        ApiTokenGate, GitHubAuthWarning, NavSidebar, Toast (message, variant, optional Undo action), ToastHost (renders the global toast store), ConfirmDialog (in-page confirm built on ModalShell; optional typed confirmation), CommandPalette, CommandHost, ShortcutSheet (Cmd/Ctrl+K palette, global shortcuts host, shortcut sheet), WorkflowFlowchart
 ├── pages/
 │   ├── BoardPage.tsx        Main Kanban board
 │   ├── TaskDetailPage.tsx   Task detail + live agent log stream
@@ -48,6 +48,7 @@ src/
 │   ├── providerConfigs.ts Provider config state (provider/model/env)
 │   ├── repos.ts      Repo list state
 │   ├── commandPalette.ts Command palette / shortcut sheet / global new-task open state and the open task's palette commands
+│   ├── toast.ts      Global toast + undo toast (`showToast`, `showError`, `showUndoToast`)
 │   ├── theme.ts      Dark/light theme state (persisted, syncs root class)
 │   ├── notifications.ts Browser-notification opt-in + permission state (persisted; default off)
 │   └── workflow.ts   Workflow + label state
@@ -73,6 +74,10 @@ src/
 ├── App.tsx           Router setup
 └── main.tsx          Entry point
 ```
+
+## No browser dialogs
+
+No `alert`/`confirm`/`prompt` (oxlint `no-alert` is an error). Reversible actions (pause/resume, archive, move label, bulk actions) run immediately and offer Undo via `showUndoToast`. Destructive ones use `ConfirmDialog` (name exactly what is lost; typed confirmation only for repo removal; render it outside draggable/clickable cards, and don't stack it over another `ModalShell`). Errors show inline next to the control (or `showError` for global actions) using `errMessage(e)` for the server message.
 
 ## Environment Variables
 

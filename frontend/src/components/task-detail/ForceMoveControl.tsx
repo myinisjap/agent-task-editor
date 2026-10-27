@@ -35,7 +35,7 @@ export default function ForceMoveControl({
     setError(null)
   }
 
-  async function confirm() {
+  async function confirmMove() {
     if (!target) return
     setPending(true)
     setError(null)
@@ -100,7 +100,7 @@ export default function ForceMoveControl({
             </button>
             <button
               type="button"
-              onClick={confirm}
+              onClick={confirmMove}
               disabled={!target || pending}
               className="text-xs px-3 py-1.5 rounded bg-red-600 text-white hover:bg-red-500 disabled:opacity-50"
             >
