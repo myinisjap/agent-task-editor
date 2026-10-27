@@ -69,8 +69,11 @@ const dashboard: Dashboard = {
 }
 
 const outcomeQuality: OutcomeQuality = {
+  group_by: 'config',
   configs: [
     {
+      group_key: 'cfg-1\u0000',
+      low_sample: false,
       agent_config_id: 'cfg-1',
       agent_name: 'worker',
       provider: 'claude',
@@ -124,12 +127,12 @@ describe('AgentPerformancePage', () => {
     render(<AgentPerformancePage />)
 
     await waitFor(() => expect(reposListMock).toHaveBeenCalled())
-    await waitFor(() => expect(outcomeQualityMock).toHaveBeenCalledWith(undefined))
+    await waitFor(() => expect(outcomeQualityMock).toHaveBeenCalledWith(undefined, 'config'))
 
     const select = await screen.findByDisplayValue('All repos')
     await user.selectOptions(select, 'repo-1')
 
-    await waitFor(() => expect(outcomeQualityMock).toHaveBeenCalledWith('repo-1'))
+    await waitFor(() => expect(outcomeQualityMock).toHaveBeenCalledWith('repo-1', 'config'))
   })
 
   it('greys out low-sample rates instead of hiding them', async () => {
@@ -165,5 +168,26 @@ describe('AgentPerformancePage', () => {
     })
     render(<AgentPerformancePage />)
     await waitFor(() => expect(screen.getByText(/Finished by rung: r0 ×3 \(\$0.5000 avg\) · r1 ×1/)).toBeInTheDocument())
+  })
+})
+
+describe('AgentPerformancePage breakdown', () => {
+  it('passes group_by to the API and shows the group column, greying low-sample rows', async () => {
+    const user = userEvent.setup()
+    render(<AgentPerformancePage />)
+    await waitFor(() => expect(outcomeQualityMock).toHaveBeenCalledWith(undefined, 'config'))
+
+    outcomeQualityMock.mockResolvedValue({
+      group_by: 'version',
+      configs: [
+        { ...outcomeQuality.configs[0], group_key: 'cfg-1\u00003', group_value: 'v3', version: 3, low_sample: true, tasks_done: 2 },
+      ],
+    })
+    await user.selectOptions(screen.getByLabelText('Break down by'), 'version')
+    await waitFor(() => expect(outcomeQualityMock).toHaveBeenCalledWith(undefined, 'version'))
+    const cell = await screen.findByText('v3')
+    const row = cell.closest('tr')!
+    expect(row.className).toContain('opacity-50')
+    expect(row.getAttribute('title')).toContain('low sample')
   })
 })

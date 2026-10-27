@@ -4,7 +4,15 @@ import { formatDuration } from '../lib/format'
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
 import { PerformanceHelp } from '../components/shared/pageHelp'
-import { api, type OutcomeQuality, type Repo } from '../api/client'
+import { api, type OutcomeQuality, type OutcomeQualityGroupBy, type Repo } from '../api/client'
+
+const GROUP_BY_OPTIONS: { value: OutcomeQualityGroupBy; label: string }[] = [
+  { value: 'config', label: 'Agent config' },
+  { value: 'version', label: 'Version' },
+  { value: 'provider_config', label: 'Provider config' },
+  { value: 'repo', label: 'Repo' },
+  { value: 'task_type', label: 'Task type' },
+]
 
 const selectCls =
   'bg-slate-800 border border-slate-700 rounded px-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500'
@@ -42,6 +50,7 @@ export default function AgentPerformancePage() {
   const [showHelp, setShowHelp] = useState(false)
   const [repos, setRepos] = useState<Repo[]>([])
   const [filterRepo, setFilterRepo] = useState('')
+  const [groupBy, setGroupBy] = useState<OutcomeQualityGroupBy>('config')
   const [outcomeQuality, setOutcomeQuality] = useState<OutcomeQuality | null>(null)
 
   useEffect(() => {
@@ -49,8 +58,8 @@ export default function AgentPerformancePage() {
   }, [])
 
   useEffect(() => {
-    api.dashboard.outcomeQuality(filterRepo || undefined).then(setOutcomeQuality).catch(() => {})
-  }, [filterRepo])
+    api.dashboard.outcomeQuality(filterRepo || undefined, groupBy).then(setOutcomeQuality).catch(() => {})
+  }, [filterRepo, groupBy])
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
@@ -72,12 +81,27 @@ export default function AgentPerformancePage() {
           <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide">
             Outcome quality
           </h2>
+          <div className="flex items-center gap-3">
+          <label className="flex items-center gap-1.5 text-xs text-slate-400">
+            Break down by
+            <select
+              aria-label="Break down by"
+              value={groupBy}
+              onChange={(e) => setGroupBy(e.target.value as OutcomeQualityGroupBy)}
+              className={selectCls}
+            >
+              {GROUP_BY_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </label>
           <select value={filterRepo} onChange={(e) => setFilterRepo(e.target.value)} className={selectCls}>
             <option value="">All repos</option>
             {repos.map((r) => (
               <option key={r.id} value={r.id}>{r.name}</option>
             ))}
           </select>
+          </div>
         </div>
 
         {outcomeQuality && outcomeQuality.configs.length > 0 && (
@@ -86,6 +110,9 @@ export default function AgentPerformancePage() {
               <thead>
                 <tr className="text-xs text-slate-500 border-b border-slate-800">
                   <th className="text-left px-4 py-2">Agent config</th>
+                  {outcomeQuality.group_by !== 'config' && (
+                    <th className="text-left px-4 py-2">{GROUP_BY_OPTIONS.find((o) => o.value === outcomeQuality.group_by)?.label ?? 'Group'}</th>
+                  )}
                   <th className="text-left px-4 py-2">Provider</th>
                   <th className="text-right px-4 py-2">Tasks done</th>
                   <th className="text-right px-4 py-2">Cost to done</th>
@@ -97,9 +124,15 @@ export default function AgentPerformancePage() {
               </thead>
               <tbody>
                 {outcomeQuality.configs.map((c) => (
-                  <Fragment key={c.agent_config_id}>
-                  <tr className="border-b border-slate-800 last:border-0">
+                  <Fragment key={c.group_key}>
+                  <tr
+                    className={`border-b border-slate-800 last:border-0 ${c.low_sample ? 'opacity-50' : ''}`}
+                    title={c.low_sample ? 'Fewer than 5 tasks done: low sample' : undefined}
+                  >
                     <td className="px-4 py-2.5 text-slate-200">{c.agent_name}</td>
+                    {outcomeQuality.group_by !== 'config' && (
+                      <td className="px-4 py-2.5 text-slate-300 text-xs">{c.group_value || '—'}</td>
+                    )}
                     <td className="px-4 py-2.5 text-slate-400 text-xs">{c.provider}</td>
                     <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{c.tasks_done.toLocaleString()}</td>
                     <td className="px-4 py-2.5 text-slate-200 text-xs text-right">
@@ -130,7 +163,7 @@ export default function AgentPerformancePage() {
                   </tr>
                   {c.ladder_rungs && c.ladder_rungs.length > 0 && (
                     <tr className="border-b border-slate-800 last:border-0">
-                      <td colSpan={8} className="px-4 pb-2.5 text-xs text-slate-500">
+                      <td colSpan={outcomeQuality.group_by !== 'config' ? 9 : 8} className="px-4 pb-2.5 text-xs text-slate-500">
                         Finished by rung: {c.ladder_rungs.map((r) => `r${r.rung} ×${r.tasks_done} ($${r.avg_cost_to_done_usd.toFixed(4)} avg)`).join(' · ')}
                       </td>
                     </tr>
@@ -149,7 +182,7 @@ export default function AgentPerformancePage() {
         {!outcomeQuality && <p className="text-sm text-slate-400">Loading…</p>}
 
         <p className="text-xs text-slate-500 mt-3">
-          Rates below n=10 are greyed out as low-sample. "Tasks done" and every rate derived from
+          Rows with fewer than 5 tasks done are greyed out as low-sample, and rates below n=10 are flagged individually. Use "Break down by" to compare config versions, provider configs, repos or task types (e.g. before/after a prompt edit). "Tasks done" and every rate derived from
           it attribute a task to its <em>last</em> run's agent config, except rework's numerator,
           which is attributed to whichever run caused the bounce-back. See the help panel above
           for full definitions.

@@ -358,13 +358,6 @@ func (h *IntakeEndpointsHandler) Test(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func nilIfEmpty(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
 // Receive handles POST /api/v1/intake/{endpoint_id}. It is mounted outside
 // BearerAuth; the HMAC-SHA256 signature over the raw body is the
 // authentication.

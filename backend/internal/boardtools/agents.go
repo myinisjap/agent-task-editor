@@ -58,6 +58,7 @@ func agentProps() map[string]any {
 		"permission_mode":              map[string]any{"type": "string", "enum": []string{"", "default", "auto", "acceptEdits", "bypassPermissions"}},
 		"fallback_provider_config_ids": map[string]any{"type": "array", "items": str("Provider config ID"), "description": "Ordered providers to fall back to; must not include the primary"},
 		"escalation_ladder":            map[string]any{"type": "array", "description": "Escalate on failure: rung N (1-based) is used after N consecutive failed attempts or review bounce-backs on this agent's stage; rung 0 is the agent's own provider/effort. Empty = never escalate", "items": map[string]any{"type": "object", "required": []string{"provider_config_id"}, "properties": map[string]any{"provider_config_id": str("Provider config for this rung"), "effort": map[string]any{"type": "string", "enum": []string{"", "low", "medium", "high", "xhigh", "max"}}, "fallback_provider_config_ids": map[string]any{"type": "array", "items": str("Provider config ID")}}}},
+		"note":                         str("Optional change note recorded in the agent's version history"),
 	}
 }
 
@@ -69,7 +70,7 @@ func withAgentID(p map[string]any) map[string]any {
 // agentFields are the create_agent/update_agent arguments forwarded to the API.
 var agentFields = []string{
 	"name", "provider_config_id", "system_prompt", "labels", "enabled", "max_turns", "timeout_secs",
-	"max_cost_usd", "priority", "effort", "permission_mode", "fallback_provider_config_ids", "escalation_ladder",
+	"max_cost_usd", "priority", "effort", "permission_mode", "fallback_provider_config_ids", "escalation_ladder", "note",
 }
 
 // agentBody copies the whitelisted fields out of the arguments. labels is
