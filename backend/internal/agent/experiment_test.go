@@ -31,10 +31,11 @@ func TestAssignArmDeterministicAndExperimentSpecific(t *testing.T) {
 	diff := 0
 	for i := 0; i < 500; i++ {
 		id := uuid.NewString()
-		if assignArm("e1", id, 50) != assignArm("e1", id, 50) {
+		first := assignArm("e1", id, 50)
+		if again := assignArm("e1", id, 50); again != first {
 			t.Fatal("not deterministic")
 		}
-		if assignArm("e1", id, 50) != assignArm("e2", id, 50) {
+		if first != assignArm("e2", id, 50) {
 			diff++
 		}
 	}
