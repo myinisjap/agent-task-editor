@@ -11,8 +11,11 @@ export type VerifyMode = 'inherit' | 'custom' | 'disabled'
 export type TriggerType = 'agent' | 'human' | 'both'
 export type TransitionPath = 'success' | 'failure' | 'either'
 
+export const MAX_DISPLAY_NAME = 64
+
 export type DraftLabel = {
   name: string
+  display_name: string
   color: string
   agent_ignore: boolean
   is_terminal: boolean
@@ -64,6 +67,7 @@ export function draftFromWorkflow(wf: Workflow): WorkflowDraft {
     description: wf.description ?? '',
     labels: labels.map((l) => ({
       name: l.name,
+      display_name: l.display_name ?? '',
       color: l.color ?? '',
       agent_ignore: Boolean(l.agent_ignore),
       is_terminal: Boolean(l.is_terminal),
@@ -96,6 +100,7 @@ export function draftToWorkflow(draft: WorkflowDraft, base: Workflow): Workflow 
       id: `draft-${l.name}`,
       workflow_id: base.id,
       name: l.name,
+      display_name: l.display_name,
       color: l.color,
       sort_order: i,
       agent_ignore: l.agent_ignore ? 1 : 0,
@@ -125,6 +130,7 @@ export function isDirty(a: WorkflowDraft, b: WorkflowDraft): boolean {
 export function newLabel(name: string, color: string = DEFAULT_LABEL_COLOR): DraftLabel {
   return {
     name: name.trim(),
+    display_name: '',
     color: color.trim(),
     agent_ignore: false,
     is_terminal: false,
@@ -309,6 +315,9 @@ export function validateDraft(draft: WorkflowDraft): DraftError[] {
     if (l.wip_limit !== null && (!Number.isInteger(l.wip_limit) || l.wip_limit <= 0)) {
       errors.push({ label: l.name, message: `Label "${l.name}": WIP limit must be a positive whole number.` })
     }
+    if (l.display_name.length > MAX_DISPLAY_NAME) {
+      errors.push({ label: l.name, message: `Label "${l.name}": display name must be at most ${MAX_DISPLAY_NAME} characters.` })
+    }
     if (l.verify_mode === 'custom' && !l.verify_command.trim()) {
       errors.push({ label: l.name, message: `Label "${l.name}": custom verify mode needs a command.` })
     }
@@ -340,6 +349,7 @@ export function serializeDraft(draft: WorkflowDraft): string {
     description: draft.description || undefined,
     labels: draft.labels.map((l, i) => ({
       name: l.name,
+      display_name: l.display_name.trim() || undefined,
       color: l.color,
       sort_order: i,
       agent_ignore: l.agent_ignore || undefined,

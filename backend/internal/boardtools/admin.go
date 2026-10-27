@@ -31,6 +31,7 @@ labels:            # columns, left to right by sort_order
     sort_order: 1
   - name: review
     color: "#EC4899"
+    display_name: Human review   # optional column title shown in the UI; defaults to a humanized name
     sort_order: 2
     create_pr: true      # entering it pushes the branch and opens a PR (at most one label)
     wip_limit: 5         # optional; wip_limit_hard: true also stops dispatch into it when full
@@ -44,7 +45,7 @@ transitions:       # the only moves allowed
   - {from: review, to: work, trigger: human, path: failure}   # reject_task
   - {from: review, to: done, trigger: human, path: success}   # approve_task
 trigger is agent, human or both; path (success|failure) is the outcome approve/reject and agents follow.
-Labels may also set verify_mode (custom|disabled) with verify_command to override the repo's verify command.`
+Labels may also set display_name (UI title, max 64 chars; name stays the identifier) and verify_mode (custom|disabled) with verify_command to override the repo's verify command.`
 
 func init() {
 	register(Tool{

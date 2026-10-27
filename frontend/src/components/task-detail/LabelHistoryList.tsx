@@ -1,5 +1,6 @@
+import { labelDisplayNameByName } from '../../lib/labelDisplay'
 import { useState } from 'react'
-import type { TaskLabelHistoryEntry } from '../../api/client'
+import type { TaskLabelHistoryEntry, WorkflowLabel } from '../../api/client'
 
 // formatTimestamp renders a compact, locale-aware date/time for a history entry.
 function formatTimestamp(iso: string): string {
@@ -49,9 +50,11 @@ function NotePanel({ note }: { note: string }) {
 // named tokens (API_TOKENS) are configured and the actor is empty.
 export default function LabelHistoryList({
   history,
+  labels,
   onRemember,
 }: {
   history: TaskLabelHistoryEntry[]
+  labels?: WorkflowLabel[]
   onRemember?: (text: string) => void
 }) {
   if (history.length === 0) return null
@@ -66,11 +69,11 @@ export default function LabelHistoryList({
               <span className="truncate">
                 {entry.from_label ? (
                   <>
-                    <span className="font-mono">{entry.from_label}</span>
+                    <span>{labelDisplayNameByName(entry.from_label, labels)}</span>
                     <span className="mx-1 text-slate-600">→</span>
                   </>
                 ) : null}
-                <span className="font-mono text-slate-200">{entry.to_label}</span>
+                <span className="text-slate-200">{labelDisplayNameByName(entry.to_label, labels)}</span>
               </span>
               <span className={`shrink-0 px-1.5 py-0.5 rounded text-[11px] ${triggerBadgeClass(entry.trigger)}`}>
                 {entry.trigger}

@@ -67,8 +67,8 @@ describe('TaskBoard on phone', () => {
   it('shows chips with counts and jumps on tap, writing ?col', () => {
     renderBoard([task('1', 'todo'), task('2', 'doing'), task('3', 'doing')])
     const chips = screen.getByTestId('column-chips')
-    expect(chips.textContent).toContain('doing2')
-    fireEvent.click(screen.getByText('done'))
+    expect(chips.textContent).toContain('Doing2')
+    fireEvent.click(screen.getByText('Done'))
     expect(screen.getByTestId('loc').textContent).toBe('?col=done')
     expect(screen.getByText('done (3/3)')).toBeTruthy()
   })
@@ -97,7 +97,7 @@ describe('TaskBoard on phone', () => {
 
   it('highlights columns with a task needing a human', () => {
     renderBoard([task('2', 'doing', { active_run_status: 'waiting_human' })])
-    expect(screen.getByText('doing').closest('button')!.getAttribute('data-needs-human')).toBe('true')
-    expect(screen.getByText('done').closest('button')!.getAttribute('data-needs-human')).toBeNull()
+    expect(screen.getByText('Doing').closest('button')!.getAttribute('data-needs-human')).toBe('true')
+    expect(screen.getByText('Done').closest('button')!.getAttribute('data-needs-human')).toBeNull()
   })
 })

@@ -130,6 +130,15 @@ describe('workflowEdit', () => {
     expect(validateDraft({ ...base(), labels: [] })[0].message).toMatch(/at least one/)
   })
 
+  it('round-trips display_name and validates its length', () => {
+    const d = base()
+    const withName = updateLabel(d, 'work', { display_name: '  Doing  ' })
+    expect(JSON.parse(serializeDraft(withName)).labels[1].display_name).toBe('Doing')
+    expect(JSON.parse(serializeDraft(d)).labels[1]).not.toHaveProperty('display_name')
+    const long = updateLabel(d, 'work', { display_name: 'x'.repeat(65) })
+    expect(validateDraft(long).map((e) => e.message).join()).toMatch(/display name/)
+  })
+
   it('serialises to the yaml-shaped document', () => {
     const doc = JSON.parse(serializeDraft(base()))
     expect(doc.name).toBe('Main')

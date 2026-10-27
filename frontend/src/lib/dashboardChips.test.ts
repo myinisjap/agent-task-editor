@@ -16,8 +16,8 @@ describe('buildChipRows', () => {
     const rows = buildChipRows([wf('w1', 'Default', [['work', '#123456', 0]])], { work: 2, ghost: 1 })
     expect(rows).toHaveLength(1)
     expect(rows[0].title).toBeUndefined()
-    expect(rows[0].chips.find((c) => c.name === 'work')?.color).toBe('#123456')
-    expect(rows[0].chips.find((c) => c.name === 'ghost')?.color).toBe('#6B7280')
+    expect(rows[0].chips.find((c) => c.name === 'Work')?.color).toBe('#123456')
+    expect(rows[0].chips.find((c) => c.name === 'Ghost')?.color).toBe('#6B7280')
   })
 
   it('renders one titled row per workflow when several exist, with per-workflow counts', () => {
@@ -27,10 +27,10 @@ describe('buildChipRows', () => {
       { w1: { work: 2 }, w2: { work: 3, done: 1 } },
     )
     expect(rows.map((r) => r.title)).toEqual(['Alpha', 'Beta'])
-    expect(rows[0].chips).toEqual([{ key: 'w1-work', name: 'work', color: '#111111', count: 2 }])
+    expect(rows[0].chips).toEqual([{ key: 'w1-work', name: 'Work', color: '#111111', count: 2 }])
     expect(rows[1].chips.map((c) => [c.name, c.color, c.count])).toEqual([
-      ['work', '#222222', 3],
-      ['done', '#333333', 1],
+      ['Work', '#222222', 3],
+      ['Done', '#333333', 1],
     ])
   })
 })
