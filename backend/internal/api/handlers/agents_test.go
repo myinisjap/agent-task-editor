@@ -34,7 +34,7 @@ func setupAgentsRouter(t *testing.T) (http.Handler, *gen.Queries) {
 	t.Helper()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewAgentsHandler(q)
+	h := handlers.NewAgentsHandler(q, db.SQL())
 
 	r := chi.NewRouter()
 	r.Post("/agents", h.Create)
@@ -42,6 +42,9 @@ func setupAgentsRouter(t *testing.T) (http.Handler, *gen.Queries) {
 	r.Get("/agents/{id}", h.Get)
 	r.Put("/agents/{id}", h.Update)
 	r.Delete("/agents/{id}", h.Delete)
+	r.Get("/agents/{id}/versions", h.ListVersions)
+	r.Get("/agents/{id}/versions/{version}", h.GetVersion)
+	r.Post("/agents/{id}/versions/{version}/restore", h.RestoreVersion)
 	r.Get("/agent-models", h.GetModels)
 	return r, q
 }
