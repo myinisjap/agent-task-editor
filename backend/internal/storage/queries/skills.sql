@@ -48,3 +48,9 @@ WHERE s.enabled = 1 AND (
     OR s.id IN (SELECT skill_id FROM repo_skills WHERE repo_id = ?2)
 )
 ORDER BY s.name;
+
+-- name: ListAgentConfigSkillLinks :many
+SELECT agent_config_id, skill_id FROM agent_config_skills;
+
+-- name: ListRepoSkillLinks :many
+SELECT repo_id, skill_id FROM repo_skills;

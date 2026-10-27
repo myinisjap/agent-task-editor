@@ -462,6 +462,14 @@ export function ReposHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Skills</h3>
+        <p>
+          <strong>Edit</strong> a repo and pick <strong>Skills</strong> to attach library skills repo-wide:
+          they are copied into the worktree for every agent run on this repo. Manage the library under
+          Settings → Skills.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">Agent runtime (toolchain pins)</h3>
         <p>
           The <strong>Agent runtime</strong> section pins the language versions agent runs use for

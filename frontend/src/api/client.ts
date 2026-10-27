@@ -14,6 +14,7 @@ type Schemas = components['schemas']
 export type ProviderConfig = Schemas['ProviderConfig']
 export type ChatSession = Schemas['ChatSession']
 export type Task = Schemas['Task']
+export type Skill = Schemas['Skill']
 export type RepoLesson = Schemas['RepoLesson']
 export type RepoLessonCreate = Schemas['RepoLessonCreate']
 export type RepoLessonUpdate = Schemas['RepoLessonUpdate']
@@ -410,6 +411,9 @@ export const api = {
     delete: (id: string) => request<void>(`/agents/${id}`, { method: 'DELETE' }),
     models: (provider: string) => request<ModelList>(`/agents/models?provider=${provider}`),
     claudeOptions: () => request<ClaudeOptions>('/agents/claude-options'),
+    skills: (id: string) => request<Skill[]>(`/agents/${id}/skills`),
+    setSkills: (id: string, skill_ids: string[]) =>
+      request<Skill[]>(`/agents/${id}/skills`, { method: 'PUT', body: JSON.stringify({ skill_ids }) }),
   },
   providerConfigs: {
     list: () => listAllPages<ProviderConfig>('/provider-configs'),
@@ -434,6 +438,9 @@ export const api = {
     delete: (id: string) => request<void>(`/repos/${id}`, { method: 'DELETE' }),
     lessons: (id: string, status?: LessonStatus) =>
       request<RepoLesson[]>(`/repos/${id}/lessons${status ? `?status=${status}` : ''}`),
+    skills: (id: string) => request<Skill[]>(`/repos/${id}/skills`),
+    setSkills: (id: string, skill_ids: string[]) =>
+      request<Skill[]>(`/repos/${id}/skills`, { method: 'PUT', body: JSON.stringify({ skill_ids }) }),
     createLesson: (id: string, body: RepoLessonCreate) =>
       request<RepoLesson>(`/repos/${id}/lessons`, { method: 'POST', body: JSON.stringify(body) }),
     tree: (id: string, ref = 'HEAD') => request<{ ref: string; files: string[] }>(`/repos/${id}/tree?ref=${ref}`),
@@ -442,6 +449,17 @@ export const api = {
     // human still saves explicitly.
     detectRuntime: (id: string) =>
       request<{ suggestions?: (RuntimeLanguagePin & { source: string })[] }>(`/repos/${id}/runtime/detect`, { method: 'POST' }),
+  },
+  skills: {
+    list: () => request<Skill[]>('/skills'),
+    get: (id: string) => request<Skill>(`/skills/${id}`),
+    createFromMarkdown: (skill_md: string) =>
+      request<Skill>('/skills', { method: 'POST', body: JSON.stringify({ skill_md }) }),
+    createFromZip: (file: Blob) =>
+      request<Skill>('/skills', { method: 'POST', body: file, headers: { 'Content-Type': 'application/zip' } }),
+    update: (id: string, body: { enabled?: boolean; skill_md?: string }) =>
+      request<Skill>(`/skills/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    delete: (id: string) => request<void>(`/skills/${id}`, { method: 'DELETE' }),
   },
   lessons: {
     listGlobal: (status?: LessonStatus) => request<RepoLesson[]>(`/lessons${status ? `?status=${status}` : ''}`),

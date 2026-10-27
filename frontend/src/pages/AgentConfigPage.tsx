@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { api, type AgentConfig } from '../api/client'
+import { useEffect, useRef, useState } from 'react'
+import { api, type AgentConfig, type Skill } from '../api/client'
 import { useAgentsStore } from '../stores/agents'
 import { useWorkflowStore } from '../stores/workflow'
 import { useProviderConfigsStore } from '../stores/providerConfigs'
@@ -33,6 +33,9 @@ export default function AgentConfigPage() {
   const [bulkSaving, setBulkSaving] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  const [skillIds, setSkillIds] = useState<string[]>([])
+  const [allSkills, setAllSkills] = useState<Skill[]>([])
+  const selectedIdRef = useRef<string | null>(null)
 
   const availableLabels = workflows[0]?.labels.map((l) => l.name) ?? []
 
@@ -40,6 +43,7 @@ export default function AgentConfigPage() {
     fetchAgents()
     fetchWorkflows()
     fetchProviderConfigs()
+    api.skills.list().then((l) => setAllSkills(l ?? [])).catch(() => setAllSkills([]))
   }, [fetchAgents, fetchWorkflows, fetchProviderConfigs])
 
   useEffect(() => {
@@ -49,6 +53,14 @@ export default function AgentConfigPage() {
   }, [form.provider_config_id, providerConfigs]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function selectAgent(a: AgentConfig) {
+    selectedIdRef.current = a.id
+    setSkillIds([])
+    api.agents
+      .skills(a.id)
+      .then((l) => {
+        if (selectedIdRef.current === a.id) setSkillIds((l ?? []).map((s) => s.id))
+      })
+      .catch(() => {})
     setSelected(a)
     setForm({
       name: a.name,
@@ -77,6 +89,8 @@ export default function AgentConfigPage() {
   }
 
   function newAgent() {
+    selectedIdRef.current = null
+    setSkillIds([])
     setSelected(null)
     // Preserve whatever provider config was already chosen (if any) so
     // switching templates doesn't force re-picking it every time.
@@ -104,16 +118,27 @@ export default function AgentConfigPage() {
     }
   }
 
+  // Skill attachment is a separate PUT after the agent itself is saved.
+  async function saveSkills(id: string) {
+    try {
+      await api.agents.setSkills(id, skillIds)
+    } catch (e: any) {
+      alert(`Agent saved, but attaching skills failed: ${e.message}`)
+    }
+  }
+
   async function handleSave() {
     setSaving(true)
     try {
       if (selected) {
         const { labelConflict } = await updateAgent(selected.id, { ...form, enabled: !!selected.enabled })
+        await saveSkills(selected.id)
         if (labelConflict) {
           alert(`Saved, but this label is also handled by active config "${labelConflict}" — failover will run them in priority order.`)
         }
       } else {
-        const { labelConflict } = await createAgent(form)
+        const { config, labelConflict } = await createAgent(form)
+        await saveSkills(config.id)
         if (labelConflict) {
           alert(`Agent created but started disabled — label conflict with active config "${labelConflict}".`)
         }
@@ -242,6 +267,9 @@ export default function AgentConfigPage() {
           onSave={handleSave}
           onDelete={handleDelete}
           onToggleEnabled={handleToggleEnabled}
+          skills={allSkills}
+          skillIds={skillIds}
+          onSkillIdsChange={setSkillIds}
           helpButton={
             <HelpButton onClick={() => setShowHelp(true)} title="About agent configs" />
           }

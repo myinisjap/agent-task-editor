@@ -41,6 +41,9 @@ type skillResponse struct {
 	// SkillMD and Files are only populated by GET /skills/{id}.
 	SkillMD string   `json:"skill_md,omitempty"`
 	Files   []string `json:"files,omitempty"`
+	// AgentConfigIDs and RepoIDs are only populated by GET /skills.
+	AgentConfigIDs []string `json:"agent_config_ids,omitempty"`
+	RepoIDs        []string `json:"repo_ids,omitempty"`
 }
 
 func toSkillResponse(s gen.Skill) skillResponse {
@@ -61,7 +64,26 @@ func (h *SkillsHandler) List(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	JSON(w, http.StatusOK, toSkillResponses(list))
+	out := toSkillResponses(list)
+	idx := make(map[string]int, len(out))
+	for i, s := range out {
+		idx[s.ID] = i
+	}
+	if links, err := h.q.ListAgentConfigSkillLinks(r.Context()); err == nil {
+		for _, l := range links {
+			if i, ok := idx[l.SkillID]; ok {
+				out[i].AgentConfigIDs = append(out[i].AgentConfigIDs, l.AgentConfigID)
+			}
+		}
+	}
+	if links, err := h.q.ListRepoSkillLinks(r.Context()); err == nil {
+		for _, l := range links {
+			if i, ok := idx[l.SkillID]; ok {
+				out[i].RepoIDs = append(out[i].RepoIDs, l.RepoID)
+			}
+		}
+	}
+	JSON(w, http.StatusOK, out)
 }
 
 func (h *SkillsHandler) Get(w http.ResponseWriter, r *http.Request) {
