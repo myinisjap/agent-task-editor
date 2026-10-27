@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type RunVerification } from '../../api/client'
 
-const STATUS_STYLE: Record<RunVerification['status'], { label: string; cls: string }> = {
+export const STATUS_STYLE: Record<RunVerification['status'], { label: string; cls: string }> = {
   pass: { label: 'Verification passed', cls: 'bg-emerald-900/50 text-emerald-300 border-emerald-700' },
   fail: { label: 'Verification failed', cls: 'bg-red-900/50 text-red-300 border-red-700' },
   timeout: { label: 'Verification timed out', cls: 'bg-red-900/50 text-red-300 border-red-700' },

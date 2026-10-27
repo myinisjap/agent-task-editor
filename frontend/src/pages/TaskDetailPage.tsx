@@ -16,6 +16,7 @@ import SourceUpdateNotice from '../components/task-detail/SourceUpdateNotice'
 import SourceCommentsList from '../components/task-detail/SourceCommentsList'
 import RunLogPane from '../components/task-detail/RunLogPane'
 import DiffReviewPane from '../components/task-detail/DiffReviewPane'
+import ReviewBriefCard from '../components/task-detail/ReviewBriefCard'
 import { useDiffComments } from '../components/task-detail/useDiffComments'
 import NewTaskModal from '../components/board/NewTaskModal'
 import HelpModal from '../components/shared/HelpModal'
@@ -239,6 +240,9 @@ export default function TaskDetailPage() {
   const isHumanGateLabel = task
     ? workflow?.transitions?.some((t) => t.from_label === task.label && t.trigger_type === 'human') ?? false
     : false
+
+  const showBrief = isHumanGateLabel && !needsHuman
+  const briefKey = `${task?.label ?? ''}:${task?.updated_at ?? ''}:${verificationKey}`
 
   const humanActions = humanActionsFor(workflow ?? undefined, task?.label)
 
@@ -489,6 +493,7 @@ export default function TaskDetailPage() {
         {/* Overview tab */}
         {activeTab === 'overview' && (
           <div className="h-full overflow-y-auto overflow-x-hidden p-3 md:p-5 flex flex-col gap-4 min-w-0">
+            {showBrief && <ReviewBriefCard taskId={task?.id} refreshKey={briefKey} />}
             <TaskHeader
               task={task}
               repos={repos}
@@ -583,6 +588,8 @@ export default function TaskDetailPage() {
             onRemoveComment={handleRemoveComment}
             onReopenComment={handleReopenComment}
             verificationRefreshKey={verificationKey}
+            showBrief={showBrief}
+            briefRefreshKey={briefKey}
           />
         )}
       </div>

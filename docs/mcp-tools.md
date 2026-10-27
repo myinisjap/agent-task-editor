@@ -109,6 +109,8 @@ Store structured information about this run that will be visible in the task vie
 
 **Use case:** Store a concise summary of what changed, what files were modified, or any notable decisions. This appears in the task detail view in the UI after the run completes.
 
+Reviewer agents are encouraged to end with four short headings: **Changed**, **Risks**, **Verified**, **Not checked**. The [Review brief](workflows.md#review-brief) shows the latest `store_info` to the human approving the task.
+
 ---
 
 ### `resolve_comment`
