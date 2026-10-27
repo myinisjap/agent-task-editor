@@ -249,7 +249,7 @@ func TestBuildPrompt_RepoLessons(t *testing.T) {
 	hd := strings.Index(out, "HUMAN DECISIONS")
 	rl := strings.Index(out, "REPO LESSONS")
 	np := strings.Index(out, "NOTES FROM PRIOR AGENT")
-	if !(hd >= 0 && hd < rl && rl < np) {
+	if hd < 0 || hd >= rl || rl >= np {
 		t.Fatalf("bad order: hd=%d rl=%d np=%d", hd, rl, np)
 	}
 	if strings.Contains(buildResumePrompt(in), "REPO LESSONS") {
