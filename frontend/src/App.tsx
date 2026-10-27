@@ -5,7 +5,7 @@ import BottomTabBar from './components/shared/BottomTabBar'
 import ApiTokenGate from './components/shared/ApiTokenGate'
 import ErrorBoundary from './components/shared/ErrorBoundary'
 import HomeRoute from './components/shared/HomeRoute'
-import HealthWarningBanner from './components/shared/HealthWarningBanner'
+import { useHealthPolling } from './stores/health'
 import ProviderPausedBanner from './components/shared/ProviderPausedBanner'
 import { useHumanNeededNotifications } from './lib/useHumanNeededNotifications'
 
@@ -93,6 +93,7 @@ export default function App() {
   // Registered once at the app root (not per-page) so "human needed"
   // notifications fire for the whole session regardless of route.
   useHumanNeededNotifications()
+  useHealthPolling()
   const [menuOpen, setMenuOpen] = useState(false)
 
   return (
@@ -106,7 +107,6 @@ export default function App() {
           <NavSidebar open={menuOpen} onOpenChange={setMenuOpen} />
           <main className="flex-1 overflow-auto bg-slate-950 pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0">
             <ProviderPausedBanner />
-            <HealthWarningBanner />
             <AppRoutes />
           </main>
           <BottomTabBar onMore={() => setMenuOpen(true)} />

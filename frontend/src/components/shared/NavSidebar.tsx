@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { useThemeStore } from '../../stores/theme'
-import { useNotificationsStore, notificationsUnavailableReason, type NotificationsUnavailableReason } from '../../stores/notifications'
+import { useNotificationsStore, notificationsSupported, notificationsUnavailableReason, type NotificationsUnavailableReason } from '../../stores/notifications'
 import { useWsStatus } from '../../lib/useWsStatus'
-import { useHealthStore, worstHealth } from '../../stores/health'
+import { useHealthStore } from '../../stores/health'
+import { healthSummary } from '../../lib/healthTiers'
 import type { WSStatus } from '../../api/ws'
 import { useNeedsMeSync } from '../../lib/useNeedsMeSync'
 import { useInboxSync } from '../../lib/useInboxSync'
@@ -102,7 +103,25 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
   useNeedsMeSync()
   useInboxSync()
   const inboxCount = useInboxCount()
-  const healthSeverity = worstHealth(useHealthStore((s) => s.checks))
+  const healthChecks = useHealthStore((s) => s.checks)
+  const healthSnoozed = useHealthStore((s) => s.snoozed)
+  const healthPaused = useHealthStore((s) => s.paused)
+  const { severity: healthSeverity, count: healthCount } = healthSummary(healthChecks, healthSnoozed, healthPaused)
+  const [notifHelpOpen, setNotifHelpOpen] = useState(false)
+  useEffect(() => {
+    if (!notifHelpOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setNotifHelpOpen(false)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [notifHelpOpen])
+  const recheckNotifications = () => {
+    if (!notificationsSupported()) return
+    const permission = Notification.permission
+    useNotificationsStore.setState({ permission })
+    if (permission !== 'denied') setNotifHelpOpen(false)
+  }
   const location = useLocation()
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
     loadOpenGroups(groupForPath(location.pathname)),
@@ -187,8 +206,12 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
                 <span
                   role="img"
                   aria-label={healthSeverity === 'error' ? 'Health check failing' : 'Health check warning'}
-                  className={`ml-2 inline-block w-2 h-2 rounded-full align-middle ${healthSeverity === 'error' ? 'bg-red-500' : 'bg-amber-400'}`}
-                />
+                  className={healthCount > 0
+                    ? `ml-2 inline-block min-w-[1.25rem] rounded-full px-1 text-center text-[10px] font-semibold leading-4 align-middle text-white ${healthSeverity === 'error' ? 'bg-red-600' : 'bg-amber-500'}`
+                    : `ml-2 inline-block w-2 h-2 rounded-full align-middle ${healthSeverity === 'error' ? 'bg-red-500' : 'bg-amber-400'}`}
+                >
+                  {healthCount > 0 ? healthCount : null}
+                </span>
               )}
             </NavLink>
           ))}
@@ -254,27 +277,51 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
             <span aria-hidden="true">🔕</span>
             <span>{NOTIFICATIONS_UNAVAILABLE[notificationsUnavailable].label}</span>
           </div>
+        ) : notificationsPermission === 'denied' ? (
+          <div className="mt-auto flex flex-col shrink-0">
+            {notifHelpOpen && (
+              <div
+                id="notifications-blocked-help"
+                role="dialog"
+                aria-label="How to enable notifications"
+                className="mb-1 rounded-md border border-amber-700 bg-slate-800 p-3 text-xs text-slate-300"
+              >
+                <p>
+                  Notifications are blocked for this site in your browser. To turn them on: click the lock /
+                  site-settings icon in the address bar → Notifications → Allow, then reload. On mobile: browser
+                  Settings → Site settings → Notifications.
+                </p>
+                <button
+                  type="button"
+                  onClick={recheckNotifications}
+                  className="mt-2 rounded border border-slate-600 px-2 py-0.5 hover:bg-slate-700"
+                >
+                  Check again
+                </button>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setNotifHelpOpen((v) => !v)}
+              aria-expanded={notifHelpOpen}
+              aria-controls="notifications-blocked-help"
+              className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-amber-300 hover:bg-slate-800 transition-colors"
+            >
+              <span aria-hidden="true">🔕</span>
+              <span>Notifications blocked</span>
+              <span className="text-xs underline">How to fix</span>
+            </button>
+          </div>
         ) : (
           <button
             onClick={toggleNotifications}
-            disabled={notificationsPermission === 'denied'}
             aria-label={notificationsEnabled ? 'Disable notifications' : 'Enable notifications'}
-            title={
-              notificationsPermission === 'denied'
-                ? 'Notifications are blocked for this site — re-enable them in your browser settings'
-                : notificationsEnabled
-                  ? 'Disable notifications'
-                  : 'Get notified in your browser when a task needs a human'
-            }
-            className="mt-auto flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-slate-400"
+            title={notificationsEnabled ? 'Disable notifications' : 'Get notified in your browser when a task needs a human'}
+            className="mt-auto flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors shrink-0"
           >
             <span aria-hidden="true">{notificationsEnabled ? '🔔' : '🔕'}</span>
             <span>
-              {notificationsPermission === 'denied'
-                ? 'Notifications blocked'
-                : notificationsEnabled
-                  ? 'Notifications on'
-                  : 'Enable notifications'}
+              {notificationsEnabled ? 'Notifications on' : 'Enable notifications'}
             </span>
           </button>
         )}
