@@ -331,7 +331,9 @@ components:
             Derived (read-time) count of this task's dependency blockers whose
             edges are still unsatisfied. A task with any unsatisfied blocker is
             never picked up by the dispatcher. A blocker is satisfied once it
-            reaches a terminal label or is archived. Zero when the task has no
+            reaches a terminal label or is archived; a blocker that is a subtask must also
+            have finished merging back into its parent (merge_status merged or
+            merge_conflict). Zero when the task has no
             unsatisfied blockers.
         blocking_count:
           type: integer
@@ -364,6 +366,19 @@ components:
         subtask_conflicts:
           type: integer
           description: "Derived: children whose merge-back is in conflict."
+        file_scope:
+          type: array
+          items: { type: string }
+          description: >
+            A subtask's declared file globs (repo-relative); empty when unscoped.
+            Used for the sibling overlap guard and a post-run out-of-scope warning.
+        integration_status:
+          type: string
+          enum: ["", pending, done]
+          description: >
+            A parent's integration state: pending once every subtask finished and
+            merged back (the parent's agent then runs an integration pass), done
+            after that run succeeds. Empty otherwise.
         max_cost_usd:
           type: number
           format: double
@@ -565,7 +580,7 @@ components:
           type: boolean
           description: >
             For a blocker: whether the edge is satisfied (the blocker is terminal
-            or archived). Not meaningful for dependents (always false there).
+            or archived; a subtask blocker must also be merged/merge_conflict). Not meaningful for dependents (always false there).
       required: [task_id, title, label, archived, satisfied]
 
     TaskDependencies:
@@ -2933,6 +2948,13 @@ paths:
                 title:       { type: string }
                 description: { type: string }
                 type:        { type: string, enum: [feature, bug, chore, spike] }
+                file_scope:
+                  type: array
+                  items: { type: string }
+                  description: >
+                    Optional repo-relative globs the subtask may change (max 20,
+                    256 chars each, no leading "/" or ".." segments). Siblings with
+                    overlapping scopes are serialized via dependency edges.
                 label:
                   type: string
                   description: >
@@ -2942,7 +2964,20 @@ paths:
         "201":
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Task" }
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Task"
+                  - type: object
+                    properties:
+                      overlap_dependencies:
+                        type: array
+                        description: Siblings this subtask now depends on because their file scopes overlap.
+                        items:
+                          type: object
+                          properties:
+                            task_id: { type: string }
+                            title:   { type: string }
+                            globs:   { type: array, items: { type: string } }
         "400": { description: Depth limit exceeded, non-gate label, or missing title }
         "403": { description: Creating run's config is not permitted to create subtasks }
         "404": { description: Parent task not found }

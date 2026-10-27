@@ -512,6 +512,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	finalStatus := p.persistRunResult(ctx, job, &result, startedAt, log)
 
 	p.safetyNetCommit(ctx, job, finalStatus, log)
+	p.checkFileScope(ctx, job, finalStatus, log)
 
 	// A configured repo verify command is authoritative over the agent's
 	// self-reported success: it runs after the safety-net commit (so it sees
@@ -561,7 +562,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// merges that were deferred while this run was in flight. No-op otherwise.
 	isSubtask := job.Input.Task.ParentID != ""
 	if p.Subtasks != nil && (finalStatus == "completed" || finalStatus == "failed") && !isSubtask && job.Input.Task.RepoPath != "" {
-		p.Subtasks.AfterParentRun(ctx, job.Input.Task.ID, job.Input.Task.RepoPath, finalStatus == "completed")
+		p.Subtasks.AfterParentRun(ctx, job.Input.Task.ID, job.Input.Task.RepoPath, finalStatus == "completed", finalStatus == "completed" && result.Outcome == "success")
 	}
 
 	log.Info("pool: agent run finished", "status", finalStatus)

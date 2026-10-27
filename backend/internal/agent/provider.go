@@ -150,6 +150,9 @@ type RunInput struct {
 	// that failed to merge back into this (parent) task's branch. It is injected
 	// into the prompt so the parent's work agent resolves the conflicts.
 	SubtaskConflicts *string
+	// SubtaskIntegration, when set, is the rendered integration brief for a parent
+	// whose subtasks have all finished (replaces SubtaskConflicts: it includes them).
+	SubtaskIntegration *string
 	// CostBudgetUSD is the task's effective cost budget in USD (see
 	// dispatcher.effectiveBudget — the lower nonzero of the task's and its
 	// matched agent config's max_cost_usd). 0 means no cap. Providers that
@@ -239,6 +242,8 @@ type Task struct {
 	// The pool reads it to skip pushing child branches (children merge back into
 	// the parent's branch instead) and to trigger merge-back on the parent.
 	ParentID string
+	// FileScope is this subtask's declared file globs (empty = unscoped).
+	FileScope []string
 	// RepoPath is the repo's main clone path (not the worktree). Set so the pool
 	// can drive parent worktree merges after a run.
 	RepoPath string
