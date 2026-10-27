@@ -22,7 +22,7 @@ func setupProvidersRouter(t *testing.T) (http.Handler, *gen.Queries) {
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
 	h := handlers.NewProviderConfigsHandler(q)
-	agentsH := handlers.NewAgentsHandler(q)
+	agentsH := handlers.NewAgentsHandler(q, db.SQL())
 
 	r := chi.NewRouter()
 	r.Get("/provider-configs", h.List)

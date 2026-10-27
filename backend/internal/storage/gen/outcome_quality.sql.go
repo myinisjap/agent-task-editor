@@ -144,19 +144,24 @@ SELECT ar.id AS run_id,
        ar.status AS status,
        CAST(ar.cost_usd AS REAL) AS cost_usd,
        ar.created_at AS created_at,
-       ar.ladder_rung AS ladder_rung
+       ar.ladder_rung AS ladder_rung,
+       ar.agent_config_version AS agent_config_version,
+       CAST(COALESCE(ar.provider_config_id, ac.provider_config_id, '') AS TEXT) AS provider_config_id
 FROM agent_runs ar
+LEFT JOIN agent_configs ac ON ac.id = ar.agent_config_id
 ORDER BY ar.task_id, ar.created_at ASC, ar.id ASC
 `
 
 type ListOutcomeQualityRunsRow struct {
-	RunID         string    `json:"run_id"`
-	TaskID        string    `json:"task_id"`
-	AgentConfigID *string   `json:"agent_config_id"`
-	Status        string    `json:"status"`
-	CostUsd       float64   `json:"cost_usd"`
-	CreatedAt     time.Time `json:"created_at"`
-	LadderRung    *int64    `json:"ladder_rung"`
+	RunID              string    `json:"run_id"`
+	TaskID             string    `json:"task_id"`
+	AgentConfigID      *string   `json:"agent_config_id"`
+	Status             string    `json:"status"`
+	CostUsd            float64   `json:"cost_usd"`
+	CreatedAt          time.Time `json:"created_at"`
+	LadderRung         *int64    `json:"ladder_rung"`
+	AgentConfigVersion *int64    `json:"agent_config_version"`
+	ProviderConfigID   string    `json:"provider_config_id"`
 }
 
 // Every agent_runs row across all tasks, ordered so a single sequential
@@ -183,6 +188,8 @@ func (q *Queries) ListOutcomeQualityRuns(ctx context.Context) ([]ListOutcomeQual
 			&i.CostUsd,
 			&i.CreatedAt,
 			&i.LadderRung,
+			&i.AgentConfigVersion,
+			&i.ProviderConfigID,
 		); err != nil {
 			return nil, err
 		}
@@ -201,6 +208,7 @@ const listOutcomeQualityTasks = `-- name: ListOutcomeQualityTasks :many
 SELECT t.id AS task_id,
        t.repo_id AS repo_id,
        t.archived AS archived,
+       t.type AS task_type,
        CAST(COALESCE(wl.is_terminal, 0) AS INTEGER) AS is_terminal
 FROM tasks t
 LEFT JOIN workflow_labels wl ON wl.workflow_id = t.workflow_id AND wl.name = t.label
@@ -210,6 +218,7 @@ type ListOutcomeQualityTasksRow struct {
 	TaskID     string `json:"task_id"`
 	RepoID     string `json:"repo_id"`
 	Archived   int64  `json:"archived"`
+	TaskType   string `json:"task_type"`
 	IsTerminal int64  `json:"is_terminal"`
 }
 
@@ -234,6 +243,7 @@ func (q *Queries) ListOutcomeQualityTasks(ctx context.Context) ([]ListOutcomeQua
 			&i.TaskID,
 			&i.RepoID,
 			&i.Archived,
+			&i.TaskType,
 			&i.IsTerminal,
 		); err != nil {
 			return nil, err

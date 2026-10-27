@@ -33,6 +33,9 @@ export type WorkflowLabel = Schemas['WorkflowLabel']
 export type WorkflowTransition = Schemas['WorkflowTransition']
 export type Workflow = Schemas['Workflow']
 export type AgentConfig = Schemas['AgentConfig']
+export type AgentConfigVersion = Schemas['AgentConfigVersion']
+export type AgentConfigSnapshot = Schemas['AgentConfigSnapshot']
+export type OutcomeQualityGroupBy = 'config' | 'version' | 'provider_config' | 'repo' | 'task_type'
 export type ModelList = Schemas['ModelList']
 export type ClaudeOptions = Schemas['ClaudeOptions']
 export type Repo = Schemas['Repo']
@@ -379,7 +382,7 @@ export const api = {
   agents: {
     list: () => listAllPages<AgentConfig>('/agents'),
     get: (id: string) => request<AgentConfig>(`/agents/${id}`),
-    create: async (body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config'>): Promise<{ config: AgentConfig; labelConflict?: string }> => {
+    create: async (body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config' | 'current_version'> & { note?: string }): Promise<{ config: AgentConfig; labelConflict?: string }> => {
       const res = await authedRawFetch(`${BASE}/agents`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -393,7 +396,7 @@ export const api = {
       const labelConflict = res.headers.get('X-Label-Conflict') ?? undefined
       return { config, labelConflict }
     },
-    update: async (id: string, body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'provider_config'> & { enabled?: boolean }): Promise<{ config: AgentConfig; labelConflict?: string }> => {
+    update: async (id: string, body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'provider_config' | 'current_version'> & { enabled?: boolean; note?: string }): Promise<{ config: AgentConfig; labelConflict?: string }> => {
       const res = await authedRawFetch(`${BASE}/agents/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -408,6 +411,10 @@ export const api = {
       return { config, labelConflict }
     },
     delete: (id: string) => request<void>(`/agents/${id}`, { method: 'DELETE' }),
+    versions: (id: string) => request<AgentConfigVersion[]>(`/agents/${id}/versions`),
+    version: (id: string, version: number) => request<AgentConfigVersion>(`/agents/${id}/versions/${version}`),
+    restoreVersion: (id: string, version: number, note?: string) =>
+      request<AgentConfig>(`/agents/${id}/versions/${version}/restore`, { method: 'POST', body: JSON.stringify(note ? { note } : {}) }),
     models: (provider: string) => request<ModelList>(`/agents/models?provider=${provider}`),
     claudeOptions: () => request<ClaudeOptions>('/agents/claude-options'),
   },
@@ -492,8 +499,13 @@ export const api = {
     // review burden, human-touch rate, escalation rate) — see the Agent
     // Performance page. Cached server-side with a short TTL; optionally
     // scoped to a single repo.
-    outcomeQuality: (repoId?: string) =>
-      request<OutcomeQuality>(`/dashboard/outcome-quality${repoId ? `?repo_id=${encodeURIComponent(repoId)}` : ''}`),
+    outcomeQuality: (repoId?: string, groupBy?: OutcomeQualityGroupBy) => {
+      const qs = new URLSearchParams()
+      if (repoId) qs.set('repo_id', repoId)
+      if (groupBy && groupBy !== 'config') qs.set('group_by', groupBy)
+      const s = qs.toString()
+      return request<OutcomeQuality>(`/dashboard/outcome-quality${s ? `?${s}` : ''}`)
+    },
   },
   github: {
     authStatus: () => request<{ authed: boolean; note: string }>('/github/auth-status'),
