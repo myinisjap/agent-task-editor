@@ -2,7 +2,7 @@
 
 The `opencode` provider runs the [opencode](https://opencode.ai) CLI. opencode has no `--mcp-config` flag or `--system-prompt` flag like `claude`/`qwen_code`, and no `-c` config-override flag like `codex_cli`, so all of the task-editor MCP tools, the system prompt, the `max_turns` cap, and the command allowlist/denylist are delivered together via the `OPENCODE_CONFIG_CONTENT` environment variable (supported in opencode-ai v1.19.1) — see [How It Works](#how-it-works). Agents can signal completion via the `signal_complete` MCP tool; a text `OUTCOME: success`/`OUTCOME: failure` marker is still honored as a fallback in case the MCP tool call doesn't land.
 
-**Status: at parity** with `claude`/`qwen_code`/`codex_cli` for task-editor tools, `max_turns`, and command allowlist/denylist — see the [capability matrix in agents.md](../agents.md#capability-matrix). opencode's own MCP tool-naming convention and its `permission.bash` pattern-matching semantics (most-specific-wins vs. first-match, whether `"*"` is a wildcard default) have not been verified against a live `opencode` binary; the text `OUTCOME:` fallback is kept specifically because of the tool-naming uncertainty. User-level MCP servers/plugins (as opposed to the task-editor sidecar) and image attachments remain unsupported.
+**Status: at parity** with `claude`/`qwen_code`/`codex_cli` for task-editor tools, `max_turns`, and command allowlist/denylist — see the [capability matrix in agents.md](../agents.md#capability-matrix). opencode's own MCP tool-naming convention has not been verified against a live `opencode` binary; the text `OUTCOME:` fallback is kept specifically because of the tool-naming uncertainty. User-level MCP servers/plugins (as opposed to the task-editor sidecar) and image attachments remain unsupported.
 
 ## Provider String
 
@@ -197,10 +197,12 @@ otherwise prompt ("ask") for is auto-rejected headless — meaning a `"deny"`
 entry here genuinely blocks the pattern instead of pausing for an approval
 that will never come.
 
-opencode's own pattern-matching semantics for `permission.bash` (whether
-matching is most-specific-wins or first-match-wins, and whether `"*"` as a
-plain map key is treated as a wildcard default rather than a literal command
-named `*`) have **not been verified live** against the `opencode` binary.
+opencode evaluates permission rules with **last matching rule wins**
+([docs](https://opencode.ai/docs/permissions/)), so the rules are emitted in
+an explicit order rather than as an (alphabetically-sorted) map: the `"*"`
+catch-all first, then allow entries, then deny entries last. A denylist
+pattern therefore always beats an overlapping allowlist pattern, e.g. allow
+`rm tmp/*` with deny `rm *`.
 
 ## Session Resume
 
@@ -256,7 +258,7 @@ which is now effective since `cost_usd` is recorded. See
 | Outcome signalling | ✅ MCP `signal_complete`, with a text `OUTCOME: success/failure` fallback in case the tool call doesn't land (opencode's own MCP tool-naming is unverified — see [MCP Tools](#mcp-tools)) |
 | Rate limit detection | ✅ Implemented — stderr, and stdout lines that aren't structured JSON events, are scanned for 429 / rate-limit signals and surfaced as `ErrRateLimit`. opencode has no typed error classification, so a rate limit reported only inside a structured event body's text isn't caught on stdout (it still surfaces via stderr or a non-zero exit) — see issue #335 |
 | Cost & usage reporting | ✅ Recorded from the CLI's `step_finish` event (cost + tokens), summed across every step, authoritative — see above |
-| Command allowlist/denylist | ✅ Enforced via `permission.bash` (unverified pattern-matching semantics — see above) |
+| Command allowlist/denylist | ✅ Enforced via `permission.bash`, emitted in last-match-wins order (deny last) — see above |
 | Session resume | ✅ `sessionID` + `--session` (see above) |
 | Effort | ⚠️ Mapped to `--variant`, pass-through of `low/medium/high/xhigh/max`, omitted when unset; accepted values are model-specific, so an unsupported one may be silently ignored upstream — see above |
 
