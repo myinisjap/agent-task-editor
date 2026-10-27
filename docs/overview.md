@@ -90,7 +90,7 @@ The dispatcher polls the database every 5 seconds for tasks whose label matches 
 
 ## Features at a Glance
 
-- **Kanban board** with drag-and-drop between columns
+- **Kanban board** with drag-and-drop between columns; empty columns auto-narrow, terminal columns collapse to a count, and an optional "Group by repo" toggle shows one swimlane per repo
 - **Per-label WIP limits** — optional `count / limit` cap per column with an over-limit visual flag; opt-in hard mode makes the dispatcher hold new work back from a full column instead of piling up silently (see `docs/workflows.md`)
 - **Live log streaming** — agent stdout, tool calls, and tool results streamed in real time
 - **Log replay** — reconnecting clients receive all prior logs for the current run

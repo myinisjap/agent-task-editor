@@ -260,3 +260,78 @@ describe('TaskBoard running indicator (#249)', () => {
     expect(screen.getByTitle('Agent running')).toBeInTheDocument()
   })
 })
+
+describe('TaskBoard fit-to-screen layout', () => {
+  const labels = [label('todo', 0), label('doing', 1), label('review', 2), label('done', 3, { is_terminal: 1 })]
+  const modeOf = (name: string) => findColumnDropZone(name).closest('[data-column-mode]')?.getAttribute('data-column-mode')
+
+  beforeEach(() => {
+    moveLabelMock.mockReset()
+    localStorage.clear()
+  })
+
+  it('narrows empty non-starting columns and keeps populated ones full', () => {
+    render(
+      <MemoryRouter>
+        <TaskBoard labels={labels} tasks={[task({ label: 'review' })]} runningTaskIds={new Set()} workflowId="wf" />
+      </MemoryRouter>,
+    )
+    expect(modeOf('Todo')).toBe('full')
+    expect(modeOf('Doing')).toBe('narrow')
+    expect(modeOf('Review')).toBe('full')
+  })
+
+  it('collapses terminal columns, expands on click, and persists per workflow', () => {
+    const { unmount } = render(
+      <MemoryRouter>
+        <TaskBoard labels={labels} tasks={[task()]} runningTaskIds={new Set()} workflowId="wf" />
+      </MemoryRouter>,
+    )
+    expect(modeOf('Done')).toBe('collapsed')
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Done column' }))
+    expect(modeOf('Done')).toBe('full')
+    expect(JSON.parse(localStorage.getItem('board.expandedTerminals.wf') ?? '[]')).toEqual(['done'])
+    unmount()
+    render(
+      <MemoryRouter>
+        <TaskBoard labels={labels} tasks={[task()]} runningTaskIds={new Set()} workflowId="wf" />
+      </MemoryRouter>,
+    )
+    expect(modeOf('Done')).toBe('full')
+  })
+
+  it('groups into per-repo swimlanes in name order and drag still moves by label', async () => {
+    moveLabelMock.mockResolvedValue(task({ label: 'doing' }))
+    const tasks = [
+      task({ id: 'a', title: 'Alpha task', repo_id: 'r2' }),
+      task({ id: 'b', title: 'Beta task', repo_id: 'r1' }),
+    ]
+    useTasksStore.setState({ tasks, loading: false, error: null })
+    render(
+      <MemoryRouter>
+        <TaskBoard
+          labels={labels}
+          tasks={tasks}
+          runningTaskIds={new Set()}
+          workflowId="wf"
+          groupByRepo
+          repos={[{ id: 'r1', name: 'zebra' }, { id: 'r2', name: 'apple' }]}
+        />
+      </MemoryRouter>,
+    )
+    const lanes = screen.getAllByTestId('repo-lane')
+    expect(lanes).toHaveLength(2)
+    expect(lanes[0].textContent).toContain('apple')
+    expect(lanes[1].textContent).toContain('zebra')
+
+    const cardEl = findCardEl('Alpha task')
+    const dropZone = lanes[0].querySelectorAll('.flex.flex-col.shrink-0')[1].querySelector('.flex-1.flex.flex-col') as HTMLElement
+    stubRect(cardEl, { left: 10, top: 10, width: 200, height: 80 })
+    stubRect(dropZone, { left: 400, top: 0, width: 300, height: 600 })
+    fireEvent.mouseDown(cardEl, { clientX: 20, clientY: 20, button: 0 })
+    fireEvent.mouseMove(document, { clientX: 30, clientY: 20 })
+    fireEvent.mouseMove(document, { clientX: 500, clientY: 100 })
+    fireEvent.mouseUp(document, { clientX: 500, clientY: 100 })
+    await waitFor(() => expect(moveLabelMock).toHaveBeenCalledWith('a', 'doing'))
+  })
+})
