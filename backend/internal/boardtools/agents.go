@@ -37,7 +37,7 @@ func init() {
 	})
 	register(Tool{
 		Name:        "update_agent",
-		Description: "Change an agent config. Only the fields you pass change; the rest keep their current values. labels and fallback_provider_config_ids replace the whole list.",
+		Description: "Change an agent config. Only the fields you pass change; the rest keep their current values. labels, fallback_provider_config_ids and escalation_ladder replace the whole list.",
 		InputSchema: obj(withAgentID(agentProps()), "agent_id"),
 		call:        (*Client).updateAgent,
 	})
@@ -57,6 +57,7 @@ func agentProps() map[string]any {
 		"effort":                       map[string]any{"type": "string", "enum": []string{"", "low", "medium", "high", "xhigh", "max"}},
 		"permission_mode":              map[string]any{"type": "string", "enum": []string{"", "default", "auto", "acceptEdits", "bypassPermissions"}},
 		"fallback_provider_config_ids": map[string]any{"type": "array", "items": str("Provider config ID"), "description": "Ordered providers to fall back to; must not include the primary"},
+		"escalation_ladder":            map[string]any{"type": "array", "description": "Escalate on failure: rung N (1-based) is used after N consecutive failed attempts or review bounce-backs on this agent's stage; rung 0 is the agent's own provider/effort. Empty = never escalate", "items": map[string]any{"type": "object", "required": []string{"provider_config_id"}, "properties": map[string]any{"provider_config_id": str("Provider config for this rung"), "effort": map[string]any{"type": "string", "enum": []string{"", "low", "medium", "high", "xhigh", "max"}}, "fallback_provider_config_ids": map[string]any{"type": "array", "items": str("Provider config ID")}}}},
 	}
 }
 
@@ -68,7 +69,7 @@ func withAgentID(p map[string]any) map[string]any {
 // agentFields are the create_agent/update_agent arguments forwarded to the API.
 var agentFields = []string{
 	"name", "provider_config_id", "system_prompt", "labels", "enabled", "max_turns", "timeout_secs",
-	"max_cost_usd", "priority", "effort", "permission_mode", "fallback_provider_config_ids",
+	"max_cost_usd", "priority", "effort", "permission_mode", "fallback_provider_config_ids", "escalation_ladder",
 }
 
 // agentBody copies the whitelisted fields out of the arguments. labels is

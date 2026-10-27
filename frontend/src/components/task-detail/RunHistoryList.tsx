@@ -1,5 +1,5 @@
 import { Fragment, useState } from 'react'
-import type { AgentRun, AgentConfig } from '../../api/client'
+import type { AgentRun, AgentConfig, ProviderConfig } from '../../api/client'
 
 // formatTokenCount renders a token count compactly (e.g. "1.2k") for the
 // per-run cost/usage badge, falling back to the plain number for small counts.
@@ -49,9 +49,19 @@ function StoredInfoPanel({ runId, info }: { runId: string; info: string }) {
   )
 }
 
+function ladderLabel(run: AgentRun, agentConfigs: AgentConfig[], providerConfigs: ProviderConfig[]): string {
+  const rung = run.ladder_rung ?? 0
+  const agent = agentConfigs.find((a) => a.id === run.agent_config_id)
+  const pc = providerConfigs.find((p) => p.id === run.provider_config_id) ?? (run.provider_config_id === agent?.provider_config_id ? agent?.provider_config : undefined)
+  const effort = rung === 0 ? agent?.effort : (agent?.escalation_ladder?.[rung - 1]?.effort || agent?.effort)
+  const name = pc ? (pc.model || pc.name) : ''
+  return `rung ${rung}` + (name ? `: ${name}` : '') + (effort ? ` / ${effort}` : '')
+}
+
 export default function RunHistoryList({
   runs,
   agentConfigs,
+  providerConfigs = [],
   selectedRun,
   onSelectRun,
   isRunning,
@@ -62,6 +72,7 @@ export default function RunHistoryList({
 }: {
   runs: AgentRun[]
   agentConfigs: AgentConfig[]
+  providerConfigs?: ProviderConfig[]
   selectedRun: string | null
   onSelectRun: (runId: string) => void
   isRunning: boolean
@@ -105,6 +116,11 @@ export default function RunHistoryList({
                       run.status === 'interrupted'   ? 'text-slate-400' :
                       'text-slate-500'
                     }`}>{run.status}</span>
+                    {run.ladder_rung != null && (
+                      <span className="text-[11px] text-indigo-300" title="Escalation ladder rung (effort from current agent config)">
+                        {ladderLabel(run, agentConfigs, providerConfigs)}
+                      </span>
+                    )}
                   </div>
                   {((run.cost_usd ?? 0) > 0 || (run.input_tokens ?? 0) > 0 || (run.output_tokens ?? 0) > 0) && (
                     <div className="text-slate-500 text-[11px] mt-0.5">

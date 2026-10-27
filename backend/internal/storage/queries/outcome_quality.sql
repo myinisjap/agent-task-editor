@@ -39,7 +39,8 @@ SELECT ar.id AS run_id,
        ar.agent_config_id AS agent_config_id,
        ar.status AS status,
        CAST(ar.cost_usd AS REAL) AS cost_usd,
-       ar.created_at AS created_at
+       ar.created_at AS created_at,
+       ar.ladder_rung AS ladder_rung
 FROM agent_runs ar
 ORDER BY ar.task_id, ar.created_at ASC, ar.id ASC;
 

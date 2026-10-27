@@ -54,6 +54,7 @@ export default function AgentConfigPage() {
       name: a.name,
       provider_config_id: a.provider_config_id,
       fallback_provider_config_ids: a.fallback_provider_config_ids ?? [],
+      escalation_ladder: a.escalation_ladder ?? [],
       system_prompt: a.system_prompt,
       labels: a.labels,
       max_tokens: a.max_tokens,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useDashboard } from '../lib/useDashboard'
 import { formatDuration } from '../lib/format'
 import HelpModal from '../components/shared/HelpModal'
@@ -97,7 +97,8 @@ export default function AgentPerformancePage() {
               </thead>
               <tbody>
                 {outcomeQuality.configs.map((c) => (
-                  <tr key={c.agent_config_id} className="border-b border-slate-800 last:border-0">
+                  <Fragment key={c.agent_config_id}>
+                  <tr className="border-b border-slate-800 last:border-0">
                     <td className="px-4 py-2.5 text-slate-200">{c.agent_name}</td>
                     <td className="px-4 py-2.5 text-slate-400 text-xs">{c.provider}</td>
                     <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{c.tasks_done.toLocaleString()}</td>
@@ -127,6 +128,14 @@ export default function AgentPerformancePage() {
                       />
                     </td>
                   </tr>
+                  {c.ladder_rungs && c.ladder_rungs.length > 0 && (
+                    <tr className="border-b border-slate-800 last:border-0">
+                      <td colSpan={8} className="px-4 pb-2.5 text-xs text-slate-500">
+                        Finished by rung: {c.ladder_rungs.map((r) => `r${r.rung} ×${r.tasks_done} ($${r.avg_cost_to_done_usd.toFixed(4)} avg)`).join(' · ')}
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
