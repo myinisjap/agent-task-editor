@@ -1,5 +1,6 @@
 import { labelDisplayName } from '../../lib/labelDisplay'
 import { useState, useEffect, useMemo } from 'react'
+import type { ReactNode } from 'react'
 import {
   DndContext,
   KeyboardCode,
@@ -24,6 +25,13 @@ import ColumnChips from './ColumnChips'
 import type { ColumnChip } from './ColumnChips'
 import { canHumanMove } from '../../lib/humanMoves'
 import type { DropState } from './dropState'
+import {
+  computeColumnModes,
+  groupTasksByRepo,
+  loadExpandedTerminals,
+  saveExpandedTerminals,
+} from '../../lib/boardLayout'
+import type { ColumnInfo } from '../../lib/boardLayout'
 
 // Shared empty array so byLabel()/byLabels() returns a referentially-stable
 // value for labels with no tasks, instead of a fresh [] every render (which
@@ -100,6 +108,9 @@ type Props = {
   transitions?: WorkflowTransition[]
   selectedIds?: Set<string>
   onToggleSelect?: (taskId: string, orderedIds: string[], shiftKey?: boolean) => void
+  workflowId?: string
+  groupByRepo?: boolean
+  repos?: { id: string; name: string }[]
 }
 
 function TaskBoardInner({
@@ -115,9 +126,26 @@ function TaskBoardInner({
   selectedIds,
   onToggleSelect,
   onMoveError,
+  workflowId,
+  groupByRepo = false,
+  repos = [],
 }: Props & { onMoveError: (message: string) => void }) {
   const upsert = useTasksStore((s) => s.upsert)
   const isMobile = useIsMobile()
+
+  const [expandedTerminals, setExpandedTerminals] = useState<Set<string>>(() => loadExpandedTerminals(workflowId))
+  const [loadedFor, setLoadedFor] = useState(workflowId)
+  if (loadedFor !== workflowId) {
+    setLoadedFor(workflowId)
+    setExpandedTerminals(loadExpandedTerminals(workflowId))
+  }
+  const toggleTerminal = (name: string) => {
+    const next = new Set(expandedTerminals)
+    if (next.has(name)) next.delete(name)
+    else next.add(name)
+    setExpandedTerminals(next)
+    saveExpandedTerminals(workflowId, next)
+  }
 
   // Label of the card currently being dragged (null when idle); drives the
   // legal/illegal drop-column highlighting.
@@ -201,7 +229,7 @@ function TaskBoardInner({
     if (!over) return
 
     const taskId = String(active.id)
-    const toLabel = String(over.id)
+    const toLabel = (over.data.current as { label?: string } | undefined)?.label ?? String(over.id)
     const task = tasks.find((t) => t.id === taskId)
     if (!task || task.label === toLabel) return
 
@@ -294,6 +322,131 @@ function TaskBoardInner({
   const condensedSwipe = swipe
   const normalSwipe = swipe
 
+  const dragging = dragFromLabel != null
+  const useGroups = condensed && transitions.length > 0
+
+  // Column modes come from whole-board counts so lanes line up.
+  const modes = (() => {
+    const infos: ColumnInfo[] = useGroups
+      ? groups.map((g, i) =>
+          g.kind === 'single'
+            ? { key: g.label.name, count: byLabel(g.label.name).length, isTerminal: !!g.label.is_terminal, isStarting: i === 0 }
+            : {
+                key: g.labels[0]?.name ?? '',
+                count: byLabels(g.labels.map((l) => l.name)).length,
+                isTerminal: false,
+                isStarting: i === 0,
+              },
+        )
+      : sortedLabels.map((l, i) => ({ key: l.name, count: byLabel(l.name).length, isTerminal: !!l.is_terminal, isStarting: i === 0 }))
+    return computeColumnModes(infos, expandedTerminals)
+  })()
+
+  const lanes = useMemo(
+    () => (groupByRepo && !isMobile ? groupTasksByRepo(tasks, repos) : []),
+    [groupByRepo, isMobile, tasks, repos],
+  )
+
+  function renderDesktopColumns(bucket: (name: string) => Task[], laneKey?: string, withAdd = true): ReactNode[] {
+    const dropIdFor = (name: string) => (laneKey != null ? `lane:${laneKey}:${name}` : name)
+    const bucketMany = (names: string[]) => names.flatMap((n) => bucket(n))
+    const common = {
+      runningTaskIds,
+      rateLimitedTaskIds,
+      costWarnedTaskIds,
+      selectedIds,
+      onToggleSelect,
+      onDuplicate,
+      dragging,
+    }
+    if (useGroups) {
+      return groups.map((group, i) => {
+        if (group.kind === 'single') {
+          const name = group.label.name
+          const mode = modes.get(name) ?? 'full'
+          return (
+            <TaskColumn
+              key={group.label.id}
+              {...common}
+              label={group.label}
+              tasks={bucket(name)}
+              onAddTask={i === 0 && withAdd ? onAddTask : undefined}
+              isStartingColumn={i === 0}
+              isTerminal={!!group.label.is_terminal}
+              dropState={dropStateFor(name)}
+              mode={mode}
+              dropId={dropIdFor(name)}
+              onToggleCollapsed={() => toggleTerminal(name)}
+            />
+          )
+        }
+        const first = group.labels[0]?.name ?? ''
+        const mode = modes.get(first) ?? 'full'
+        return (
+          <AgentGroupColumn
+            key={group.labels.map((l) => l.id).join('-')}
+            {...common}
+            labels={group.labels}
+            tasks={bucketMany(group.labels.map((l) => l.name))}
+            dropState={dropStateFor(first)}
+            mode={mode === 'narrow' ? 'narrow' : 'full'}
+            dropId={dropIdFor(first)}
+          />
+        )
+      })
+    }
+    return sortedLabels.map((label, i) => (
+      <TaskColumn
+        key={label.id}
+        {...common}
+        label={label}
+        tasks={bucket(label.name)}
+        onAddTask={i === 0 && withAdd ? onAddTask : undefined}
+        isStartingColumn={i === 0}
+        isTerminal={!!label.is_terminal}
+        dropState={dropStateFor(label.name)}
+        mode={modes.get(label.name) ?? 'full'}
+        dropId={dropIdFor(label.name)}
+        onToggleCollapsed={() => toggleTerminal(label.name)}
+      />
+    ))
+  }
+
+  function renderDesktop() {
+    if (lanes.length === 0) {
+      return (
+        <DndContext sensors={sensors} onDragStart={handleDragStart} onDragCancel={handleDragCancel} onDragEnd={handleDragEnd}>
+          <div className="flex gap-3 overflow-x-auto h-full pb-4">{renderDesktopColumns(byLabel)}</div>
+        </DndContext>
+      )
+    }
+    return (
+      <DndContext sensors={sensors} onDragStart={handleDragStart} onDragCancel={handleDragCancel} onDragEnd={handleDragEnd}>
+        <div className="flex flex-col gap-4 h-full overflow-auto pb-4">
+          {lanes.map((lane, li) => {
+            const m = new Map<string, Task[]>()
+            for (const t of lane.tasks) {
+              const k = t.label ?? ''
+              const arr = m.get(k)
+              if (arr) arr.push(t)
+              else m.set(k, [t])
+            }
+            return (
+              <section key={lane.repoId || 'unknown'} data-testid="repo-lane" className="shrink-0">
+                <h2 className="text-sm font-semibold text-slate-300 mb-1 px-1">
+                  {lane.name} <span className="text-xs font-normal text-slate-500">({lane.tasks.length})</span>
+                </h2>
+                <div className="flex gap-3">
+                  {renderDesktopColumns((n) => m.get(n) ?? EMPTY_TASKS, lane.repoId || 'unknown', li === 0)}
+                </div>
+              </section>
+            )
+          })}
+        </div>
+      </DndContext>
+    )
+  }
+
   if (condensed && transitions.length > 0) {
     if (isMobile && groups.length > 0) {
       const currentGroup = groups[clampedCondensed]
@@ -357,52 +510,7 @@ function TaskBoardInner({
       )
     }
 
-    // Desktop condensed view
-    return (
-      <DndContext sensors={sensors} onDragStart={handleDragStart} onDragCancel={handleDragCancel} onDragEnd={handleDragEnd}>
-        <div className="flex gap-5 overflow-x-auto h-full pb-4">
-          {groups.map((group, i) => {
-            if (group.kind === 'single') {
-              return (
-                <TaskColumn
-                  key={group.label.id}
-                  label={group.label}
-                  tasks={byLabel(group.label.name)}
-                  runningTaskIds={runningTaskIds}
-                  rateLimitedTaskIds={rateLimitedTaskIds}
-                  costWarnedTaskIds={costWarnedTaskIds}
-                  selectedIds={selectedIds}
-                  onToggleSelect={onToggleSelect}
-                  onDuplicate={onDuplicate}
-                  onAddTask={i === 0 ? onAddTask : undefined}
-                  isStartingColumn={i === 0}
-                  isTerminal={!!group.label.is_terminal}
-                  dropState={dropStateFor(group.label.name)}
-                />
-              )
-            } else {
-              // agent-group: collapse into a single column
-              const groupKey = group.labels.map((l) => l.id).join('-')
-              const groupTasks = byLabels(group.labels.map((l) => l.name))
-              return (
-                <AgentGroupColumn
-                  key={groupKey}
-                  labels={group.labels}
-                  tasks={groupTasks}
-                  runningTaskIds={runningTaskIds}
-                  rateLimitedTaskIds={rateLimitedTaskIds}
-                  costWarnedTaskIds={costWarnedTaskIds}
-                  selectedIds={selectedIds}
-                  onToggleSelect={onToggleSelect}
-                  onDuplicate={onDuplicate}
-                  dropState={dropStateFor(group.labels[0]?.name ?? '')}
-                />
-              )
-            }
-          })}
-        </div>
-      </DndContext>
-    )
+    return renderDesktop()
   }
 
   // Mobile normal (expanded) view
@@ -448,30 +556,7 @@ function TaskBoardInner({
     )
   }
 
-  // Desktop normal (expanded) view
-  return (
-    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragCancel={handleDragCancel} onDragEnd={handleDragEnd}>
-      <div className="flex gap-5 overflow-x-auto h-full pb-4">
-        {sortedLabels.map((label, i) => (
-          <TaskColumn
-            key={label.id}
-            label={label}
-            tasks={byLabel(label.name)}
-            runningTaskIds={runningTaskIds}
-            rateLimitedTaskIds={rateLimitedTaskIds}
-            costWarnedTaskIds={costWarnedTaskIds}
-            selectedIds={selectedIds}
-            onToggleSelect={onToggleSelect}
-            onDuplicate={onDuplicate}
-            onAddTask={i === 0 ? onAddTask : undefined}
-            isStartingColumn={i === 0}
-            isTerminal={!!label.is_terminal}
-            dropState={dropStateFor(label.name)}
-          />
-        ))}
-      </div>
-    </DndContext>
-  )
+  return renderDesktop()
 }
 
 // How long the rejected-move notice stays up before dismissing itself.

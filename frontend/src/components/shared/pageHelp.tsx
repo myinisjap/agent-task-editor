@@ -237,6 +237,15 @@ export function BoardHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Fitting the board</h3>
+        <p>
+          Empty columns shrink to a narrow strip (hover or drag over one to expand it), and
+          terminal columns like Done start collapsed to a count — click to expand; your choice is
+          remembered per workflow. <strong>Group by repo</strong> splits the board into one
+          swimlane per repo and is kept in the URL.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">Agents pick up work automatically</h3>
         <p>
           Any label with an agent-triggered transition is watched by the dispatcher: once a task
