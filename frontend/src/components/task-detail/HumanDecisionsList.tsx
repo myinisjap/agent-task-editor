@@ -1,3 +1,4 @@
+import { humanizeLabelName } from '../../lib/labelDisplay'
 import { useState } from 'react'
 import type { TaskHumanDecision } from '../../api/client'
 
@@ -7,7 +8,7 @@ function Item({ d, onRemember }: { d: TaskHumanDecision; onRemember?: (text: str
   return (
     <div className="text-xs px-2 py-1.5 rounded text-slate-400 flex flex-col gap-1">
       <div className="text-[11px] text-slate-500 break-words">
-        <span className="font-mono">{d.label}</span>
+        <span>{humanizeLabelName(d.label)}</span>
         {d.agent_name && <span> · {d.agent_name}</span>}
         {when && <span> · {when}</span>}
       </div>

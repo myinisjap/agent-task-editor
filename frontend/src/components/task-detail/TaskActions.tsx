@@ -2,6 +2,17 @@ import { Link } from 'react-router-dom'
 import type { AgentRun } from '../../api/client'
 import { escalationInfo } from '../../lib/escalation'
 
+// Reject needs a note or at least one open diff comment. Shared with ReviewLayout.
+export function rejectDisabled(rejectNote: string, openCommentsCount: number, actionPending: boolean): boolean {
+  return actionPending || (!rejectNote.trim() && openCommentsCount === 0)
+}
+
+export function rejectPlaceholder(openCommentsCount: number): string {
+  return openCommentsCount > 0
+    ? 'Additional rejection note (optional — open inline comments reach the agent automatically)…'
+    : 'Rejection note (required to reject)…'
+}
+
 // TaskActions renders the approval panel shown when the agent needs human
 // input or the task sits at a human-gate label: the escalation reason and its
 // message, open-comment banner, reply box (waiting_human only), approve/reject
@@ -159,7 +170,7 @@ export default function TaskActions({
           {canReject && (
           <button
             onClick={onReject}
-            disabled={actionPending || (!rejectNote.trim() && openCommentsCount === 0)}
+            disabled={rejectDisabled(rejectNote, openCommentsCount, actionPending)}
             className="px-4 py-1.5 max-md:min-h-[44px] text-xs font-medium rounded bg-red-700 hover:bg-red-600 text-white disabled:opacity-50"
           >
             Reject

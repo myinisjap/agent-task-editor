@@ -1,3 +1,4 @@
+import { labelDisplayNameByName } from '../lib/labelDisplay'
 import { useEffect, useState, type ReactNode, type MouseEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
@@ -87,7 +88,8 @@ export default function InboxPage() {
   const refreshAll = () => Promise.all([refreshNeedsMe(), refreshEffects()])
 
   const renderNeedsMe = (item: NeedsMeItem) => {
-    const a = itemActions(item, workflows.find((w) => w.id === item.workflow_id))
+    const wf = workflows.find((w) => w.id === item.workflow_id)
+    const a = itemActions(item, wf)
     return (
       <Row key={item.task_id} to={`/tasks/${item.task_id}`} error={errors[item.task_id]}>
         <div className="min-w-0 break-words">
@@ -97,6 +99,11 @@ export default function InboxPage() {
           <span className="ml-2 align-middle text-[10px] px-1.5 py-0.5 rounded bg-pink-900/60 text-pink-200 font-medium">
             {needsMeReasonLabel(item.reason, item.escalation_reason)}
           </span>
+          {item.label && (
+            <span className="ml-2 align-middle text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-300">
+              {labelDisplayNameByName(item.label, wf?.labels)}
+            </span>
+          )}
           {item.message && <p className="text-xs text-slate-400 mt-1">{item.message}</p>}
           {item.reason === 'waiting_human' && (() => {
             const esc = escalationInfo(item.escalation_reason)

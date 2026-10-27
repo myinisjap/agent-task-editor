@@ -902,6 +902,7 @@ components:
         id:           { type: string }
         workflow_id:  { type: string }
         name:         { type: string }
+        display_name: { type: string, maxLength: 64, description: "Optional human-readable title shown in the UI (column headers, chips). Empty/absent = UI derives one from name (separators to spaces, sentence case). name stays the API/URL identifier." }
         color:        { type: string, pattern: "^#[0-9a-fA-F]{3,8}$", description: "Hex color (#rgb/#rrggbb/#rrggbbaa) used by the UI, including the dashboard's factory visualization. Empty string is allowed (falls back to a UI default); anything else that isn't a hex literal is rejected with 400 on write." }
         sort_order:   { type: integer }
         agent_ignore: { type: integer }

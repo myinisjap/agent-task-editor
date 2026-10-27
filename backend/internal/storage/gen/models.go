@@ -523,6 +523,7 @@ type WorkflowLabel struct {
 	WipLimitHard  int64  `json:"wip_limit_hard"`
 	VerifyMode    string `json:"verify_mode"`
 	VerifyCommand string `json:"verify_command"`
+	DisplayName   string `json:"display_name"`
 }
 
 type WorkflowTransition struct {

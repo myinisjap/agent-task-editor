@@ -34,6 +34,14 @@ describe('ReviewBriefCard', () => {
     expect(screen.getByText('Changed: stuff')).toBeInTheDocument()
   })
 
+  it('hides the preview strip when hidePreview is set', async () => {
+    vi.mocked(api.tasks.reviewBrief).mockResolvedValue(base)
+    const spy = vi.spyOn(api.tasks, 'previews').mockResolvedValue({ capture: null } as never)
+    render(<ReviewBriefCard taskId="t1" hidePreview />)
+    await waitFor(() => expect(screen.getByTestId('review-brief')).toBeInTheDocument())
+    expect(spy).not.toHaveBeenCalled()
+  })
+
   it('shows empty states', async () => {
     vi.mocked(api.tasks.reviewBrief).mockResolvedValue({
       ...base, risk_flags: [], verification: null, agent_summary: null, diff_available: false,

@@ -1,3 +1,4 @@
+import { humanizeLabelName } from '../lib/labelDisplay'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Task, TaskDependencies } from '../api/client'
@@ -126,7 +127,7 @@ export default function DependenciesPanel({
                 >
                   {b.title}
                 </button>
-                <span className="text-slate-500 shrink-0">{b.label}</span>
+                <span className="text-slate-500 shrink-0">{humanizeLabelName(b.label)}</span>
                 <button
                   onClick={() => remove(b.task_id)}
                   disabled={busy}
@@ -184,7 +185,7 @@ export default function DependenciesPanel({
                 >
                   {d.title}
                 </button>
-                <span className="text-slate-500 shrink-0">{d.label}</span>
+                <span className="text-slate-500 shrink-0">{humanizeLabelName(d.label)}</span>
               </li>
             ))}
           </ul>

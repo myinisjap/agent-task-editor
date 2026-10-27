@@ -5,6 +5,7 @@ import type { DiffComment } from '../../lib/diffComments'
 import FileDiffViewer from '../diff/FileDiffViewer'
 import VerificationPanel from './VerificationPanel'
 import ReviewBriefCard from './ReviewBriefCard'
+import PreviewStrip from './PreviewStrip'
 
 // DiffReviewPane renders the Diff tab: PR link/Create PR/Refresh header plus
 // the file diff viewer wired to review comments. Diff files/loading state are
@@ -23,6 +24,9 @@ export default function DiffReviewPane({
   verificationRefreshKey,
   showBrief,
   briefRefreshKey,
+  hideVerification,
+  showPreview,
+  previewRefreshKey,
 }: {
   taskId: string | undefined
   prUrl?: string
@@ -35,6 +39,10 @@ export default function DiffReviewPane({
   verificationRefreshKey?: number
   showBrief?: boolean
   briefRefreshKey?: string
+  // Review layout: verification lives in the rail; preview strip sits above the diff.
+  hideVerification?: boolean
+  showPreview?: boolean
+  previewRefreshKey?: string | number
 }) {
   const [diffFiles, setDiffFiles] = useState<FileDiff[]>([])
   const [diffLoading, setDiffLoading] = useState(false)
@@ -60,7 +68,8 @@ export default function DiffReviewPane({
           <ReviewBriefCard taskId={taskId} refreshKey={briefRefreshKey} />
         </div>
       )}
-      <VerificationPanel taskId={taskId} refreshKey={verificationRefreshKey} />
+      {showPreview && <PreviewStrip taskId={taskId} refreshKey={previewRefreshKey ?? ''} />}
+      {!hideVerification && <VerificationPanel taskId={taskId} refreshKey={verificationRefreshKey} />}
       <div className="flex items-center justify-between mb-3">
         <p className="text-xs text-slate-500">Changes on this task's branch</p>
         <div className="flex items-center gap-3">

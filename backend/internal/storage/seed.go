@@ -35,20 +35,21 @@ func SeedDefaultWorkflow(ctx context.Context, db *DB) error {
 	// just log and skip (see Engine.OnCreatePR).
 	labels := []struct {
 		name        string
+		display     string
 		color       string
 		order       int
 		agentIgnore bool
 		terminal    bool
 		createPR    bool
 	}{
-		{"not_ready", "#6B7280", 0, true, false, false},
-		{"plan", "#8B5CF6", 1, false, false, false},
-		{"review-plan", "#3B82F6", 2, false, false, false},
-		{"work", "#F59E0B", 3, false, false, false},
-		{"testing", "#F97316", 4, false, false, false},
-		{"agent-review", "#6366F1", 5, false, false, false},
-		{"review", "#EC4899", 6, false, false, true},
-		{"done", "#10B981", 7, false, true, false},
+		{"not_ready", "Not ready", "#6B7280", 0, true, false, false},
+		{"plan", "Plan", "#8B5CF6", 1, false, false, false},
+		{"review-plan", "Plan review", "#3B82F6", 2, false, false, false},
+		{"work", "Work", "#F59E0B", 3, false, false, false},
+		{"testing", "Testing", "#F97316", 4, false, false, false},
+		{"agent-review", "Agent review", "#6366F1", 5, false, false, false},
+		{"review", "Human review", "#EC4899", 6, false, false, true},
+		{"done", "Done", "#10B981", 7, false, true, false},
 	}
 
 	for _, l := range labels {
@@ -68,6 +69,7 @@ func SeedDefaultWorkflow(ctx context.Context, db *DB) error {
 			ID:          uuid.NewString(),
 			WorkflowID:  wfID,
 			Name:        l.name,
+			DisplayName: l.display,
 			Color:       l.color,
 			SortOrder:   int64(l.order),
 			AgentIgnore: agentIgnore,
