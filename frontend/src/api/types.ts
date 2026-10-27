@@ -568,6 +568,8 @@ export interface paths {
                         description?: string;
                         /** @enum {string} */
                         type?: "feature" | "bug" | "chore" | "spike";
+                        /** @description Optional repo-relative globs the subtask may change (max 20, 256 chars each, no leading "/" or ".." segments). Siblings with overlapping scopes are serialized via dependency edges. */
+                        file_scope?: string[];
                         /** @description Optional landing label; must be an agent_ignore (human-gate) label. Defaults to the workflow's first agent_ignore label. */
                         label?: string;
                     };
@@ -579,7 +581,14 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["Task"];
+                        "application/json": components["schemas"]["Task"] & {
+                            /** @description Siblings this subtask now depends on because their file scopes overlap. */
+                            overlap_dependencies?: {
+                                task_id?: string;
+                                title?: string;
+                                globs?: string[];
+                            }[];
+                        };
                     };
                 };
                 /** @description Depth limit exceeded */
@@ -6197,7 +6206,7 @@ export interface components {
             matched_rule_id?: string | null;
             /** @description Display name of the intake rule referenced by matched_rule_id, resolved at read time. Only populated on GET /tasks/{id} (not on list responses). Absent/null when matched_rule_id is null or the rule was since deleted. */
             matched_rule_name?: string | null;
-            /** @description Derived (read-time) count of this task's dependency blockers whose edges are still unsatisfied. A task with any unsatisfied blocker is never picked up by the dispatcher. A blocker is satisfied once it reaches a terminal label or is archived. Zero when the task has no unsatisfied blockers. */
+            /** @description Derived (read-time) count of this task's dependency blockers whose edges are still unsatisfied. A task with any unsatisfied blocker is never picked up by the dispatcher. A blocker is satisfied once it reaches a terminal label or is archived; a blocker that is a subtask must also have finished merging back into its parent (merge_status merged or merge_conflict). Zero when the task has no unsatisfied blockers. */
             blocked_by_count?: number;
             /** @description Derived (read-time) count of tasks that depend on this task (i.e. this task is a blocker for that many other tasks). */
             blocking_count?: number;
@@ -6216,6 +6225,13 @@ export interface components {
             subtask_done?: number;
             /** @description Derived: children whose merge-back is in conflict. */
             subtask_conflicts?: number;
+            /** @description A subtask's declared file globs (repo-relative); empty when unscoped. Used for the sibling overlap guard and a post-run out-of-scope warning. */
+            file_scope?: string[];
+            /**
+             * @description A parent's integration state: pending once every subtask finished and merged back (the parent's agent then runs an integration pass), done after that run succeeds. Empty otherwise.
+             * @enum {string}
+             */
+            integration_status?: "" | "pending" | "done";
             /**
              * Format: double
              * @description Advisory per-task cost budget cap in USD, checked by the dispatcher before each sweep-dispatch against the task's cumulative recorded run cost (across every run, any status). 0 disables the cap (unlimited). If the matched agent config also has a nonzero max_cost_usd, the effective budget is the lower of the two. On providers with a mid-run cost watchdog (claude, qwen_code — see AgentConfig.max_cost_usd), this cap is also enforced as a kill switch against an in-flight run, not just the next dispatch. See docs/agents.md#cost-budgets.
@@ -6303,7 +6319,7 @@ export interface components {
             title: string;
             label: string;
             archived: boolean;
-            /** @description For a blocker: whether the edge is satisfied (the blocker is terminal or archived). Not meaningful for dependents (always false there). */
+            /** @description For a blocker: whether the edge is satisfied (the blocker is terminal or archived; a subtask blocker must also be merged/merge_conflict). Not meaningful for dependents (always false there). */
             satisfied: boolean;
         };
         /** @description Both directions of a task's dependency edges. */
@@ -6333,6 +6349,10 @@ export interface components {
             skill_md?: string;
             /** @description Relative file paths (GET /skills/{id} only) */
             files?: string[];
+            /** @description Attached agent config ids (GET /skills list only) */
+            agent_config_ids?: string[];
+            /** @description Attached repo ids (GET /skills list only) */
+            repo_ids?: string[];
         };
         SkillIDs: {
             skill_ids: string[];

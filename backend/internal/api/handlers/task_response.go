@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
@@ -75,6 +76,10 @@ type taskResponse struct {
 	// because a human had already approved the task. Nil when none is pending.
 	// Applied or discarded via /tasks/{id}/source-update.
 	SourcePendingUpdate *sourcePendingResponse `json:"source_pending_update"`
+	// FileScope is the subtask's declared file globs (always an array).
+	FileScope []string `json:"file_scope"`
+	// IntegrationStatus is a parent's integration state: "", "pending" or "done".
+	IntegrationStatus string `json:"integration_status"`
 }
 
 // sourcePendingResponse is the wire form of one task_source_pending row.
@@ -157,7 +162,7 @@ func toTaskResponse(t gen.Task) taskResponse {
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		raw = json.RawMessage("[]")
 	}
-	return taskResponse{Task: t, Attachments: raw, Paused: t.Paused != 0, Archived: t.Archived != 0, SideEffects: []sideEffectResponse{}}
+	return taskResponse{Task: t, Attachments: raw, Paused: t.Paused != 0, Archived: t.Archived != 0, SideEffects: []sideEffectResponse{}, FileScope: []string{}}
 }
 
 // toTaskResponses converts a slice of gen.Task values.
@@ -346,4 +351,41 @@ func applyActiveRunStatus(resp taskResponse, statuses map[string]string) taskRes
 		resp.ActiveRunStatus = s
 	}
 	return resp
+}
+
+// fanoutMap fetches file scope / integration status for the given task ids in
+// one query, keyed by task id.
+func (h *TasksHandler) fanoutMap(ctx context.Context, ids []string) map[string]gen.TaskFanout {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := h.q.ListTaskFanoutForTasks(ctx, ids)
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]gen.TaskFanout, len(rows))
+	for _, r := range rows {
+		m[r.TaskID] = r
+	}
+	return m
+}
+
+// applyFanout sets file_scope and integration_status on a response.
+func applyFanout(resp taskResponse, m map[string]gen.TaskFanout) taskResponse {
+	if f, ok := m[resp.ID]; ok {
+		resp.FileScope = splitScope(f.FileScope)
+		resp.IntegrationStatus = f.IntegrationStatus
+	}
+	return resp
+}
+
+// splitScope parses the stored newline-joined scope; never nil.
+func splitScope(s string) []string {
+	out := []string{}
+	for _, p := range strings.Split(s, "\n") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

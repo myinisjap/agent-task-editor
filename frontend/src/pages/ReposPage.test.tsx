@@ -11,6 +11,9 @@ const deleteMock = vi.fn()
 const detectRuntimeMock = vi.fn()
 const workflowsListMock = vi.fn()
 const lessonsMock = vi.fn()
+const skillsListMock = vi.fn()
+const repoSkillsMock = vi.fn()
+const setSkillsMock = vi.fn()
 
 vi.mock('../api/client', async () => {
   const actual = await vi.importActual<typeof import('../api/client')>('../api/client')
@@ -26,7 +29,10 @@ vi.mock('../api/client', async () => {
         delete: (...args: unknown[]) => deleteMock(...args),
         lessons: (...args: unknown[]) => lessonsMock(...args),
         detectRuntime: (...args: unknown[]) => detectRuntimeMock(...args),
+        skills: (...args: unknown[]) => repoSkillsMock(...args),
+        setSkills: (...args: unknown[]) => setSkillsMock(...args),
       },
+      skills: { ...actual.api.skills, list: (...args: unknown[]) => skillsListMock(...args) },
       workflows: { ...actual.api.workflows, list: (...args: unknown[]) => workflowsListMock(...args) },
     },
   }
@@ -63,6 +69,9 @@ describe('ReposPage — Agent runtime section', () => {
     updateMock.mockReset()
     deleteMock.mockReset()
     detectRuntimeMock.mockReset()
+    skillsListMock.mockReset().mockResolvedValue([])
+    repoSkillsMock.mockReset().mockResolvedValue([])
+    setSkillsMock.mockReset().mockResolvedValue([])
   })
 
   it('renders the Agent runtime section on the create form with add/remove rows', async () => {
@@ -201,5 +210,23 @@ describe('ReposPage — Lessons panel', () => {
     await waitFor(() => expect(lessonsMock).toHaveBeenCalledWith('repo-1', undefined))
     expect(await screen.findByText('No lessons yet.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Hide lessons' })).toHaveAttribute('aria-expanded', 'true')
+  })
+})
+
+describe('ReposPage — Skills', () => {
+  it('attaches skills on save via setSkills', async () => {
+    const sk = (id: string, name: string) => ({ id, name, description: 'd', enabled: true, created_at: '', updated_at: '' })
+    listMock.mockReset().mockResolvedValue([repo()])
+    workflowsListMock.mockReset().mockResolvedValue([workflow()])
+    skillsListMock.mockReset().mockResolvedValue([sk('s1', 'alpha'), sk('s2', 'beta')])
+    repoSkillsMock.mockReset().mockResolvedValue([sk('s1', 'alpha')])
+    setSkillsMock.mockReset().mockResolvedValue([])
+    updateMock.mockReset().mockResolvedValue(repo())
+    render(<ReposPage />)
+    await screen.findByText('acme/widgets')
+    await userEvent.click(screen.getByText('Edit'))
+    await userEvent.click(await screen.findByRole('button', { name: 'beta' }))
+    await userEvent.click(screen.getByRole('button', { name: /^save/i }))
+    await waitFor(() => expect(setSkillsMock).toHaveBeenCalledWith('repo-1', ['s1', 's2']))
   })
 })

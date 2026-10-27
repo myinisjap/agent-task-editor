@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { api, type Repo, type RuntimeLanguagePin, type Workflow } from '../api/client'
+import { api, type Repo, type Skill, type RuntimeLanguagePin, type Workflow } from '../api/client'
+import SkillPicker from '../components/skills/SkillPicker'
 import LessonsPanel from '../components/lessons/LessonsPanel'
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
@@ -113,6 +114,11 @@ export default function ReposPage() {
   const [editError, setEditError] = useState('')
   const [editDetecting, setEditDetecting] = useState(false)
   const [editDetectNote, setEditDetectNote] = useState('')
+  const [allSkills, setAllSkills] = useState<Skill[]>([])
+  const [editSkillIds, setEditSkillIds] = useState<string[]>([])
+  // Only PUT skills on save if the current attachments were fetched, so a failed
+  // load can't wipe them.
+  const [editSkillsLoaded, setEditSkillsLoaded] = useState(false)
 
   useEffect(() => {
     Promise.all([api.repos.list(), api.workflows.list()])
@@ -122,6 +128,10 @@ export default function ReposPage() {
       })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    api.skills.list().then((l) => setAllSkills(l ?? [])).catch(() => setAllSkills([]))
   }, [])
 
   function workflowName(id?: string | null) {
@@ -222,6 +232,15 @@ export default function ReposPage() {
     })
     setEditError('')
     setEditDetectNote('')
+    setEditSkillIds([])
+    setEditSkillsLoaded(false)
+    api.repos
+      .skills(repo.id)
+      .then((l) => {
+        setEditSkillIds((l ?? []).map((x) => x.id))
+        setEditSkillsLoaded(true)
+      })
+      .catch(() => {})
   }
 
   function cancelEdit() {
@@ -265,6 +284,15 @@ export default function ReposPage() {
         preview_paths_glob: editForm.preview_paths_glob,
       })
       setRepos((r) => r.map((x) => (x.id === editingId ? updated : x)))
+      if (editSkillsLoaded) {
+        try {
+          await api.repos.setSkills(editingId, editSkillIds)
+          api.skills.list().then((l) => setAllSkills(l ?? [])).catch(() => {})
+        } catch (err) {
+          setEditError(`Repo saved, but attaching skills failed: ${String(err)}`)
+          return
+        }
+      }
       cancelEdit()
     } catch (e) {
       setEditError(String(e))
@@ -1043,6 +1071,14 @@ export default function ReposPage() {
 
                     {renderVerifySection({ command: editForm.verify_command, timeout: editForm.verify_timeout_seconds, setter: setEditForm })}
                     {renderPreviewSection({ command: editForm.preview_command, routes: editForm.preview_routes, globs: editForm.preview_paths_glob, setter: setEditForm })}
+
+                    <div className="sm:col-span-2">
+                      <p className="text-xs font-medium text-slate-300 mb-1">Skills</p>
+                      <p className="text-xs text-slate-500 mb-2">
+                        Repo-wide: copied for every agent run on this repo, in addition to the agent's own skills.
+                      </p>
+                      <SkillPicker skills={allSkills} selected={editSkillIds} onChange={setEditSkillIds} />
+                    </div>
                   </div>
 
                   {editError && <p className="text-xs text-red-400">{editError}</p>}

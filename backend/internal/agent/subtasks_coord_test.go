@@ -88,7 +88,8 @@ func setupCoordEnv(t *testing.T) (*SubtaskCoordinator, *gen.Queries, string, gen
 
 // TestCoordinator_CleanMergeAndAutoAdvance verifies a clean child merge-back
 // lands the child's work on the parent's branch, marks the child merged, tears
-// down the child worktree, and auto-advances the parent (work → testing).
+// down the child worktree, and (no agent configured for the parent label, so
+// no integration run is possible) falls back to auto-advancing it (work → testing).
 func TestCoordinator_CleanMergeAndAutoAdvance(t *testing.T) {
 	coord, q, repo, parent, child := setupCoordEnv(t)
 	ctx := context.Background()
@@ -208,7 +209,7 @@ func TestCoordinator_DeferredMergeFlushedAfterParentRun(t *testing.T) {
 		t.Fatalf("clear parent active run: %v", err)
 	}
 
-	changed := coord.AfterParentRun(ctx, parent.ID, repo, true)
+	changed := coord.AfterParentRun(ctx, parent.ID, repo, true, true)
 	if !changed {
 		t.Fatalf("AfterParentRun should report a change when flushing a deferred merge")
 	}
@@ -257,7 +258,7 @@ func TestCoordinator_AfterParentRunResolvesConflict(t *testing.T) {
 	childBranch := child.Branch
 
 	t.Run("failed run leaves child untouched", func(t *testing.T) {
-		changed := coord.AfterParentRun(ctx, parent.ID, repo, false)
+		changed := coord.AfterParentRun(ctx, parent.ID, repo, false, false)
 		if changed {
 			t.Fatalf("AfterParentRun should not report a change for a failed run against a conflicted child")
 		}
@@ -268,7 +269,7 @@ func TestCoordinator_AfterParentRunResolvesConflict(t *testing.T) {
 	})
 
 	t.Run("successful run resolves the conflict", func(t *testing.T) {
-		changed := coord.AfterParentRun(ctx, parent.ID, repo, true)
+		changed := coord.AfterParentRun(ctx, parent.ID, repo, true, true)
 		if !changed {
 			t.Fatalf("AfterParentRun should report a change when resolving a conflicted child")
 		}
@@ -293,12 +294,12 @@ func TestCoordinator_AfterParentRunNoOpForNonParent(t *testing.T) {
 	ctx := context.Background()
 
 	// The child itself has no subtasks of its own.
-	if changed := coord.AfterParentRun(ctx, child.ID, repo, true); changed {
+	if changed := coord.AfterParentRun(ctx, child.ID, repo, true, true); changed {
 		t.Fatalf("AfterParentRun on a task with no children should return false")
 	}
 
 	// Unknown task id: GetTask errors out.
-	if changed := coord.AfterParentRun(ctx, uuid.NewString(), repo, true); changed {
+	if changed := coord.AfterParentRun(ctx, uuid.NewString(), repo, true, true); changed {
 		t.Fatalf("AfterParentRun on an unknown task id should return false")
 	}
 }

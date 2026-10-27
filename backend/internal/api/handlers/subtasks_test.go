@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -215,4 +216,156 @@ func TestSubtasks_OptInGate(t *testing.T) {
 	if w := postSubtask(t, r, parent.ID, map[string]any{"title": "c3", "description": "x"}); w.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("third subtask should hit cap (422), got %d %s", w.Code, w.Body.String())
 	}
+}
+
+func createScoped(t *testing.T, r http.Handler, parentID, title string, scope []string) (id string, body map[string]any) {
+	t.Helper()
+	b := map[string]any{"title": title}
+	if scope != nil {
+		b["file_scope"] = scope
+	}
+	w := postSubtask(t, r, parentID, b)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create %s: %d %s", title, w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	return body["id"].(string), body
+}
+
+func TestSubtasks_FileScopeStoredAndReturned(t *testing.T) {
+	r, _, q, wfID, repoID := setupSubtaskRouter(t)
+	parent := mkTask(t, q, wfID, repoID, "parent", "plan")
+
+	id, body := createScoped(t, r, parent.ID, "A", []string{" backend/a/** ", "docs/"})
+	if fs, _ := body["file_scope"].([]any); len(fs) != 2 || fs[0] != "backend/a/**" {
+		t.Fatalf("POST response file_scope = %v", body["file_scope"])
+	}
+	if od, ok := body["overlap_dependencies"].([]any); !ok || len(od) != 0 {
+		t.Fatalf("overlap_dependencies = %v", body["overlap_dependencies"])
+	}
+
+	for _, path := range []string{"/tasks/" + id, "/tasks?parent_id=" + parent.ID} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if !strings.Contains(w.Body.String(), `"file_scope":["backend/a/**","docs/"]`) {
+			t.Fatalf("GET %s missing file_scope: %s", path, w.Body.String())
+		}
+	}
+}
+
+func TestSubtasks_InvalidFileScope(t *testing.T) {
+	r, _, q, wfID, repoID := setupSubtaskRouter(t)
+	parent := mkTask(t, q, wfID, repoID, "parent", "plan")
+	for _, sc := range [][]string{{"/abs"}, {"../x"}, {"a\nb"}} {
+		w := postSubtask(t, r, parent.ID, map[string]any{"title": "x", "file_scope": sc})
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("scope %v: got %d", sc, w.Code)
+		}
+	}
+}
+
+func TestSubtasks_OverlapCreatesDependency(t *testing.T) {
+	r, _, q, wfID, repoID := setupSubtaskRouter(t)
+	ctx := context.Background()
+	parent := mkTask(t, q, wfID, repoID, "parent", "plan")
+
+	a, _ := createScoped(t, r, parent.ID, "A", []string{"backend/a/**"})
+	b, _ := createScoped(t, r, parent.ID, "B", []string{"frontend/**"}) // disjoint
+	c, cBody := createScoped(t, r, parent.ID, "C", []string{"backend/a/sub/**"})
+	d, _ := createScoped(t, r, parent.ID, "D", nil) // unscoped: no check
+
+	od, _ := cBody["overlap_dependencies"].([]any)
+	if len(od) != 1 || od[0].(map[string]any)["task_id"] != a {
+		t.Fatalf("overlap_dependencies = %v", od)
+	}
+	blockers := func(id string) []string {
+		rows, _ := q.ListTaskBlockers(ctx, id)
+		var out []string
+		for _, r := range rows {
+			out = append(out, r.TaskID)
+		}
+		return out
+	}
+	if got := blockers(c); len(got) != 1 || got[0] != a {
+		t.Fatalf("C blockers = %v, want [A]", got)
+	}
+	if got := blockers(b); len(got) != 0 {
+		t.Fatalf("B should have no sibling edge: %v", got)
+	}
+	if got := blockers(d); len(got) != 0 {
+		t.Fatalf("D should have no sibling edge: %v", got)
+	}
+
+	// A finished sibling no longer serializes.
+	if _, err := q.UpdateTaskLabel(ctx, gen.UpdateTaskLabelParams{Label: "done", ID: a}); err != nil {
+		t.Fatal(err)
+	}
+	e, _ := createScoped(t, r, parent.ID, "E", []string{"backend/a/**"})
+	for _, id := range blockers(e) {
+		if id == a {
+			t.Fatalf("terminal sibling should not become a blocker")
+		}
+	}
+}
+
+func TestSubtasks_NewChildResetsIntegration(t *testing.T) {
+	r, _, q, wfID, repoID := setupSubtaskRouter(t)
+	ctx := context.Background()
+	parent := mkTask(t, q, wfID, repoID, "parent", "plan")
+	if err := q.SetTaskIntegrationStatus(ctx, gen.SetTaskIntegrationStatusParams{TaskID: parent.ID, IntegrationStatus: "done"}); err != nil {
+		t.Fatal(err)
+	}
+	createScoped(t, r, parent.ID, "A", nil)
+	fo, err := q.GetTaskFanout(ctx, parent.ID)
+	if err != nil || fo.IntegrationStatus != "" {
+		t.Fatalf("integration status = %q (%v)", fo.IntegrationStatus, err)
+	}
+}
+
+// TestSubtasks_BlockerSatisfiedOnlyAfterMerge: a terminal subtask whose
+// merge-back hasn't finished does not satisfy edges (closes the dispatch race).
+func TestSubtasks_BlockerSatisfiedOnlyAfterMerge(t *testing.T) {
+	r, _, q, wfID, repoID := setupSubtaskRouter(t)
+	ctx := context.Background()
+	parent := mkTask(t, q, wfID, repoID, "parent", "work")
+	childID, _ := createScoped(t, r, parent.ID, "A", nil)
+	sib := mkTask(t, q, wfID, repoID, "sibling", "work")
+	if err := q.CreateTaskDependency(ctx, gen.CreateTaskDependencyParams{TaskID: sib.ID, DependsOnTaskID: childID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.UpdateTaskLabel(ctx, gen.UpdateTaskLabelParams{Label: "done", ID: childID}); err != nil {
+		t.Fatal(err)
+	}
+	check := func(wantEligible bool, why string) {
+		t.Helper()
+		pickup, _ := q.ListAgentPickupTasks(ctx)
+		if containsTask(pickup, parent.ID) != wantEligible || containsTask(pickup, sib.ID) != wantEligible {
+			t.Fatalf("%s: eligible should be %v", why, wantEligible)
+		}
+		un, _ := q.ListUnsatisfiedBlockersForTasks(ctx, []string{parent.ID, sib.ID})
+		if (len(un) == 0) != wantEligible {
+			t.Fatalf("%s: unsatisfied blockers = %d", why, len(un))
+		}
+		cnt, _ := q.ListTaskDependencyCountsForTasks(ctx, []string{parent.ID, sib.ID})
+		for _, c := range cnt {
+			if (c.BlockedByCount == 0) != wantEligible && c.TaskID != "" && (c.TaskID == parent.ID || c.TaskID == sib.ID) {
+				t.Fatalf("%s: blocked_by_count %d for %s", why, c.BlockedByCount, c.TaskID)
+			}
+		}
+	}
+	check(false, "terminal, merge_status empty")
+	_, _ = q.SetTaskMergeStatus(ctx, gen.SetTaskMergeStatusParams{MergeStatus: "pending", ID: childID})
+	check(false, "merge pending")
+	_, _ = q.SetTaskMergeStatus(ctx, gen.SetTaskMergeStatusParams{MergeStatus: "merge_conflict", ID: childID})
+	check(true, "merge_conflict")
+	_, _ = q.SetTaskMergeStatus(ctx, gen.SetTaskMergeStatusParams{MergeStatus: "merged", ID: childID})
+	check(true, "merged")
+	_, _ = q.SetTaskMergeStatus(ctx, gen.SetTaskMergeStatusParams{MergeStatus: "", ID: childID})
+	if _, err := q.SetTaskArchived(ctx, gen.SetTaskArchivedParams{Archived: 1, ID: childID}); err != nil {
+		t.Fatal(err)
+	}
+	check(true, "archived")
 }

@@ -227,13 +227,14 @@ func main() {
 			if subtasks.enabled {
 				tools = append(tools, map[string]any{
 					"name":        "create_subtask",
-					"description": "Split this task into a smaller child task that a later agent will execute. Children run on their own branch (cut from this task's branch) and merge back automatically. Use during planning to decompose large work. Children land on a human-review label; a human releases them. Capped at " + subtasks.maxSubtasks + " per task.",
+					"description": "Split this task into a smaller child task that a later agent will execute. Children run on their own branch (cut from this task's branch) and merge back automatically. Use during planning to decompose large work. Children land on a human-review label; a human releases them. Capped at " + subtasks.maxSubtasks + " per task. Give every subtask a file_scope; subtasks with overlapping scopes run sequentially. Only fan out for 3+ independent parts that touch disjoint files - otherwise write a single plan.",
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
 							"title":       map[string]any{"type": "string", "description": "Short title of the subtask"},
 							"description": map[string]any{"type": "string", "description": "What the subtask should accomplish"},
 							"type":        map[string]any{"type": "string", "enum": []string{"feature", "bug", "chore", "spike"}, "description": "Task type (default feature)"},
+							"file_scope":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional repo-relative globs this subtask may change (e.g. backend/internal/foo/**). Siblings with overlapping scopes are automatically serialized."},
 						},
 						"required": []string{"title", "description"},
 					},
@@ -390,20 +391,25 @@ func createSubtask(cfg subtaskConfig, args json.RawMessage, log *slog.Logger) st
 		return "create_subtask is not configured on this server"
 	}
 	var a struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		Type        string `json:"type"`
+		Title       string   `json:"title"`
+		Description string   `json:"description"`
+		Type        string   `json:"type"`
+		FileScope   []string `json:"file_scope"`
 	}
 	_ = json.Unmarshal(args, &a)
 	if a.Title == "" {
 		return "title is required"
 	}
 
-	payload, _ := json.Marshal(map[string]string{
+	body := map[string]any{
 		"title":       a.Title,
 		"description": a.Description,
 		"type":        a.Type,
-	})
+	}
+	if len(a.FileScope) > 0 {
+		body["file_scope"] = a.FileScope
+	}
+	payload, _ := json.Marshal(body)
 	url := cfg.backendURL + "/api/v1/tasks/" + cfg.taskID + "/subtasks"
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
@@ -425,11 +431,19 @@ func createSubtask(cfg subtaskConfig, args json.RawMessage, log *slog.Logger) st
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		var created struct {
-			ID    string `json:"id"`
-			Label string `json:"label"`
+			ID       string `json:"id"`
+			Label    string `json:"label"`
+			Overlaps []struct {
+				TaskID string `json:"task_id"`
+				Title  string `json:"title"`
+			} `json:"overlap_dependencies"`
 		}
 		_ = json.Unmarshal(respBody, &created)
-		return fmt.Sprintf("Created subtask %s on label %q.", created.ID, created.Label)
+		msg := fmt.Sprintf("Created subtask %s on label %q.", created.ID, created.Label)
+		for _, o := range created.Overlaps {
+			msg += fmt.Sprintf(" Its file scope overlaps %s (%s), so it depends on it and will run after it finishes.", o.Title, o.TaskID)
+		}
+		return msg
 	}
 	// Surface the backend's error message so the agent can adapt (e.g. cap hit).
 	var errResp struct {

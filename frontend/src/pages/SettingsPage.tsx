@@ -10,6 +10,7 @@ export default function SettingsPage() {
     { to: '/settings/intake-rules', label: 'Intake Rules' },
     { to: '/settings/templates', label: 'Templates' },
     { to: '/settings/lessons', label: 'Lessons' },
+    { to: '/settings/skills', label: 'Skills' },
     {
       to: '/settings/health',
       label: 'Health',

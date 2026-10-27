@@ -14,6 +14,8 @@ func buildPrompt(input agent.RunInput) string {
 	writeHumanDecisionsSection(&b, input)
 	writeRepoLessonsSection(&b, input)
 	writeSubtaskConflictSection(&b, input)
+	writeSubtaskIntegrationSection(&b, input)
+	writeFileScopeSection(&b, input)
 	writeFeedbackSection(&b, input)
 	writeReviewCommentsSection(&b, input)
 	writeSourceCommentsSection(&b, input)
@@ -44,6 +46,8 @@ func buildResumePrompt(input agent.RunInput) string {
 	writeHumanReplySection(&b, input)
 	writeHumanDecisionsSection(&b, input)
 	writeSubtaskConflictSection(&b, input)
+	writeSubtaskIntegrationSection(&b, input)
+	writeFileScopeSection(&b, input)
 	writeFeedbackSection(&b, input)
 	writeReviewCommentsSection(&b, input)
 	writeSourceCommentsSection(&b, input)
@@ -209,4 +213,27 @@ func writeRepoLessonsSection(b *strings.Builder, input agent.RunInput) {
 		fmt.Fprintf(b, "- [%s] %s\n", l.Kind, body)
 	}
 	b.WriteString("\n---\n\n")
+}
+
+// writeSubtaskIntegrationSection renders the integration brief for a parent
+// whose subtasks have all finished (includes any merge conflicts).
+func writeSubtaskIntegrationSection(b *strings.Builder, input agent.RunInput) {
+	if input.SubtaskIntegration == nil || *input.SubtaskIntegration == "" {
+		return
+	}
+	b.WriteString("SUBTASK INTEGRATION (all subtasks of this task have finished — integrate them):\n")
+	b.WriteString(stripSourceCommentsMarker(*input.SubtaskIntegration))
+	b.WriteString("\n\n---\n\n")
+}
+
+// writeFileScopeSection states the file globs a subtask may change.
+func writeFileScopeSection(b *strings.Builder, input agent.RunInput) {
+	if len(input.Task.FileScope) == 0 {
+		return
+	}
+	b.WriteString("FILE SCOPE (this subtask may only change files matching):\n")
+	for _, g := range input.Task.FileScope {
+		b.WriteString("- " + stripSourceCommentsMarker(g) + "\n")
+	}
+	b.WriteString("Only change files matching these patterns. If you must change a file outside them, explain why in your notes (update_task_notes). Files changed outside the scope are flagged automatically after your run.\n\n---\n\n")
 }

@@ -260,3 +260,26 @@ func TestBuildPrompt_RepoLessons(t *testing.T) {
 		t.Fatal("section must be absent without lessons")
 	}
 }
+
+func TestPrompts_FileScopeAndIntegrationSections(t *testing.T) {
+	integ := "1. \"child\" (abcd1234) — label done, merge merged"
+	in := agent.RunInput{
+		Task:               agent.Task{Title: "T", FileScope: []string{"backend/a/**", "docs/"}},
+		SubtaskIntegration: &integ,
+	}
+	for name, out := range map[string]string{"cold": buildPrompt(in), "resume": buildResumePrompt(in)} {
+		for _, want := range []string{
+			"FILE SCOPE (this subtask may only change files matching):\n- backend/a/**\n- docs/\n",
+			"explain why in your notes",
+			"SUBTASK INTEGRATION (all subtasks of this task have finished — integrate them):\n" + integ,
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s prompt missing %q", name, want)
+			}
+		}
+	}
+	plain := buildPrompt(agent.RunInput{Task: agent.Task{Title: "T"}})
+	if strings.Contains(plain, "FILE SCOPE") || strings.Contains(plain, "SUBTASK INTEGRATION") {
+		t.Errorf("sections should be omitted when unset")
+	}
+}

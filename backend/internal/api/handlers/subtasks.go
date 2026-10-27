@@ -1,9 +1,12 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
+	"strings"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
 
 	"github.com/go-chi/chi/v5"
@@ -37,10 +40,11 @@ const defaultSubtaskCap = 10
 func (h *SubtasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	parentID := chi.URLParam(r, "id")
 	var body struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		Type        string `json:"type"`
-		Label       string `json:"label"`
+		Title       string   `json:"title"`
+		Description string   `json:"description"`
+		Type        string   `json:"type"`
+		Label       string   `json:"label"`
+		FileScope   []string `json:"file_scope"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -52,6 +56,11 @@ func (h *SubtasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Type == "" {
 		body.Type = "feature"
+	}
+	scope, serr := agent.NormalizeFileScope(body.FileScope)
+	if serr != nil {
+		Err(w, http.StatusBadRequest, serr.Error())
+		return
 	}
 
 	ctx := r.Context()
@@ -152,6 +161,22 @@ func (h *SubtasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if len(scope) > 0 {
+		if err := tq.UpsertTaskFileScope(ctx, gen.UpsertTaskFileScopeParams{TaskID: childID, FileScope: strings.Join(scope, "\n")}); err != nil {
+			Err(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	overlaps, err := h.addOverlapDependencies(ctx, tq, childID, parentID, scope)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	// A new child means the parent has to integrate again.
+	if err := tq.SetTaskIntegrationStatus(ctx, gen.SetTaskIntegrationStatusParams{TaskID: parentID, IntegrationStatus: ""}); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if err := tx.Commit(); err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
@@ -166,9 +191,83 @@ func (h *SubtasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			ParentID: parentID,
 		})
 		h.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: parentID})
+		for _, o := range overlaps {
+			h.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: o.TaskID})
+		}
 	}
 
-	JSON(w, http.StatusCreated, toTaskResponse(child))
+	resp := toTaskResponse(child)
+	resp.FileScope = append([]string{}, scope...)
+	if overlaps == nil {
+		overlaps = []overlapDependency{}
+	}
+	JSON(w, http.StatusCreated, struct {
+		taskResponse
+		OverlapDependencies []overlapDependency `json:"overlap_dependencies"`
+	}{resp, overlaps})
+}
+
+// overlapDependency names a sibling a new subtask was serialized behind.
+type overlapDependency struct {
+	TaskID string   `json:"task_id"`
+	Title  string   `json:"title"`
+	Globs  []string `json:"globs"`
+}
+
+// addOverlapDependencies makes the new child depend on every live, scoped
+// sibling whose file scope overlaps its own (so they run sequentially). An
+// unscoped child is treated as unknown and gets no edges. Cannot form a cycle:
+// the new child has no dependents besides the parent.
+func (h *SubtasksHandler) addOverlapDependencies(ctx context.Context, tq *gen.Queries, childID, parentID string, scope []string) ([]overlapDependency, error) {
+	if len(scope) == 0 {
+		return nil, nil
+	}
+	siblings, err := tq.ListSubtasks(ctx, &parentID)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, s := range siblings {
+		if s.ID != childID {
+			ids = append(ids, s.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := tq.ListTaskFanoutForTasks(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	scopes := map[string][]string{}
+	for _, r := range rows {
+		scopes[r.TaskID] = splitScope(r.FileScope)
+	}
+	labels, err := tq.ListWorkflowLabels(ctx, siblings[0].WorkflowID)
+	if err != nil {
+		return nil, err
+	}
+	terminal := map[string]bool{}
+	for _, l := range labels {
+		if l.IsTerminal != 0 {
+			terminal[l.Name] = true
+		}
+	}
+	var out []overlapDependency
+	for _, s := range siblings {
+		if s.ID == childID || s.Archived != 0 || terminal[s.Label] {
+			continue
+		}
+		sc := scopes[s.ID]
+		if len(sc) == 0 || !agent.GlobsOverlap(scope, sc) {
+			continue
+		}
+		if err := tq.CreateTaskDependency(ctx, gen.CreateTaskDependencyParams{TaskID: childID, DependsOnTaskID: s.ID}); err != nil {
+			return nil, err
+		}
+		out = append(out, overlapDependency{TaskID: s.ID, Title: s.Title, Globs: agent.OverlappingGlobs(sc, scope)})
+	}
+	return out, nil
 }
 
 // gateLabel returns the human-gate landing label (the agent_ignore label with

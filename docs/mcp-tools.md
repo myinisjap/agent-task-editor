@@ -128,6 +128,25 @@ Mark an inline diff review comment as addressed. Open review comments appear in 
 
 ---
 
+### `create_subtask`
+
+Split the current task into a child task. **Only registered when the agent config has `subtasks_enabled`** (typically the planner). It writes live to `POST /tasks/{id}/subtasks`, so children appear on the board mid-run. The tool count above is 6, plus this one when enabled.
+
+**Parameters:**
+
+| Name | Type | Required | Description |
+|---|---|---|---|
+| `title` | string | ✅ | Short title of the subtask |
+| `description` | string | ✅ | What the subtask should accomplish |
+| `type` | string | | `feature` (default), `bug`, `chore`, `spike` |
+| `file_scope` | string[] | | Repo-relative globs the subtask may change, e.g. `backend/internal/foo/**` (max 20 entries, 256 chars each; no leading `/` or `..`) |
+
+**Behaviour:** the child lands on a human-gate (`agent_ignore`) label, branches off this task's branch, and merges back into it when it finishes. Depth is limited to 1 and the number of children is capped (`max_subtasks`, default 10). When the new subtask's `file_scope` overlaps a live sibling's, it automatically **depends on that sibling** and the tool result says so (`Its file scope overlaps <title> (<id>), so it depends on it and will run after it finishes.`). The subtask's prompt lists its scope, and files it changes outside the scope are flagged in its notes after the run (a warning, not a failure). When every subtask has finished, the parent gets an integration run (see [workflows.md](workflows.md#subtasks-agent-driven-decomposition)).
+
+**When to fan out:** only when the task has **3 or more independent parts touching disjoint files**. Give each a directory-rooted `file_scope`. Otherwise don't fan out — write a single plan. Two parts, or parts that share files, should stay one task: overlapping scopes serialize and lose the benefit, and an unscoped subtask gets no overlap protection. A copy-paste planner prompt snippet is in [workflows.md](workflows.md#planner-prompt-guidance).
+
+---
+
 ## Environment Variables (set by MCPManager)
 
 The `mcp-server` binary reads these from its environment:
