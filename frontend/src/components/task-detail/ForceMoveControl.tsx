@@ -1,3 +1,4 @@
+import { labelDisplayName } from '../../lib/labelDisplay'
 import { useRef, useState } from 'react'
 import { api } from '../../api/client'
 import type { Task, WorkflowLabel } from '../../api/client'
@@ -79,7 +80,7 @@ export default function ForceMoveControl({
             >
               <option value="">Select a label…</option>
               {targets.map((l) => (
-                <option key={l.name} value={l.name}>{l.name}</option>
+                <option key={l.name} value={l.name}>{labelDisplayName(l)}</option>
               ))}
             </select>
           </label>

@@ -1,3 +1,4 @@
+import { labelDisplayName, labelDisplayNameByName } from '../../lib/labelDisplay'
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, authedRawFetch, type Task, type Repo, type WorkflowLabel, type WorkflowTransition } from '../../api/client'
@@ -367,7 +368,7 @@ export default function TaskHeader({
       <div className="flex flex-col gap-2">
         <Row label="Label">
           <span className="text-xs px-2 py-0.5 rounded-full font-medium text-white bg-slate-600">
-            {task.label}
+            {labelDisplayNameByName(task.label, labels)}
           </span>
           {moveTargets.length > 0 && (
             <select
@@ -383,7 +384,7 @@ export default function TaskHeader({
             >
               <option value="" disabled>Move to…</option>
               {moveTargets.map((l) => (
-                <option key={l.id} value={l.name}>{l.name}</option>
+                <option key={l.id} value={l.name}>{labelDisplayName(l)}</option>
               ))}
             </select>
           )}

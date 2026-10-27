@@ -1,3 +1,4 @@
+import { labelDisplayName } from '../lib/labelDisplay'
 import { useAgentsStore } from '../stores/agents'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -517,7 +518,7 @@ export default function BoardPage() {
           >
             <option value="" disabled>Move to…</option>
             {[...labels].sort((a, b) => a.sort_order - b.sort_order).map((l) => (
-              <option key={l.id} value={l.name}>{l.name}</option>
+              <option key={l.id} value={l.name}>{labelDisplayName(l)}</option>
             ))}
           </select>
           <button disabled={bulkBusy} onClick={() => runBulk('pause')} className="text-xs px-2.5 py-1 rounded border bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-500 disabled:opacity-50 transition-colors">⏸ Pause</button>

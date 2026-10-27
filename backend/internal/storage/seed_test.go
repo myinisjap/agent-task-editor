@@ -54,6 +54,9 @@ func TestSeedDefaultWorkflow_CreatesExpectedLabelsAndTransitions(t *testing.T) {
 			t.Errorf("expected label %q to exist, got %+v", name, byName)
 		}
 	}
+	if got := byName["review-plan"].DisplayName; got != "Plan review" {
+		t.Errorf("review-plan display_name = %q, want \"Plan review\"", got)
+	}
 	if byName["not_ready"].AgentIgnore == 0 {
 		t.Errorf("expected not_ready to be agent-ignored")
 	}

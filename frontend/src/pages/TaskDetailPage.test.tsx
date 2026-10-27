@@ -2,7 +2,7 @@
 // Logs/Diff mounts RunLogPane/DiffReviewPane (identified via the
 // data-testid hooks added to those components for testability) and hides
 // the other tabs' content.
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom'
@@ -27,6 +27,9 @@ vi.mock('../api/client', async () => {
         verifications: vi.fn().mockResolvedValue([]),
         reviewBrief: vi.fn().mockResolvedValue({ human_gate: false }),
         runLogs: vi.fn().mockResolvedValue({ items: [], hasMore: false, prevCursor: null }),
+        approve: vi.fn(),
+        reject: vi.fn(),
+        previews: vi.fn().mockResolvedValue({ capture: null }),
       },
       workflows: {
         get: vi.fn(),
@@ -536,5 +539,167 @@ describe('TaskDetailPage navigation races', () => {
 
     resolveTaskB(taskB)
     expect(await screen.findByText('Task B title')).toBeInTheDocument()
+  })
+})
+
+function reviewWorkflow(createPr = 1): Workflow {
+  const l = (name: string, i: number, create_pr = 0) => ({ id: name, workflow_id: 'wf', name, color: '#000', sort_order: i, agent_ignore: 0, is_terminal: 0, create_pr, wip_limit: null, wip_limit_hard: 0, verify_mode: 'inherit', verify_command: '' }) as Workflow['labels'][number]
+  const t = (from: string, to: string, trigger: 'human' | 'agent', path: 'success' | 'failure') =>
+    ({ id: from + to, workflow_id: 'wf', from_label: from, to_label: to, trigger_type: trigger, path }) as unknown as Workflow['transitions'][number]
+  return {
+    ...workflow(),
+    labels: [l('in-progress', 0), l('review-plan', 1), l('review', 2), l('done', 3, createPr)],
+    transitions: [
+      t('in-progress', 'review', 'agent', 'success'),
+      t('review', 'done', 'human', 'success'),
+      t('review', 'in-progress', 'human', 'failure'),
+      t('review-plan', 'done', 'human', 'success'),
+      t('review-plan', 'in-progress', 'human', 'failure'),
+    ],
+  }
+}
+
+const gateBrief = {
+  human_gate: true,
+  changed: { files: 1, additions: 2, deletions: 1, top_files: [] },
+  risk_flags: [],
+  verification: null,
+  runs: { total: 1, failed: 0, rework_loops: 0, cost_usd: 0.5, cost_unknown: false },
+  agent_summary: null,
+  diff_available: true,
+  truncated: false,
+  computed_at: '2026-01-01T00:00:00Z',
+}
+
+function stubWide(): () => void {
+  const orig = window.matchMedia
+  window.matchMedia = ((q: string) => ({
+    matches: q.includes('min-width: 1280px'), media: q, addEventListener() {}, removeEventListener() {},
+  })) as never
+  return () => { window.matchMedia = orig }
+}
+
+describe('TaskDetailPage review layout', () => {
+  let restore: (() => void) | null = null
+  beforeEach(() => {
+    vi.clearAllMocks()
+    wsHandlers.clear()
+    vi.mocked(api.tasks.listLabelHistory).mockResolvedValue([])
+    vi.mocked(api.tasks.sourceComments).mockResolvedValue([])
+    vi.mocked(api.tasks.subtasks).mockResolvedValue([])
+    vi.mocked(api.tasks.dependencies).mockResolvedValue({ blocked_by: [], blocking: [], blocked_by_count: 0, blocking_count: 0 })
+    vi.mocked(api.tasks.reviewComments).mockResolvedValue([])
+    vi.mocked(api.tasks.diff).mockResolvedValue({ branch: 'main', diff: '' })
+    vi.mocked(api.tasks.runLogs).mockResolvedValue({ items: [], hasMore: false, prevCursor: null })
+    vi.mocked(api.tasks.previews).mockResolvedValue({ capture: null } as never)
+    vi.mocked(api.tasks.reviewBrief).mockResolvedValue(gateBrief as never)
+    vi.mocked(api.repos.list).mockResolvedValue([])
+    vi.mocked(api.agents.list).mockResolvedValue([])
+    vi.mocked(api.github.authStatus).mockResolvedValue({ authed: true, note: '' })
+  })
+  afterEach(() => { restore?.(); restore = null })
+
+  function renderGate(t: Task, wf: Workflow, runs: AgentRun[] = [run()]) {
+    vi.mocked(api.tasks.get).mockResolvedValue(t)
+    vi.mocked(api.tasks.runs).mockResolvedValue({ items: runs, nextCursor: null })
+    vi.mocked(api.workflows.get).mockResolvedValue(wf)
+    return render(
+      <MemoryRouter initialEntries={['/tasks/task-1']}>
+        <Routes><Route path="/tasks/:id" element={<TaskDetailPage />} /></Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  it('renders header actions, diff and brief together on a wide screen', async () => {
+    restore = stubWide()
+    renderGate(task({ label: 'review' }), reviewWorkflow())
+    expect(await screen.findByTestId('review-layout')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Approve and open PR' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Request changes' })).toBeInTheDocument()
+    expect(screen.getByTestId('review-state-chip')).toHaveTextContent('Waiting for your review')
+    expect(await screen.findByTestId('diff-review-pane')).toBeInTheDocument()
+    expect(await screen.findByTestId('review-brief')).toBeInTheDocument()
+    expect(screen.queryByTestId('task-actions-bar')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Overview' })).not.toBeInTheDocument()
+  })
+
+  it('Approve calls the approve endpoint', async () => {
+    restore = stubWide()
+    const user = userEvent.setup()
+    vi.mocked(api.tasks.approve).mockResolvedValue(task({ label: 'done' }))
+    renderGate(task({ label: 'review' }), reviewWorkflow())
+    await user.click(await screen.findByRole('button', { name: 'Approve and open PR' }))
+    await waitFor(() => expect(api.tasks.approve).toHaveBeenCalledWith('task-1'))
+  })
+
+  it('Request changes needs a note, then calls the reject endpoint', async () => {
+    restore = stubWide()
+    const user = userEvent.setup()
+    vi.mocked(api.tasks.reject).mockResolvedValue(task({ label: 'in-progress' }))
+    renderGate(task({ label: 'review' }), reviewWorkflow())
+    await user.click(await screen.findByRole('button', { name: 'Request changes' }))
+    const submit = screen.getByRole('button', { name: 'Send back with changes' })
+    expect(submit).toBeDisabled()
+    await user.type(screen.getByPlaceholderText(/Rejection note/), 'note')
+    expect(submit).toBeEnabled()
+    await user.click(submit)
+    await waitFor(() => expect(api.tasks.reject).toHaveBeenCalledWith('task-1', 'note'))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Send back with changes' })).not.toBeInTheDocument())
+  })
+
+  it('labels Approve plainly when the target label does not open a PR', async () => {
+    restore = stubWide()
+    renderGate(task({ label: 'review' }), reviewWorkflow(0))
+    expect(await screen.findByRole('button', { name: 'Approve' })).toBeInTheDocument()
+  })
+
+  it('shows the plan on review-plan with the diff as a secondary tab', async () => {
+    restore = stubWide()
+    const user = userEvent.setup()
+    renderGate(task({ label: 'review-plan', agent_notes: 'PLAN TEXT' }), reviewWorkflow())
+    const pane = await screen.findByTestId('review-plan-pane')
+    expect(pane).toHaveTextContent('PLAN TEXT')
+    expect(screen.queryByTestId('diff-review-pane')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Diff' }))
+    expect(await screen.findByTestId('diff-review-pane')).toBeInTheDocument()
+  })
+
+  it('clicking a run in the rail switches to Logs', async () => {
+    restore = stubWide()
+    const user = userEvent.setup()
+    renderGate(task({ label: 'review' }), reviewWorkflow())
+    const rail = await screen.findByTestId('review-rail')
+    await screen.findByTestId('diff-review-pane')
+    const runBtn = await waitFor(() => {
+      const b = within(rail).getAllByRole('button').find((x) => /run-1|completed/i.test(x.textContent ?? ''))
+      expect(b).toBeTruthy()
+      return b!
+    })
+    await user.click(runBtn)
+    expect(await screen.findByTestId('run-log-pane')).toBeInTheDocument()
+  })
+
+  it('keeps the existing layout for non-gate tasks on a wide screen', async () => {
+    restore = stubWide()
+    renderGate(task({ label: 'in-progress' }), reviewWorkflow())
+    expect(await screen.findByText('A detailed task')).toBeInTheDocument()
+    expect(screen.queryByTestId('review-layout')).not.toBeInTheDocument()
+    for (const n of ['Overview', 'Logs', 'Diff']) expect(screen.getByRole('button', { name: n })).toBeInTheDocument()
+  })
+
+  it('keeps the tabbed layout on narrow screens, with the brief below the title', async () => {
+    renderGate(task({ label: 'review' }), reviewWorkflow())
+    const brief = await screen.findByTestId('review-brief')
+    expect(screen.queryByTestId('review-layout')).not.toBeInTheDocument()
+    expect(screen.getByTestId('task-actions-bar')).toBeInTheDocument()
+    const title = screen.getByText('A detailed task')
+    expect(title.compareDocumentPosition(brief) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('keeps the existing layout on a wide screen when the run is waiting_human', async () => {
+    restore = stubWide()
+    renderGate(task({ label: 'review' }), reviewWorkflow(), [run({ status: 'waiting_human' })])
+    expect(await screen.findByTestId('task-actions-bar')).toBeInTheDocument()
+    expect(screen.queryByTestId('review-layout')).not.toBeInTheDocument()
   })
 })

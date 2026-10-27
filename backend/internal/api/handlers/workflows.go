@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -29,6 +31,18 @@ func validateLabelColor(name, color string) error {
 		return fmt.Errorf("label %q: color must be a hex color like #RRGGBB", name)
 	}
 	return nil
+}
+
+// maxLabelDisplayName caps the optional UI title of a label.
+const maxLabelDisplayName = 64
+
+// validateLabelDisplayName trims the display name and rejects over-long ones.
+func validateLabelDisplayName(name, display string) (string, error) {
+	display = strings.TrimSpace(display)
+	if utf8.RuneCountInString(display) > maxLabelDisplayName {
+		return "", fmt.Errorf("label %q: display_name must be at most %d characters", name, maxLabelDisplayName)
+	}
+	return display, nil
 }
 
 type WorkflowsHandler struct {
@@ -146,6 +160,7 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Description string `json:"description"`
 		Labels      []struct {
 			Name         string `json:"name"`
+			DisplayName  string `json:"display_name"`
 			Color        string `json:"color"`
 			SortOrder    int64  `json:"sort_order"`
 			AgentIgnore  bool   `json:"agent_ignore"`
@@ -203,7 +218,14 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// never causes a half-applied delete/recreate of the labels (see #343).
 	verifyModes := make([]string, len(body.Labels))
 	verifyCmds := make([]string, len(body.Labels))
+	displayNames := make([]string, len(body.Labels))
 	for i, l := range body.Labels {
+		dn, err := validateLabelDisplayName(l.Name, l.DisplayName)
+		if err != nil {
+			Err(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		displayNames[i] = dn
 		if err := validateLabelColor(l.Name, l.Color); err != nil {
 			Err(w, http.StatusBadRequest, err.Error())
 			return
@@ -260,6 +282,7 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			ID:            uuid.NewString(),
 			WorkflowID:    wfID,
 			Name:          l.Name,
+			DisplayName:   displayNames[i],
 			Color:         l.Color,
 			SortOrder:     l.SortOrder,
 			AgentIgnore:   agentIgnore,

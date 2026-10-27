@@ -369,7 +369,7 @@ describe('TaskHeader "Move to…" filtering', () => {
   it('lists only labels reachable via a defined transition', () => {
     renderHeader(TaskHeader, baseTask({ label: 'todo' }), { labels, transitions })
     const options = screen.getAllByRole('option').map((o) => o.textContent)
-    expect(options).toEqual(['Move to…', 'doing', 'review'])
+    expect(options).toEqual(['Move to…', 'Doing', 'Review'])
   })
 
   it('hides the control when there are no legal targets', () => {
