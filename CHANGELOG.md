@@ -21,7 +21,8 @@ triggers the "Release" workflow the same way.
 
 ### Added
 
-- **Repo lessons.** Short, human-curated per-repo (or global) lessons stored in `repo_lessons` and managed via `GET/POST /repos/{id}/lessons`, `GET/POST /lessons`, `PATCH/DELETE /lessons/{id}`. Active lessons matching the run's label (and, when set, the task's changed files) are injected into agent prompts under `REPO LESSONS`, capped at 15 lessons / about 2,000 characters. UI comes in a follow-up. Task runs keep Claude Code auto-memory off via `--bare` (now covered by a test and documented).
+- **Lessons UI and "Remember for this repo".** The Repos page has a per-repo **Lessons** panel (add, edit, retire/reactivate, delete, status filter; shows kind, body, scope and injected count), Settings → **Lessons** manages global lessons, and Task Detail offers **Remember for this repo** next to human replies (new "Human decisions" list) and human rejection/move notes, creating an active `preference` lesson linked to the task and confirming with a toast. Adds `GET /tasks/{id}/human-decisions`.
+- **Repo lessons.** Short, human-curated per-repo (or global) lessons stored in `repo_lessons` and managed via `GET/POST /repos/{id}/lessons`, `GET/POST /lessons`, `PATCH/DELETE /lessons/{id}`. Active lessons matching the run's label (and, when set, the task's changed files) are injected into agent prompts under `REPO LESSONS`, capped at 15 lessons / about 2,000 characters. The UI is described in the next entry. Task runs keep Claude Code auto-memory off via `--bare` (now covered by a test and documented).
 
 ### Fixed
 

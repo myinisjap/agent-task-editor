@@ -1196,6 +1196,22 @@ components:
         created_at:          { type: string, format: date-time, description: "When this row was ingested" }
       required: [id, task_id, external_id, author, body, external_created_at, created_at]
 
+    TaskHumanDecision:
+      type: object
+      description: >-
+        A human reply to a waiting_human run, shown to later runs under HUMAN
+        DECISIONS ON THIS TASK. Only replied rows are returned.
+      properties:
+        run_id:            { type: string }
+        label:             { type: string }
+        escalation_reason: { type: string }
+        question:          { type: string }
+        reply:             { type: string, nullable: true }
+        replied_at:        { type: string, format: date-time, nullable: true }
+        asked_at:          { type: string, format: date-time }
+        agent_name:        { type: string, description: "Empty when the agent config was deleted" }
+      required: [run_id, label, escalation_reason, question, reply, replied_at, asked_at, agent_name]
+
     AgentRun:
       type: object
       properties:
@@ -3013,6 +3029,25 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/TaskSourceComment" } }
+        "404": { description: Task not found }
+
+  /tasks/{id}/human-decisions:
+    get:
+      summary: List a task's human replies to waiting_human runs
+      description: >
+        Replied decisions only (question-only rows are excluded), oldest
+        first. These are the same replies shown to later runs under HUMAN
+        DECISIONS ON THIS TASK.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/TaskHumanDecision" } }
         "404": { description: Task not found }
 
   /tasks/{id}/runs:

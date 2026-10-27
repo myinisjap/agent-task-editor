@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
 import LabelHistoryList from './LabelHistoryList'
 import type { TaskLabelHistoryEntry } from '../../api/client'
 
@@ -33,5 +33,30 @@ describe('LabelHistoryList', () => {
     render(<LabelHistoryList history={[entry({ trigger: 'agent', actor_id: 'abcdef1234567890' })]} />)
     expect(screen.getByText(/abcdef12/)).toBeInTheDocument()
     expect(screen.queryByText(/by /)).not.toBeInTheDocument()
+  })
+})
+
+describe('LabelHistoryList — Remember for this repo', () => {
+  it('offers Remember only on human entries with a note', () => {
+    const onRemember = vi.fn()
+    render(
+      <LabelHistoryList
+        onRemember={onRemember}
+        history={[
+          entry({ id: 'a', note: 'needs tests' }),
+          entry({ id: 'b', note: '' }),
+          entry({ id: 'c', trigger: 'agent', note: 'agent note' }),
+        ]}
+      />,
+    )
+    const buttons = screen.getAllByRole('button', { name: 'Remember for this repo' })
+    expect(buttons).toHaveLength(1)
+    fireEvent.click(buttons[0])
+    expect(onRemember).toHaveBeenCalledWith('needs tests')
+  })
+
+  it('hides Remember without the callback', () => {
+    render(<LabelHistoryList history={[entry({ note: 'needs tests' })]} />)
+    expect(screen.queryByRole('button', { name: 'Remember for this repo' })).not.toBeInTheDocument()
   })
 })

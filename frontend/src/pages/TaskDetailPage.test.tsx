@@ -3,7 +3,7 @@
 // data-testid hooks added to those components for testability) and hides
 // the other tabs' content.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom'
 import TaskDetailPage from './TaskDetailPage'
@@ -19,6 +19,7 @@ vi.mock('../api/client', async () => {
         runs: vi.fn(),
         listLabelHistory: vi.fn().mockResolvedValue([]),
         sourceComments: vi.fn().mockResolvedValue([]),
+        humanDecisions: vi.fn().mockResolvedValue([]),
         subtasks: vi.fn().mockResolvedValue([]),
         dependencies: vi.fn().mockResolvedValue({ blocked_by: [], blocking: [], blocked_by_count: 0, blocking_count: 0 }),
         reviewComments: vi.fn().mockResolvedValue([]),
@@ -31,6 +32,7 @@ vi.mock('../api/client', async () => {
       },
       repos: {
         list: vi.fn().mockResolvedValue([]),
+        createLesson: vi.fn(),
       },
       agents: {
         list: vi.fn().mockResolvedValue([]),
@@ -192,6 +194,42 @@ describe('TaskDetailPage tab switching', () => {
     await user.click(screen.getByRole('button', { name: 'About this task' }))
 
     expect(await screen.findByText('About Task Detail')).toBeInTheDocument()
+  })
+})
+
+describe('TaskDetailPage — Remember for this repo', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    wsHandlers.clear()
+    vi.mocked(api.tasks.listLabelHistory).mockResolvedValue([])
+    vi.mocked(api.tasks.sourceComments).mockResolvedValue([])
+    vi.mocked(api.tasks.subtasks).mockResolvedValue([])
+    vi.mocked(api.tasks.dependencies).mockResolvedValue({ blocked_by: [], blocking: [], blocked_by_count: 0, blocking_count: 0 })
+    vi.mocked(api.tasks.reviewComments).mockResolvedValue([])
+    vi.mocked(api.repos.list).mockResolvedValue([])
+    vi.mocked(api.agents.list).mockResolvedValue([])
+    vi.mocked(api.github.authStatus).mockResolvedValue({ authed: true, note: '' })
+    vi.mocked(api.tasks.humanDecisions).mockResolvedValue([
+      { run_id: 'run-9', label: 'todo', escalation_reason: 'ask', question: 'Which style?', reply: 'Always use tabs', replied_at: new Date().toISOString(), asked_at: new Date().toISOString(), agent_name: 'coder' },
+    ])
+  })
+
+  it('opens a prefilled dialog, saves the lesson and shows a toast', async () => {
+    const user = userEvent.setup()
+    vi.mocked(api.repos.createLesson).mockResolvedValue({} as never)
+    renderPage(task())
+
+    await user.click(await screen.findByRole('button', { name: 'Remember for this repo' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Remember for this repo' })
+    expect(within(dialog).getByLabelText('Lesson')).toHaveValue('Always use tabs')
+
+    await user.click(within(dialog).getByRole('button', { name: 'Save lesson' }))
+
+    await waitFor(() =>
+      expect(api.repos.createLesson).toHaveBeenCalledWith('r1', expect.objectContaining({ kind: 'preference', body: 'Always use tabs', source_task_id: 'task-1', status: 'active' })),
+    )
+    expect(await screen.findByRole('status')).toHaveTextContent('Lesson saved')
+    expect(screen.queryByRole('dialog', { name: 'Remember for this repo' })).not.toBeInTheDocument()
   })
 })
 
