@@ -175,7 +175,6 @@ export default function InboxPage() {
     switch (action) {
       case 'next': return select(neighborKey(flat, selectedKey, 1))
       case 'prev': return select(neighborKey(flat, selectedKey, -1))
-      case 'help': return setLegend((v) => !v)
       case 'open': {
         if (!selectedEntry) return
         const id = entryTaskId(selectedEntry)
@@ -499,7 +498,7 @@ export default function InboxPage() {
 
       {isWide && legend && (
         <p data-testid="inbox-shortcuts" className="text-xs text-fg-muted mb-4 -mt-3">
-          <kbd>j</kbd>/<kbd>k</kbd> or ↑/↓ move · <kbd>a</kbd> approve · <kbd>r</kbd> request changes · <kbd>Enter</kbd>/<kbd>o</kbd> open full page · <kbd>Esc</kbd> close note/legend · <kbd>?</kbd> this help
+          <kbd>j</kbd>/<kbd>k</kbd> or ↑/↓ move · <kbd>a</kbd> approve · <kbd>r</kbd> request changes · <kbd>Enter</kbd>/<kbd>o</kbd> open full page · <kbd>Esc</kbd> close note/legend · <kbd>?</kbd> all shortcuts
         </p>
       )}
 

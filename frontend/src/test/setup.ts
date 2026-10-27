@@ -150,3 +150,12 @@ if (!Element.prototype.releasePointerCapture) {
 // call window.confirm — default to "confirmed" so tests don't hang on a
 // real browser dialog; override per-test with vi.spyOn(window, 'confirm').
 vi.stubGlobal('confirm', vi.fn(() => true))
+
+// cmdk calls scrollIntoView on the selected item; jsdom doesn't implement it.
+if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {}
+}
+// cmdk uses ResizeObserver for list sizing.
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver
+}

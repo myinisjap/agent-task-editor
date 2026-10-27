@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import Icon from '../ui/Icon'
+import { shortcutHint } from '../../lib/shortcuts'
 import { labelDisplayName } from '../../lib/labelDisplay'
 import { useCallback, useMemo, useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
@@ -201,7 +202,8 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
         {!compact && onAddTask && (
           <button
             onClick={onAddTask}
-            className="w-full text-sm text-fg-subtle hover:text-fg-muted border border-dashed border-border hover:border-slate-500 rounded-lg py-2 transition-colors"
+            title={shortcutHint("new-task")}
+            className="w-full text-sm text-fg-subtle hover:text-fg-muted border border-dashed border-border hover:border-fg-subtle rounded-lg py-2 transition-colors"
           >
             + Add task
           </button>

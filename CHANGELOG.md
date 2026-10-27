@@ -19,6 +19,9 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+- **Command palette and keyboard shortcuts.** Cmd/Ctrl+K opens a palette to jump to a task by title or short id, create a task, go to any page (Inbox, Board, Chat, Pipeline, Repos, Settings and Insights tabs), and run actions on the task you have open (move to a legal label, approve / request changes, rerun, open or create the PR, pause/resume, archive). Global shortcuts (ignored while typing, and off on touch devices): `c` new task, `g i` / `g b` / `g p` / `g s` go to Inbox / Board / Pipeline / Settings, `/` focus the board search, `?` shows a sheet of all shortcuts. Hints appear in the palette and button tooltips. On phones the palette is reachable from More → "Search and commands". In the Inbox, `?` now opens the full shortcut sheet.
+
 ### Changed
 - **Consistent pages and real icons.** Board, Overview, Cost & Usage, Agent Performance, Repos, Pipeline (Overview/Workflow/Agents) and every Settings tab now share one header (title, help, actions) and page width; only the Board and Pipeline graphs go full-width. Chat and these pages use the theme tokens and shared buttons/badges. Emoji icons on cards, badges, buttons and navigation are replaced by Lucide icons (`lucide-react`, pinned) with text labels kept. Agent Performance's long footnotes moved into column-header hints and the help panel, and Pipeline → Agents opens on your first agent (or `?agent=<id>`) instead of an empty "New Agent Config" form, staying on the agent after saving.
 - **Design tokens and UI primitives.** Semantic OKLCH colour tokens (surface, text, border, accent, status + soft) with hand-tuned light and dark values that meet WCAG AA, plus shared Button, Badge, Card, Field and PageFrame components. Inbox, Task Detail and the sidebar use them first, so buttons, badges and cards look the same in both themes. Primary actions (including Approve) are now indigo instead of sky/emerald.
