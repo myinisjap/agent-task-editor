@@ -764,6 +764,18 @@ The user prompt sent to the agent is assembled as:
 <feedback from the previous run, if any; only present until a run that received it succeeds>
 
 ---]
+[HUMAN DECISIONS ON THIS TASK:
+<every human reply given on this task, with question and date>
+
+---]
+
+[REPO LESSONS (conventions learned from past tasks in this repo; if one contradicts the code, trust the code and say so in your notes):
+- [kind] <lesson body>
+...
+
+---]
+(active repo + global lessons, filtered by stage/path globs, max 15 / ~2,000 chars; see [lessons.md](lessons.md). Not sent on resumed sessions.)
+
 
 [NOTES FROM PRIOR AGENT:
 <agent_notes from the task, if any>

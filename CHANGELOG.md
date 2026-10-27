@@ -19,6 +19,10 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+
+- **Repo lessons.** Short, human-curated per-repo (or global) lessons stored in `repo_lessons` and managed via `GET/POST /repos/{id}/lessons`, `GET/POST /lessons`, `PATCH/DELETE /lessons/{id}`. Active lessons matching the run's label (and, when set, the task's changed files) are injected into agent prompts under `REPO LESSONS`, capped at 15 lessons / about 2,000 characters. UI comes in a follow-up. Task runs keep Claude Code auto-memory off via `--bare` (now covered by a test and documented).
+
 ### Fixed
 
 - **Stale review feedback no longer follows every later run.** Feedback from a failed run, a failed verify, a PR review or a rejection is now dropped once a run that received it completes successfully, instead of being copied onto every later run (it showed up as `FEEDBACK FROM PRIOR REVIEW` long after it was fixed). Retries after a transient error and replies to a run waiting on a human still see it.
