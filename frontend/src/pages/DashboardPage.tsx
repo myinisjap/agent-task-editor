@@ -244,7 +244,7 @@ export default function DashboardPage() {
                     <td className="px-4 py-2.5 text-slate-200">
                       <button
                         onClick={() => navigate(`/tasks/${a.task_id}`)}
-                        className="hover:text-white hover:underline truncate max-w-xs text-left"
+                        className="hover:text-slate-50 hover:underline truncate max-w-xs text-left"
                       >
                         {a.task_title}
                       </button>
@@ -313,7 +313,7 @@ export default function DashboardPage() {
                   <div>
                     <button
                       onClick={() => navigate(`/tasks/${item.task_id}`)}
-                      className="text-sm font-medium text-slate-200 hover:text-white hover:underline text-left"
+                      className="text-sm font-medium text-slate-200 hover:text-slate-50 hover:underline text-left"
                     >
                       {item.task_title}
                     </button>
@@ -357,7 +357,7 @@ export default function DashboardPage() {
                             className={
                               esc.action === 'retry'
                                 ? 'px-3 py-1.5 text-xs font-medium rounded bg-sky-600 hover:bg-sky-500 text-white disabled:opacity-50'
-                                : 'px-3 py-1.5 text-xs font-medium rounded bg-slate-700 hover:bg-slate-600 text-slate-100 disabled:opacity-50'
+                                : 'px-3 py-1.5 text-xs font-medium rounded bg-slate-700 hover:bg-slate-800 text-slate-100 disabled:opacity-50'
                             }
                           >
                             Retry
@@ -407,7 +407,7 @@ export default function DashboardPage() {
                         <button
                           onClick={() => handleReject(item.task_id)}
                           disabled={pending[item.task_id] || !(rejectNote[item.task_id] ?? '').trim()}
-                          className="px-3 py-1.5 text-xs font-medium rounded bg-red-700 hover:bg-red-600 text-white disabled:opacity-50"
+                          className="px-3 py-1.5 text-xs font-medium rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-50"
                         >
                           Reject
                         </button>

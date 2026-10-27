@@ -161,7 +161,7 @@ export default function LessonsPanel({ repoId, title = 'Lessons' }: { repoId: st
                   )}
                   {confirmDeleteId === l.id ? (
                     <>
-                      <button className="px-2 py-1 text-xs rounded bg-red-700 hover:bg-red-600 text-white" onClick={() => remove(l)}>
+                      <button className="px-2 py-1 text-xs rounded bg-red-600 hover:bg-red-500 text-white" onClick={() => remove(l)}>
                         Confirm delete
                       </button>
                       <button className={btnCls} onClick={() => setConfirmDeleteId(null)}>Cancel</button>

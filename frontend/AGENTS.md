@@ -131,6 +131,8 @@ can't silently diverge.
 
 Authored **dark-first** with Tailwind `slate` plus accents. The light theme is derived by remapping `--color-<name>-<shade>` variables under a `.light` root class in `src/index.css` (regenerate with `node scripts/gen-light-theme.mjs` after a Tailwind upgrade). Prefer `slate`/accent utilities over hardcoded hex, and don't add per-component `dark:` variants. `src/stores/theme.ts` persists the choice; an inline script in `index.html` applies the class before first paint.
 
+**Contrast rule:** `white`/`black` are not remapped, and shades 50–400 / 700–900 flip while 500/600 stay put. So never put `text-white` on slate/neutral fills or on any -700/-800/-900 fill (it becomes white-on-pastel in light mode). Use `text-slate-50` (it flips) on slate fills, and keep `text-white` only on saturated -500/-600 fills. Avoid `hover:bg-slate-600` behind flipping text (600 does not flip). Never stack `text-white` with another text colour on one element (CSS order wins, not class order). `src/theme/textOnFill.test.ts` and `e2e/contrast.spec.ts` (axe `color-contrast`, both themes) enforce this.
+
 ## State Management Pattern
 
 Zustand stores own server state. Components call store actions which call `client.ts`, then update state on success; WS events from `ws.ts` also feed the stores (no polling). Sequence fetches and merge WS updates as in ADR 0034.

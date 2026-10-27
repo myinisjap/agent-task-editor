@@ -7,7 +7,7 @@ interface BottomTabBarProps {
 
 const tabClassName = ({ isActive }: { isActive: boolean }) =>
   `flex-1 min-h-[3.5rem] min-w-[44px] flex flex-col items-center justify-center gap-0.5 text-xs font-medium transition-colors ${
-    isActive ? 'text-white bg-slate-800' : 'text-slate-400 hover:text-slate-100'
+    isActive ? 'text-slate-50 bg-slate-800' : 'text-slate-400 hover:text-slate-100'
   }`
 
 /** Phone-only fixed bottom navigation. Hidden at md and up (the sidebar takes over). */

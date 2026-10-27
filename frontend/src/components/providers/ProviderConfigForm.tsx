@@ -202,7 +202,7 @@ export default function ProviderConfigForm({
           <button
             onClick={onDelete}
             disabled={deleting}
-            className="px-5 py-2 text-sm font-medium rounded bg-red-800 hover:bg-red-700 text-white disabled:opacity-50"
+            className="px-5 py-2 text-sm font-medium rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-50"
           >
             {deleting ? 'Deleting…' : 'Delete'}
           </button>

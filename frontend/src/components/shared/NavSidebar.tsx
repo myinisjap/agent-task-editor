@@ -119,7 +119,7 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
   const linkClassName = ({ isActive }: { isActive: boolean }) =>
     `px-3 py-2 rounded-md text-sm font-medium transition-colors ${
       isActive
-        ? 'bg-slate-700 text-white'
+        ? 'bg-slate-700 text-slate-50'
         : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800'
     }`
 

@@ -154,7 +154,7 @@ export default function TaskActions({
           <button
             onClick={onReject}
             disabled={actionPending || (!rejectNote.trim() && openCommentsCount === 0)}
-            className="px-4 py-1.5 max-md:min-h-[44px] text-xs font-medium rounded bg-red-700 hover:bg-red-600 text-white disabled:opacity-50"
+            className="px-4 py-1.5 max-md:min-h-[44px] text-xs font-medium rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-50"
           >
             Reject
           </button>
