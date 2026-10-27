@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, type ProviderCheck } from '../../api/client'
+import { useHealthStore } from '../../stores/health'
+import { visibleIssues } from '../../lib/healthTiers'
 import { useTasksStore } from '../../stores/tasks'
 import { useSetupStatus } from '../../lib/useSetupStatus'
 import { ONBOARDING_DISMISSED_KEY, readOnboardingDismissed } from '../../lib/setupStatus'
@@ -12,13 +13,6 @@ type Step = {
   complete: boolean
   to: string
   linkLabel: string
-  checkIds: string[]
-}
-
-const STATUS_STYLES: Record<ProviderCheck['status'], string> = {
-  ok: '',
-  warn: 'bg-yellow-900/40 border-yellow-700 text-yellow-200',
-  error: 'bg-red-900/40 border-red-700 text-red-200',
 }
 
 export default function OnboardingChecklist() {
@@ -30,7 +24,8 @@ export default function OnboardingChecklist() {
   // on unrelated store field changes (loading/reqId/etc.).
   const tasksLoaded = useTasksStore((s) => s.loaded)
   const setup = useSetupStatus()
-  const [checks, setChecks] = useState<ProviderCheck[]>([])
+  const checks = useHealthStore((s) => s.checks)
+  const snoozed = useHealthStore((s) => s.snoozed)
   const [dismissed, setDismissed] = useState<boolean>(readOnboardingDismissed)
   // All store data starts out empty until the first fetch resolves, which
   // would otherwise make every step look incomplete for a frame on each
@@ -47,7 +42,7 @@ export default function OnboardingChecklist() {
     refreshing.current = true
     Promise.allSettled([
       setup.refresh(),
-      api.health.providers().then((r) => setChecks(r.checks ?? [])).catch(() => setChecks([])),
+      useHealthStore.getState().fetch(),
     ]).finally(() => {
       refreshing.current = false
       setInitialLoadDone(true)
@@ -76,8 +71,6 @@ export default function OnboardingChecklist() {
     setDismissed(true)
   }
 
-  const checksFor = (ids: string[]) => checks.filter((c) => ids.includes(c.id) && c.status !== 'ok')
-
   const steps: Step[] = [
     {
       key: 'repo',
@@ -85,7 +78,6 @@ export default function OnboardingChecklist() {
       complete: setup.hasRepo,
       to: '/repos',
       linkLabel: 'Add a repo →',
-      checkIds: ['repo_base_dir', 'gh_auth'],
     },
     {
       key: 'provider',
@@ -93,7 +85,6 @@ export default function OnboardingChecklist() {
       complete: setup.hasProvider,
       to: '/settings/providers',
       linkLabel: 'Configure a provider →',
-      checkIds: ['claude_cli', 'mcp_sidecar'],
     },
     {
       key: 'agent',
@@ -101,7 +92,6 @@ export default function OnboardingChecklist() {
       complete: setup.staffed,
       to: '/pipeline/agents',
       linkLabel: 'Set up agents manually →',
-      checkIds: [],
     },
     {
       key: 'task',
@@ -109,16 +99,16 @@ export default function OnboardingChecklist() {
       complete: setup.hasTask,
       to: '/board',
       linkLabel: 'Use "+ Add task" below →',
-      checkIds: [],
     },
   ]
 
   const allComplete = steps.every((s) => s.complete)
 
-  // Health problems are surfaced app-wide by HealthWarningBanner, so hiding
-  // the completed checklist no longer hides a failing check.
+  // Health problems are surfaced app-wide (StatusBanner / Settings dot), so
+  // hiding the completed checklist no longer hides a failing check.
   if (dismissed || !initialLoadDone || !tasksLoaded || allComplete) return null
 
+  const issueCount = visibleIssues(checks, snoozed).length
   const firstIncompleteKey = steps.find((s) => !s.complete)?.key
 
   return (
@@ -134,7 +124,6 @@ export default function OnboardingChecklist() {
       </div>
       <ul className="space-y-2">
         {steps.map((step) => {
-          const relevantChecks = checksFor(step.checkIds)
           const isNext = step.key === firstIncompleteKey
           return (
             <li key={step.key} className="text-sm">
@@ -154,24 +143,18 @@ export default function OnboardingChecklist() {
               {step.key === 'agent' && !step.complete && (
                 <StaffAgentsButton missingLabels={setup.missingAgentLabels} />
               )}
-              {relevantChecks.length > 0 && (
-                <div className="mt-1 ml-6 space-y-1">
-                  {relevantChecks.map((check) => (
-                    <div
-                      key={check.id}
-                      className={`text-xs border rounded px-2 py-1 ${STATUS_STYLES[check.status]}`}
-                    >
-                      <span className="font-medium">{check.name}: </span>
-                      <span>{check.detail}</span>
-                      {check.hint && <span className="opacity-80"> — {check.hint}</span>}
-                    </div>
-                  ))}
-                </div>
-              )}
             </li>
           )
         })}
       </ul>
+      {issueCount > 0 && (
+        <p data-testid="onboarding-health-summary" className="mt-3 text-xs text-slate-400">
+          {issueCount} setup {issueCount === 1 ? 'issue' : 'issues'} ·{' '}
+          <Link to="/settings/health" className="text-indigo-400 hover:text-indigo-300 underline">
+            View health
+          </Link>
+        </p>
+      )}
     </div>
   )
 }
