@@ -150,6 +150,9 @@ With `issue_sync_update_policy: always`, an edit to the source issue made *after
 ### `DELETE /tasks/{id}/source-update`
 Discards the held source-issue edit without applying it. The same upstream text is not held again; a further edit to the issue is. Returns the task. `404` / `409` as above.
 
+### `GET /tasks/{id}/human-decisions`
+Returns the human replies to the task's `waiting_human` runs, oldest first (replied rows only; unanswered questions are excluded). Each item has `run_id`, `label`, `escalation_reason`, `question`, `reply`, `replied_at`, `asked_at` and `agent_name` (empty if the agent config was deleted). `404` if the task does not exist.
+
 ### `GET /tasks/{id}/label-history`
 Returns the task's label-transition audit trail (`task_label_history`), oldest first:
 

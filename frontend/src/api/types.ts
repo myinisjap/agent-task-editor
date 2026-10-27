@@ -1559,6 +1559,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/human-decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a task's human replies to waiting_human runs
+         * @description Replied decisions only (question-only rows are excluded), oldest first. These are the same replies shown to later runs under HUMAN DECISIONS ON THIS TASK.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskHumanDecision"][];
+                    };
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/runs": {
         parameters: {
             query?: never;
@@ -6094,6 +6141,20 @@ export interface components {
              * @description When this row was ingested
              */
             created_at: string;
+        };
+        /** @description A human reply to a waiting_human run, shown to later runs under HUMAN DECISIONS ON THIS TASK. Only replied rows are returned. */
+        TaskHumanDecision: {
+            run_id: string;
+            label: string;
+            escalation_reason: string;
+            question: string;
+            reply: string | null;
+            /** Format: date-time */
+            replied_at: string | null;
+            /** Format: date-time */
+            asked_at: string;
+            /** @description Empty when the agent config was deleted */
+            agent_name: string;
         };
         AgentRun: {
             id: string;
