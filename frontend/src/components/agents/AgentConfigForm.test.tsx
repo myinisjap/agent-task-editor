@@ -279,3 +279,39 @@ describe('AgentConfigForm fallback providers', () => {
     expect(setForm.mock.calls.length).toBe(2)
   })
 })
+
+describe('AgentConfigForm escalation ladder', () => {
+  it('adds a rung via setForm updater', () => {
+    const setForm = vi.fn()
+    render(
+      <MemoryRouter>
+        <AgentConfigForm
+          selected={null}
+          form={baseForm()}
+          setForm={setForm}
+          availableLabels={[]}
+          providerConfigs={[providerConfig('pc-1', 'claude')]}
+          claudeOptions={null}
+          saving={false}
+          deleting={false}
+          onSave={vi.fn()}
+          onDelete={vi.fn()}
+          onToggleEnabled={vi.fn()}
+        />
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByText('Add rung'))
+    const updater = setForm.mock.calls[0][0] as (f: FormState) => FormState
+    expect(updater(baseForm()).escalation_ladder).toEqual([{ provider_config_id: 'pc-1', effort: '' }])
+  })
+
+  it('renders existing rungs with reorder and remove controls', () => {
+    renderForm(
+      baseForm({ escalation_ladder: [{ provider_config_id: 'pc-1', effort: 'max' }, { provider_config_id: 'pc-1' }] }),
+      [providerConfig('pc-1', 'claude')],
+    )
+    expect(screen.getByLabelText('Rung 1 effort')).toHaveValue('max')
+    expect(screen.getByLabelText('Move rung 2 up')).toBeEnabled()
+    expect(screen.getByLabelText('Remove rung 2')).toBeInTheDocument()
+  })
+})

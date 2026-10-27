@@ -24,6 +24,7 @@ vi.mock('../api/client', async () => {
         reviewComments: vi.fn().mockResolvedValue([]),
         diff: vi.fn().mockResolvedValue({ branch: 'main', diff: '' }),
         verifications: vi.fn().mockResolvedValue([]),
+        reviewBrief: vi.fn().mockResolvedValue({ human_gate: false }),
         runLogs: vi.fn().mockResolvedValue({ items: [], hasMore: false, prevCursor: null }),
       },
       workflows: {

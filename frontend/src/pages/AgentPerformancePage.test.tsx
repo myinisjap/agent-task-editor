@@ -150,4 +150,20 @@ describe('AgentPerformancePage', () => {
     await waitFor(() => expect(screen.getByText('100%')).toBeInTheDocument())
     expect(screen.getByText('(n=2)')).toBeInTheDocument()
   })
+
+  it('shows finishing-rung stats for laddered configs', async () => {
+    outcomeQualityMock.mockResolvedValue({
+      configs: [
+        {
+          ...outcomeQuality.configs[0],
+          ladder_rungs: [
+            { rung: 0, tasks_done: 3, avg_cost_to_done_usd: 0.5 },
+            { rung: 1, tasks_done: 1, avg_cost_to_done_usd: 2 },
+          ],
+        },
+      ],
+    })
+    render(<AgentPerformancePage />)
+    await waitFor(() => expect(screen.getByText(/Finished by rung: r0 ×3 \(\$0.5000 avg\) · r1 ×1/)).toBeInTheDocument())
+  })
 })

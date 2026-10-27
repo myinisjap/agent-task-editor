@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { api, type Task, type AgentRun, type TaskLabelHistoryEntry, type TaskSourceComment, type Workflow, type Repo } from '../api/client'
 import { wsClient } from '../api/ws'
 import { useAgentsStore } from '../stores/agents'
+import { useProviderConfigsStore } from '../stores/providerConfigs'
 import DependenciesPanel from '../components/DependenciesPanel'
 import SubtasksPanel from '../components/SubtasksPanel'
 import TaskHeader from '../components/task-detail/TaskHeader'
@@ -15,6 +16,7 @@ import SourceUpdateNotice from '../components/task-detail/SourceUpdateNotice'
 import SourceCommentsList from '../components/task-detail/SourceCommentsList'
 import RunLogPane from '../components/task-detail/RunLogPane'
 import DiffReviewPane from '../components/task-detail/DiffReviewPane'
+import ReviewBriefCard from '../components/task-detail/ReviewBriefCard'
 import { useDiffComments } from '../components/task-detail/useDiffComments'
 import NewTaskModal from '../components/board/NewTaskModal'
 import HelpModal from '../components/shared/HelpModal'
@@ -60,6 +62,7 @@ export default function TaskDetailPage() {
   const [costWarning, setCostWarning] = useState<{ spentUsd: number; budgetUsd: number } | null>(null)
   const [verificationKey, setVerificationKey] = useState(0)
   const { configs: agentConfigs, fetch: fetchAgents } = useAgentsStore()
+  const { configs: providerConfigs, fetch: fetchProviderConfigs } = useProviderConfigsStore()
   const { diffComments, openComments, refreshComments, handleAddComment, handleRemoveComment, handleReopenComment } = useDiffComments(id)
 
   // Tracks the task id this page instance currently "owns". React Router
@@ -113,7 +116,8 @@ export default function TaskDetailPage() {
   // Fetch agent configs for name lookup
   useEffect(() => {
     fetchAgents()
-  }, [fetchAgents])
+    fetchProviderConfigs()
+  }, [fetchAgents, fetchProviderConfigs])
 
   // Load repos list for the edit form
   useEffect(() => {
@@ -236,6 +240,9 @@ export default function TaskDetailPage() {
   const isHumanGateLabel = task
     ? workflow?.transitions?.some((t) => t.from_label === task.label && t.trigger_type === 'human') ?? false
     : false
+
+  const showBrief = isHumanGateLabel && !needsHuman
+  const briefKey = `${task?.label ?? ''}:${task?.updated_at ?? ''}:${verificationKey}`
 
   const humanActions = humanActionsFor(workflow ?? undefined, task?.label)
 
@@ -486,6 +493,7 @@ export default function TaskDetailPage() {
         {/* Overview tab */}
         {activeTab === 'overview' && (
           <div className="h-full overflow-y-auto overflow-x-hidden p-3 md:p-5 flex flex-col gap-4 min-w-0">
+            {showBrief && <ReviewBriefCard taskId={task?.id} refreshKey={briefKey} />}
             <TaskHeader
               task={task}
               repos={repos}
@@ -539,6 +547,7 @@ export default function TaskDetailPage() {
             <RunHistoryList
               runs={runs}
               agentConfigs={agentConfigs}
+              providerConfigs={providerConfigs}
               selectedRun={selectedRun}
               onSelectRun={handleSelectRun}
               isRunning={!!isRunning}
@@ -579,6 +588,8 @@ export default function TaskDetailPage() {
             onRemoveComment={handleRemoveComment}
             onReopenComment={handleReopenComment}
             verificationRefreshKey={verificationKey}
+            showBrief={showBrief}
+            briefRefreshKey={briefKey}
           />
         )}
       </div>

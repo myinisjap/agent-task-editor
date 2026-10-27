@@ -4,6 +4,7 @@ export const EMPTY: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enab
   name: '',
   provider_config_id: '',
   fallback_provider_config_ids: [],
+  escalation_ladder: [],
   system_prompt: '',
   labels: '[]',
   max_tokens: 8192,
@@ -53,7 +54,8 @@ Steps:
 2. Review the relevant code changes for correctness, completeness against the task, and obvious issues. Rate each issue you find by severity: low (minor style/nits), medium, high, or critical.
 3. Call mcp__task-editor__update_task_notes with your review findings, each tagged with its severity (use append:true).
 4. Call mcp__task-editor__signal_complete with outcome='success' only if the work is correct, does what the task asked, and has no issues rated medium or above. Any medium, high, or critical issue is a 'failure'. Low-severity style nits alone do not fail the review — note them but pass.
-5. If the review raises a question only a human can settle (e.g. a product/design tradeoff), call mcp__task-editor__request_human instead.`
+5. If the review raises a question only a human can settle (e.g. a product/design tradeoff), call mcp__task-editor__request_human instead.
+6. Before signalling, call mcp__task-editor__store_info with exactly four headings: **Changed**, **Risks**, **Verified**, **Not checked** (one or two bullets each).`
 
 const WORK_PROMPT = `You are an implementation agent. Your job is to implement the plan written by the planning agent.
 
@@ -69,7 +71,7 @@ Steps:
 // workflow behavior (system prompt, labels, retry policy) but the caller must
 // still choose which ProviderConfig (provider/model/API key) the resulting
 // agent config uses; see AgentConfigPage's applyTemplate.
-export const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config' | 'provider_config_id' | 'fallback_provider_config_ids'>> = [
+export const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config' | 'provider_config_id' | 'fallback_provider_config_ids' | 'escalation_ladder'>> = [
   {
     name: 'Planner',
     system_prompt: PLAN_PROMPT,

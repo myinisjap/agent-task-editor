@@ -143,7 +143,8 @@ SELECT ar.id AS run_id,
        ar.agent_config_id AS agent_config_id,
        ar.status AS status,
        CAST(ar.cost_usd AS REAL) AS cost_usd,
-       ar.created_at AS created_at
+       ar.created_at AS created_at,
+       ar.ladder_rung AS ladder_rung
 FROM agent_runs ar
 ORDER BY ar.task_id, ar.created_at ASC, ar.id ASC
 `
@@ -155,6 +156,7 @@ type ListOutcomeQualityRunsRow struct {
 	Status        string    `json:"status"`
 	CostUsd       float64   `json:"cost_usd"`
 	CreatedAt     time.Time `json:"created_at"`
+	LadderRung    *int64    `json:"ladder_rung"`
 }
 
 // Every agent_runs row across all tasks, ordered so a single sequential
@@ -180,6 +182,7 @@ func (q *Queries) ListOutcomeQualityRuns(ctx context.Context) ([]ListOutcomeQual
 			&i.Status,
 			&i.CostUsd,
 			&i.CreatedAt,
+			&i.LadderRung,
 		); err != nil {
 			return nil, err
 		}

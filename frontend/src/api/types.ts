@@ -1644,6 +1644,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/review-brief": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Review brief for a task
+         * @description Deterministic risk flags, change summary, latest verification, run/rework/cost totals and the latest agent summary. Diff-derived parts are cached per branch head. Advisory only; no LLM calls.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The review brief. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReviewBrief"];
+                    };
+                };
+                /** @description Task not found. */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/runs/{run_id}": {
         parameters: {
             query?: never;
@@ -5312,6 +5360,75 @@ export interface components {
              * @description When the task started needing a human; the list is sorted by this ascending.
              */
             since: string;
+            /** @description Review-brief flag codes; present only for human_gate items whose branch diff could be computed and raised at least one flag. */
+            risk_flags?: components["schemas"]["RiskFlagCode"][];
+        };
+        /**
+         * @description Deterministic, advisory risk flag computed from the task's branch diff. migration - a migrations/ path, a .sql file named like schema, or DDL (CREATE/ALTER/DROP TABLE|INDEX|VIEW|TRIGGER) in a .sql file. auth_or_security - path contains auth, oauth, token, secret, middleware, crypto, password, credential, jwt, csrf, cors, permission, security or session, or a .env* file. dependencies - manifests/lockfiles (go.mod, package.json, requirements*.txt, Cargo.*, ...) or a Dockerfile FROM change. tests_removed - a test file deleted, net test functions removed, or skip/only markers added. ci_config - .github/workflows, .gitea/workflows or .gitlab-ci.yml. large_change - more than 800 changed lines (lockfiles/generated excluded) or more than 25 files. outside_plan_scope - the plan in agent_notes lists files and the diff touches others (skipped when the plan has no file list).
+         * @enum {string}
+         */
+        RiskFlagCode: "migration" | "auth_or_security" | "dependencies" | "tests_removed" | "ci_config" | "large_change" | "outside_plan_scope";
+        RiskFlag: {
+            code: components["schemas"]["RiskFlagCode"];
+            /** @description Human-readable explanation of why the flag fired. */
+            reason: string;
+            /** @description Offending files (at most 10); empty for large_change. */
+            files: string[];
+        };
+        /** @description Deterministic summary shown above the diff when a task is waiting on a human. No LLM is involved; flags are advisory and never approve anything. */
+        ReviewBrief: {
+            /** @description Whether the task's label is currently a human gate. */
+            human_gate: boolean;
+            changed: {
+                files: number;
+                additions: number;
+                deletions: number;
+                /** @description Up to 10 files with the most churn. */
+                top_files: {
+                    path: string;
+                    /** @enum {string} */
+                    status: "added" | "modified" | "deleted" | "renamed";
+                    additions: number;
+                    deletions: number;
+                }[];
+            };
+            risk_flags: components["schemas"]["RiskFlag"][];
+            /** @description Latest verify-command result; null when none ran. */
+            verification: {
+                status: string;
+                command: string;
+                exit_code: number | null;
+                duration_ms: number;
+                /** @description Last ~20 lines (at most 2000 chars) of output. */
+                output_tail: string;
+                truncated: boolean;
+                /** Format: date-time */
+                created_at: string;
+            } | null;
+            runs: {
+                total: number;
+                failed: number;
+                /** @description Transitions into a label the task already visited. */
+                rework_loops: number;
+                cost_usd: number;
+                /** @description True when some run's cost could not be priced. */
+                cost_unknown: boolean;
+            };
+            /** @description Latest store_info from a run (first 1500 chars), else the tail of agent_notes; null when both are empty. */
+            agent_summary: {
+                /** @enum {string} */
+                source: "stored_info" | "agent_notes";
+                run_id: string;
+                agent_name: string;
+                text: string;
+                truncated: boolean;
+            } | null;
+            /** @description False when the task has no branch or it cannot be resolved. */
+            diff_available: boolean;
+            /** @description The diff exceeded the size limit; numbers are best effort. */
+            truncated: boolean;
+            /** Format: date-time */
+            computed_at: string;
         };
         /** @description The provider/model/API-key (env vars) triple, split out of AgentConfig so it can be shared/reused by chat sessions and agent configs alike. */
         ProviderConfig: {
@@ -5770,6 +5887,17 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        EscalationRung: {
+            /** @description Existing provider config used on this rung. */
+            provider_config_id: string;
+            /**
+             * @description Effort for this rung; empty inherits the agent config's effort.
+             * @enum {string}
+             */
+            effort?: "" | "low" | "medium" | "high" | "xhigh" | "max";
+            /** @description Tried after the rung provider when it is rate-limited or paused, before the agent's own provider list. */
+            fallback_provider_config_ids?: string[];
+        };
         AgentConfig: {
             id: string;
             name: string;
@@ -5779,6 +5907,8 @@ export interface components {
             readonly provider_config?: components["schemas"]["ProviderConfig"];
             /** @description Ordered fallback providers, tried after provider_config_id when an earlier one's account is rate-limited (or its provider is paused). Each must be an existing provider config, distinct, and not the primary. Optional on write: omitted on create means none; omitted on update keeps the stored list (minus a fallback promoted to primary). Runs record which one they used in AgentRun.provider_config_id. */
             fallback_provider_config_ids?: string[];
+            /** @description Escalate on failure. Rung 0 is implicit (this config's own provider_config_id/effort); entry i is rung i+1. At dispatch the rung is the number of failed attempts on this agent's stage (consecutive failures plus review/test bounce-backs into the label), capped at the last rung; it resets when the stage is freshly entered or a human acts. Max 10 rungs. Rate-limit fallbacks still apply on top. Optional on write: omitted on create means none; omitted on update keeps the stored ladder. Runs record the rung in AgentRun.ladder_rung. */
+            escalation_ladder?: components["schemas"]["EscalationRung"][];
             /** @description Whether the dispatcher considers this config for its labels. Sent as a boolean on responses (the stored 0/1 is normalized); accepted as boolean or 0/1 on write. Absent from create request bodies (new configs start enabled unless a label conflict disables them). */
             enabled: boolean;
             system_prompt: string;
@@ -5972,6 +6102,8 @@ export interface components {
             agent_config_id: string | null;
             /** @description Provider config the run used (the agent config's primary or one of its fallbacks); null for runs from before provider fallbacks. */
             provider_config_id?: string | null;
+            /** @description Escalation ladder rung the run used (0 = the agent config's own provider/effort); null when the agent config had no ladder. */
+            ladder_rung?: number | null;
             /** @enum {string} */
             status: "pending" | "running" | "completed" | "failed" | "waiting_human" | "cancelled" | "interrupted";
             feedback?: string | null;
@@ -6239,6 +6371,13 @@ export interface components {
                 escalation_rate_percent: number;
                 /** @description true when runs_finished is below 10. */
                 low_sample_escalation: boolean;
+                /** @description Present only for configs whose runs carry a ladder_rung. Per finishing rung (the rung of the config's last laddered run on each terminal task): tasks finished and average total task cost. Independent of the last-run attribution of tasks_done. */
+                ladder_rungs?: {
+                    rung: number;
+                    tasks_done: number;
+                    /** Format: double */
+                    avg_cost_to_done_usd: number;
+                }[];
             }[];
         };
         /** @description A single provider/onboarding readiness row. */
