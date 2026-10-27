@@ -8,7 +8,7 @@
 // src/test/setup.ts. getBoundingClientRect is stubbed per-element below so
 // dnd-kit's collision detection (rectIntersection) can resolve a drop target.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import TaskBoard from './TaskBoard'
 import type { Task, WorkflowLabel } from '../../api/client'
@@ -108,13 +108,22 @@ async function dragCardToColumn(cardTitle: string, targetLabel: string) {
   // 5px) for pointer-driven drags: it activates via the React
   // `onMouseDown` handler, then listens for native `mousemove`/`mouseup`
   // events on the document to track and end the drag.
+  // Yield between steps so dnd-kit's async state updates commit before the
+  // next event; without this the drop is flaky when the machine is loaded.
+  const tick = () => act(async () => { await new Promise((r) => setTimeout(r, 0)) })
   fireEvent.mouseDown(cardEl, { clientX: 20, clientY: 20, button: 0 })
   // MouseSensor requires 5px movement before a drag "activates".
   fireEvent.mouseMove(document, { clientX: 30, clientY: 20 })
+  await tick()
   // Move over the destination column so dnd-kit's collision detection picks
   // it as the active droppable.
   fireEvent.mouseMove(document, { clientX: 500, clientY: 100 })
+  await tick()
   fireEvent.mouseUp(document, { clientX: 500, clientY: 100 })
+  await tick()
+  // dnd-kit keeps a capture-phase document click-swallower for ~50ms after a
+  // drop; wait it out so it can't eat the next click (in this or a later test).
+  await act(async () => { await new Promise((r) => setTimeout(r, 80)) })
 }
 
 describe('TaskBoard drag-to-move', () => {
