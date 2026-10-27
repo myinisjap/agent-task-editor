@@ -42,6 +42,16 @@ type AgentConfigSkill struct {
 	SkillID       string `json:"skill_id"`
 }
 
+type AgentConfigVersion struct {
+	ID            string    `json:"id"`
+	AgentConfigID string    `json:"agent_config_id"`
+	Version       int64     `json:"version"`
+	Snapshot      string    `json:"snapshot"`
+	ActorID       *string   `json:"actor_id"`
+	Note          *string   `json:"note"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
 type AgentLog struct {
 	ID         string    `json:"id"`
 	AgentRunID string    `json:"agent_run_id"`
@@ -58,26 +68,27 @@ type AgentRateLimit struct {
 }
 
 type AgentRun struct {
-	ID               string     `json:"id"`
-	TaskID           string     `json:"task_id"`
-	AgentConfigID    *string    `json:"agent_config_id"`
-	Status           string     `json:"status"`
-	Feedback         *string    `json:"feedback"`
-	StoredInfo       *string    `json:"stored_info"`
-	StartedAt        *time.Time `json:"started_at"`
-	CompletedAt      *time.Time `json:"completed_at"`
-	CreatedAt        time.Time  `json:"created_at"`
-	Notes            *string    `json:"notes"`
-	InputTokens      int64      `json:"input_tokens"`
-	OutputTokens     int64      `json:"output_tokens"`
-	CostUsd          float64    `json:"cost_usd"`
-	SessionID        string     `json:"session_id"`
-	CostUnknown      int64      `json:"cost_unknown"`
-	TurnsUsed        int64      `json:"turns_used"`
-	EscalationReason *string    `json:"escalation_reason"`
-	ProviderConfigID *string    `json:"provider_config_id"`
-	SessionCostUsd   *float64   `json:"session_cost_usd"`
-	LadderRung       *int64     `json:"ladder_rung"`
+	ID                 string     `json:"id"`
+	TaskID             string     `json:"task_id"`
+	AgentConfigID      *string    `json:"agent_config_id"`
+	Status             string     `json:"status"`
+	Feedback           *string    `json:"feedback"`
+	StoredInfo         *string    `json:"stored_info"`
+	StartedAt          *time.Time `json:"started_at"`
+	CompletedAt        *time.Time `json:"completed_at"`
+	CreatedAt          time.Time  `json:"created_at"`
+	Notes              *string    `json:"notes"`
+	InputTokens        int64      `json:"input_tokens"`
+	OutputTokens       int64      `json:"output_tokens"`
+	CostUsd            float64    `json:"cost_usd"`
+	SessionID          string     `json:"session_id"`
+	CostUnknown        int64      `json:"cost_unknown"`
+	TurnsUsed          int64      `json:"turns_used"`
+	EscalationReason   *string    `json:"escalation_reason"`
+	ProviderConfigID   *string    `json:"provider_config_id"`
+	SessionCostUsd     *float64   `json:"session_cost_usd"`
+	LadderRung         *int64     `json:"ladder_rung"`
+	AgentConfigVersion *int64     `json:"agent_config_version"`
 }
 
 type BackupSetting struct {

@@ -13,7 +13,7 @@ type AgentsState = {
   fetchModels: (provider: string) => Promise<ModelList | null>
   fetchClaudeOptions: () => Promise<void>
   create: (payload: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled'>) => Promise<{ config: AgentConfig; labelConflict?: string }>
-  update: (id: string, payload: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'> & { enabled?: boolean }) => Promise<{ config: AgentConfig; labelConflict?: string }>
+  update: (id: string, payload: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at'> & { enabled?: boolean; note?: string }) => Promise<{ config: AgentConfig; labelConflict?: string }>
   delete: (id: string) => Promise<void>
 }
 
