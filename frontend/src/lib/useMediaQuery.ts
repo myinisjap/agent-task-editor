@@ -17,3 +17,6 @@ export function useMediaQuery(query: string): boolean {
 
 /** ≥1280px: the decision-first review layout on Task Detail. */
 export const useIsWideDesktop = () => useMediaQuery('(min-width: 1280px)')
+
+/** <768px: phone layout. */
+export const useIsPhone = () => useMediaQuery('(max-width: 767px)')

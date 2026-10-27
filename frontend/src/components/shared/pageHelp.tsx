@@ -690,7 +690,16 @@ export function TaskDetailHelp() {
           On wide screens (1280px and up), a task waiting at a human gate shows{' '}
           <strong>Approve</strong> / <strong>Request changes</strong> in the header, with the
           diff (or the plan, on plan-review labels) beside the review brief, verification and
-          runs. Approve reads "Approve and open PR" when the next label opens a PR.
+          runs. Approve reads "Approve and open PR" when the next label opens a PR. On tablets the
+          brief stacks above the diff; on phones a compact brief sits at the top and
+          Approve / Request changes are pinned at the bottom.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Details</h3>
+        <p>
+          Dependencies, force move, label history and source comments live under the collapsed{' '}
+          <strong>Details</strong> toggle. Force move bypasses the workflow's rules for a stuck task.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">

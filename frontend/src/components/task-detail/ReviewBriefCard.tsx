@@ -22,9 +22,10 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 // summary" card shown while a task waits on a human (docs/workflows.md#review-brief).
 // It renders nothing while loading, on error, or when the task is not at a
 // human gate. `refreshKey` changes when the label or verification changes.
-export default function ReviewBriefCard({ taskId, refreshKey = '', hidePreview = false }: { taskId: string | undefined; refreshKey?: string | number; hidePreview?: boolean }) {
+export default function ReviewBriefCard({ taskId, refreshKey = '', hidePreview = false, compact = false }: { taskId: string | undefined; refreshKey?: string | number; hidePreview?: boolean; compact?: boolean }) {
   const [brief, setBrief] = useState<ReviewBrief | null>(null)
   const [expanded, setExpanded] = useState(false)
+  const [showFull, setShowFull] = useState(false)
 
   useEffect(() => {
     if (!taskId) return
@@ -45,6 +46,46 @@ export default function ReviewBriefCard({ taskId, refreshKey = '', hidePreview =
   if (!brief || !brief.human_gate) return null
   const { changed, runs, verification, agent_summary: summary } = brief
   const reasons = Object.fromEntries(brief.risk_flags.map((f) => [f.code, f.reason]))
+  if (compact && !showFull) {
+    return (
+      <div className="rounded border border-slate-800 bg-slate-900/60 p-3 flex flex-col gap-1.5 min-w-0" data-testid="review-brief">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-xs font-semibold text-slate-400">Review brief</h3>
+          <button type="button" className="text-xs text-slate-400 hover:text-slate-200" onClick={() => setShowFull(true)}>
+            Full brief
+          </button>
+        </div>
+        <Row label="Changed">
+          {brief.diff_available ? (
+            <span>
+              {changed.files} file{changed.files === 1 ? '' : 's'}, +{changed.additions} −{changed.deletions}
+            </span>
+          ) : (
+            <span className="text-slate-500">No branch diff yet</span>
+          )}
+        </Row>
+        <Row label="Risks">
+          {brief.risk_flags.length === 0 ? (
+            <span className="text-slate-500">No risk flags</span>
+          ) : (
+            <RiskFlagChips codes={brief.risk_flags.map((f) => f.code)} reasons={reasons} />
+          )}
+        </Row>
+        <Row label="Verified">
+          {verification ? (
+            <span
+              className={`px-2 py-0.5 text-xs font-medium rounded border ${STATUS_STYLE[verification.status as keyof typeof STATUS_STYLE]?.cls ?? ''}`}
+              data-testid="brief-verification-badge"
+            >
+              {STATUS_STYLE[verification.status as keyof typeof STATUS_STYLE]?.label ?? verification.status}
+            </span>
+          ) : (
+            <span className="text-slate-500">No verify command ran</span>
+          )}
+        </Row>
+      </div>
+    )
+  }
   const clamp = !!summary && summary.text.length > 300 && !expanded
 
   return (
