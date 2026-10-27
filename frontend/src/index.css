@@ -1,6 +1,33 @@
 @import "tailwindcss";
 
 /*
+ * Semantic design tokens (OKLCH). Dark values here (dark is the default);
+ * light overrides live in the hand-written `.light` block further down, which
+ * is separate from the generated slate remap. See components/ui/README.md.
+ */
+@theme {
+  --color-surface: oklch(0.129 0.042 264.7);
+  --color-surface-raised: oklch(0.208 0.042 265.8);
+  --color-surface-sunken: oklch(0.279 0.041 260);
+  --color-fg: oklch(0.929 0.013 255.5);
+  --color-fg-muted: oklch(0.75 0.035 257);
+  --color-fg-subtle: oklch(0.68 0.035 257);
+  --color-border: oklch(0.372 0.044 257.3);
+  --color-accent: oklch(0.51 0.23 277);
+  --color-on-accent: oklch(1 0 0);
+  --color-accent-fg: oklch(0.79 0.11 275);
+  --color-danger-solid: oklch(0.51 0.19 27);
+  --color-success: oklch(0.80 0.15 160);
+  --color-success-soft: oklch(0.30 0.06 163);
+  --color-warning: oklch(0.83 0.15 80);
+  --color-warning-soft: oklch(0.31 0.06 70);
+  --color-danger: oklch(0.75 0.15 22);
+  --color-danger-soft: oklch(0.30 0.08 20);
+  --color-info: oklch(0.78 0.12 230);
+  --color-info-soft: oklch(0.30 0.06 235);
+}
+
+/*
  * Theme system — see issue #87.
  *
  * The UI is authored dark-first with Tailwind's `slate` palette (plus accent
@@ -266,6 +293,31 @@
   --color-rose-800: oklch(89.2% 0.058 10.001);
   --color-rose-900: oklch(94.1% 0.03 12.58);
   --color-rose-950: oklch(96.9% 0.015 12.422);
+}
+
+/* Semantic token light values — hand-tuned, NOT generated. Keep this block
+   separate from the generated slate block above. Contrast is enforced by
+   src/theme/tokens.test.ts. */
+.light {
+  --color-surface: oklch(0.984 0.003 247.9);
+  --color-surface-raised: oklch(1 0 0);
+  --color-surface-sunken: oklch(0.955 0.008 250);
+  --color-fg: oklch(0.21 0.04 266);
+  --color-fg-muted: oklch(0.45 0.04 257);
+  --color-fg-subtle: oklch(0.52 0.035 257);
+  --color-border: oklch(0.869 0.022 252.9);
+  --color-accent: oklch(0.51 0.23 277);
+  --color-on-accent: oklch(1 0 0);
+  --color-accent-fg: oklch(0.46 0.2 277);
+  --color-danger-solid: oklch(0.51 0.19 27);
+  --color-success: oklch(0.45 0.11 160);
+  --color-success-soft: oklch(0.95 0.05 163);
+  --color-warning: oklch(0.48 0.11 60);
+  --color-warning-soft: oklch(0.96 0.05 90);
+  --color-danger: oklch(0.50 0.19 27);
+  --color-danger-soft: oklch(0.95 0.03 17);
+  --color-info: oklch(0.48 0.12 240);
+  --color-info-soft: oklch(0.95 0.03 236);
 }
 
 /* Enable `dark:` utility variant against the root theme class, so future

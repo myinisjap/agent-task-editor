@@ -20,6 +20,7 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Changed
+- **Design tokens and UI primitives.** Semantic OKLCH colour tokens (surface, text, border, accent, status + soft) with hand-tuned light and dark values that meet WCAG AA, plus shared Button, Badge, Card, Field and PageFrame components. Inbox, Task Detail and the sidebar use them first, so buttons, badges and cards look the same in both themes. Primary actions (including Approve) are now indigo instead of sky/emerald.
 - **Readable pipeline graph.** Pipeline → Overview and the Workflow tab preview lay the workflow out left-to-right in board column order (failure/rework edges loop above/below), with larger nodes showing the label name, agent + provider/model or Human gate, an amber "No agent" + Assign action, and Opens PR / WIP / Verify badges. Zoom is clamped so text never renders below ~12px; wide graphs pan with a hint instead of shrinking. The canvas follows the light/dark theme; phones get a vertical layout.
 
 - **Inbox keyboard review (desktop).** At ≥1280px the Inbox shows a preview pane for the selected item (review brief, files and screenshots with Approve / Request changes for Decide; the agent's question and a reply box for Answer; the failure reason and fix action for Fix setup) with an Open full page link. `j`/`k` or arrows move, `a` approves, `r` requests changes, `Enter`/`o` opens the task, `Esc` closes, `?` shows the legend; the next item is selected after an action and `?task=<id>` keeps your place on reload. Phones are unchanged.

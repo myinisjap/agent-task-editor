@@ -490,7 +490,7 @@ export default function TaskDetailPage() {
     setActiveTab('logs')
   }
 
-  if (!task) return <div className="p-6 text-slate-400">Loading…</div>
+  if (!task) return <div className="p-6 text-fg-muted">Loading…</div>
 
   const canRemember = !!task.repo_id
   const rememberRepoName = repos.find((r) => r.id === task.repo_id)?.name
@@ -641,15 +641,15 @@ export default function TaskDetailPage() {
       ) : (
       <>
       {/* Tab bar */}
-      <div className="shrink-0 flex items-center gap-2 border-b border-slate-800 px-4 pt-3 w-full overflow-x-hidden">
+      <div className="shrink-0 flex items-center gap-2 border-b border-border px-4 pt-3 w-full overflow-x-hidden">
         {tabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setActiveTab(t.id)}
             className={`flex-grow min-w-0 md:min-w-[100px] px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
               activeTab === t.id
-                ? 'bg-slate-800 text-slate-100 border-b-2 border-slate-400'
-                : 'text-slate-500 hover:text-slate-300'
+                ? 'bg-surface-raised text-accent-fg border-b-2 border-accent'
+                : 'text-fg-muted hover:text-fg'
             }`}
           >
             {t.label}
@@ -715,7 +715,7 @@ export default function TaskDetailPage() {
           (default 80%) of the effective cost budget, but not yet exhausted. See
           GET/PUT /settings/cost-warning and docs/agents.md#cost-budgets. */}
       {costWarning && (
-        <div className="mb-4 px-4 py-3 rounded-lg bg-amber-900/40 border border-amber-700 text-amber-300 text-sm">
+        <div className="mb-4 px-4 py-3 rounded-lg bg-warning-soft border border-warning/40 text-warning text-sm">
           💰 Cost warning: this task has spent ${costWarning.spentUsd.toFixed(2)} of its ${costWarning.budgetUsd.toFixed(2)} budget.
         </div>
       )}
