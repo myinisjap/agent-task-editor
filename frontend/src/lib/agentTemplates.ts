@@ -4,6 +4,7 @@ export const EMPTY: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enab
   name: '',
   provider_config_id: '',
   fallback_provider_config_ids: [],
+  escalation_ladder: [],
   system_prompt: '',
   labels: '[]',
   max_tokens: 8192,
@@ -70,7 +71,7 @@ Steps:
 // workflow behavior (system prompt, labels, retry policy) but the caller must
 // still choose which ProviderConfig (provider/model/API key) the resulting
 // agent config uses; see AgentConfigPage's applyTemplate.
-export const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config' | 'provider_config_id' | 'fallback_provider_config_ids'>> = [
+export const TEMPLATES: Array<Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config' | 'provider_config_id' | 'fallback_provider_config_ids' | 'escalation_ladder'>> = [
   {
     name: 'Planner',
     system_prompt: PLAN_PROMPT,

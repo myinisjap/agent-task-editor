@@ -68,6 +68,18 @@ export default function AgentConfigForm({
   const addableFallbacks = providerConfigs.filter(
     (pc) => pc.id !== form.provider_config_id && !fallbackIds.includes(pc.id),
   )
+  // Escalation ladder: rung 0 is the provider/effort above; entry i is rung i+1.
+  const ladder = form.escalation_ladder ?? []
+  const setLadder = (l: NonNullable<FormState['escalation_ladder']>) => setForm((f) => ({ ...f, escalation_ladder: l }))
+  const updateRung = (i: number, patch: Partial<NonNullable<FormState['escalation_ladder']>[number]>) =>
+    setLadder(ladder.map((r, k) => (k === i ? { ...r, ...patch } : r)))
+  const moveRung = (i: number, delta: number) => {
+    const l = [...ladder]
+    const j = i + delta
+    if (j < 0 || j >= l.length) return
+    ;[l[i], l[j]] = [l[j], l[i]]
+    setLadder(l)
+  }
   const providerOf = (id: string) => providerConfigs.find((pc) => pc.id === id)?.provider ?? ''
   // The primary's gaps already show next to each field; this covers the
   // fallbacks, which a task only reaches when the primary is tapped out.
@@ -179,6 +191,60 @@ export default function AgentConfigForm({
             ))}
           </select>
         </Field>
+
+        <details className="sm:col-span-2 rounded border border-slate-700 px-3 py-2" open={ladder.length > 0}>
+          <summary className="cursor-pointer text-sm text-slate-300">Advanced</summary>
+          <div className="mt-3">
+            <p className="text-sm font-medium text-slate-200">Escalate on failure</p>
+            <p className="mb-2 text-xs text-slate-500">
+              Rung 0 is the provider and effort above. After N failed attempts or review bounce-backs on this stage, the task runs on rung N (capped at the last rung). Resets when the stage is freshly entered or a human acts.
+            </p>
+            {ladder.length > 0 && (
+              <ol className="mb-2 space-y-1" aria-label="Escalation rungs">
+                {ladder.map((r, i) => {
+                  const pc = providerConfigs.find((p) => p.id === r.provider_config_id)
+                  const rungProvider = pc?.provider ?? ''
+                  const rungEffortCap = getCapability(rungProvider, 'effort')
+                  return (
+                    <li key={i} className="text-xs text-slate-300">
+                      <div className="flex items-center gap-2">
+                        <span className="w-14 text-slate-500">Rung {i + 1}</span>
+                        <select value={r.provider_config_id} onChange={(e) => updateRung(i, { provider_config_id: e.target.value })} className="input flex-1" aria-label={`Rung ${i + 1} provider`}>
+                          {!pc && <option value={r.provider_config_id}>Unknown provider config {r.provider_config_id}</option>}
+                          {providerConfigs.map((p) => (
+                            <option key={p.id} value={p.id}>{p.name} ({p.provider}{p.model ? `/${p.model}` : ''})</option>
+                          ))}
+                        </select>
+                        <select value={r.effort ?? ''} onChange={(e) => updateRung(i, { effort: e.target.value as typeof r.effort })} className="input w-32" aria-label={`Rung ${i + 1} effort`}>
+                          <option value="">Default</option>
+                          <option value="low">Low</option>
+                          <option value="medium">Medium</option>
+                          <option value="high">High</option>
+                          <option value="xhigh">Extra high</option>
+                          <option value="max">Max</option>
+                        </select>
+                        <button type="button" onClick={() => moveRung(i, -1)} disabled={i === 0} className="px-1 text-slate-400 hover:text-slate-200 disabled:opacity-30" aria-label={`Move rung ${i + 1} up`}>↑</button>
+                        <button type="button" onClick={() => moveRung(i, 1)} disabled={i === ladder.length - 1} className="px-1 text-slate-400 hover:text-slate-200 disabled:opacity-30" aria-label={`Move rung ${i + 1} down`}>↓</button>
+                        <button type="button" onClick={() => setLadder(ladder.filter((_, k) => k !== i))} className="px-1 text-slate-400 hover:text-red-400" aria-label={`Remove rung ${i + 1}`}>✕</button>
+                      </div>
+                      {r.effort && rungProvider && rungEffortCap.support !== 'full' && (
+                        <p className="mt-1 ml-16 text-xs text-amber-400">⚠️ {rungEffortCap.note ?? `Effort is not supported for the ${rungProvider} provider — this setting will be ignored.`}</p>
+                      )}
+                    </li>
+                  )
+                })}
+              </ol>
+            )}
+            <button
+              type="button"
+              onClick={() => setLadder([...ladder, { provider_config_id: form.provider_config_id, effort: '' }])}
+              disabled={!form.provider_config_id || ladder.length >= 10}
+              className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-40"
+            >
+              Add rung
+            </button>
+          </div>
+        </details>
 
         {listGaps.length > 0 && (
           <div role="alert" className="sm:col-span-2 px-3 py-2 rounded border border-amber-700/50 bg-amber-950/30 text-xs text-amber-300">

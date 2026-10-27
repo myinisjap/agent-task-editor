@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/providers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -99,11 +100,13 @@ type agentConfigView struct {
 	gen.AgentConfig
 	// FallbackProviderConfigIDs shadows the embedded JSON-text column so the
 	// API carries a real array.
-	FallbackProviderConfigIDs []string            `json:"fallback_provider_config_ids"`
-	Enabled                   bool                `json:"enabled"`
-	ResumeSessions            bool                `json:"resume_sessions"`
-	SubtasksEnabled           bool                `json:"subtasks_enabled"`
-	ProviderConfig            *gen.ProviderConfig `json:"provider_config,omitempty"`
+	FallbackProviderConfigIDs []string `json:"fallback_provider_config_ids"`
+	// EscalationLadder shadows the JSON-text column with a real array.
+	EscalationLadder []agent.LadderRung  `json:"escalation_ladder"`
+	Enabled          bool                `json:"enabled"`
+	ResumeSessions   bool                `json:"resume_sessions"`
+	SubtasksEnabled  bool                `json:"subtasks_enabled"`
+	ProviderConfig   *gen.ProviderConfig `json:"provider_config,omitempty"`
 }
 
 // safeConfig builds the response view for an agent config, looking up its
@@ -118,6 +121,7 @@ func (h *AgentsHandler) safeConfig(r *http.Request, cfg gen.AgentConfig) agentCo
 	view := agentConfigView{
 		AgentConfig:               cfg,
 		FallbackProviderConfigIDs: parseFallbackIDs(cfg.FallbackProviderConfigIds),
+		EscalationLadder:          parseLadder(cfg.EscalationLadder),
 		Enabled:                   cfg.Enabled != 0,
 		ResumeSessions:            cfg.ResumeSessions != 0,
 		SubtasksEnabled:           cfg.SubtasksEnabled != 0,
@@ -140,6 +144,53 @@ func parseFallbackIDs(raw string) []string {
 		ids = []string{}
 	}
 	return ids
+}
+
+// maxLadderRungs caps escalation_ladder length.
+const maxLadderRungs = 10
+
+// parseLadder decodes the stored escalation_ladder; never nil.
+func parseLadder(raw string) []agent.LadderRung {
+	l := agent.ParseLadder(raw)
+	if l == nil {
+		l = []agent.LadderRung{}
+	}
+	return l
+}
+
+// validateLadder checks an escalation ladder: every rung needs an existing
+// provider config, a valid effort, and distinct existing fallbacks that do not
+// repeat the rung provider. Returns the JSON to store, or a 400 message.
+func (h *AgentsHandler) validateLadder(r *http.Request, ladder []agent.LadderRung) (string, string) {
+	if len(ladder) > maxLadderRungs {
+		return "", fmt.Sprintf("escalation_ladder must have at most %d rungs", maxLadderRungs)
+	}
+	for i, rung := range ladder {
+		if rung.ProviderConfigID == "" {
+			return "", fmt.Sprintf("escalation_ladder[%d].provider_config_id is required", i)
+		}
+		if _, err := h.q.GetProviderConfig(r.Context(), rung.ProviderConfigID); err != nil {
+			return "", fmt.Sprintf("unknown provider config in escalation_ladder[%d]: %s", i, rung.ProviderConfigID)
+		}
+		if !validAgentConfigEffort[rung.Effort] {
+			return "", fmt.Sprintf("escalation_ladder[%d].effort must be one of: (empty), low, medium, high, xhigh, max", i)
+		}
+		seen := map[string]bool{rung.ProviderConfigID: true}
+		for _, id := range rung.FallbackProviderConfigIDs {
+			if id == "" || seen[id] {
+				return "", fmt.Sprintf("escalation_ladder[%d].fallback_provider_config_ids must be non-empty, distinct and not the rung provider", i)
+			}
+			seen[id] = true
+			if _, err := h.q.GetProviderConfig(r.Context(), id); err != nil {
+				return "", fmt.Sprintf("unknown provider config in escalation_ladder[%d].fallback_provider_config_ids: %s", i, id)
+			}
+		}
+	}
+	if ladder == nil {
+		ladder = []agent.LadderRung{}
+	}
+	b, _ := json.Marshal(ladder)
+	return string(b), ""
 }
 
 // validateFallbacks checks an agent config's ordered fallback providers:
@@ -240,27 +291,28 @@ func (h *AgentsHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name              string    `json:"name"`
-		ProviderConfigID  string    `json:"provider_config_id"`
-		SystemPrompt      string    `json:"system_prompt"`
-		Labels            string    `json:"labels"`
-		MaxTokens         int64     `json:"max_tokens"`
-		TimeoutSecs       int64     `json:"timeout_secs"`
-		MaxTurns          int64     `json:"max_turns"`
-		EnabledPlugins    string    `json:"enabled_plugins"`
-		EnabledMCPServers string    `json:"enabled_mcp_servers"`
-		CommandAllowlist  string    `json:"command_allowlist"`
-		CommandDenylist   string    `json:"command_denylist"`
-		MaxRetries        *int64    `json:"max_retries"`
-		RetryBackoffSecs  *int64    `json:"retry_backoff_secs"`
-		ResumeSessions    *flexBool `json:"resume_sessions"`
-		SubtasksEnabled   *flexBool `json:"subtasks_enabled"`
-		MaxSubtasks       *int64    `json:"max_subtasks"`
-		MaxCostUsd        *float64  `json:"max_cost_usd"`
-		Priority          *int64    `json:"priority"`
-		Effort            *string   `json:"effort"`
-		PermissionMode    *string   `json:"permission_mode"`
-		FallbackIDs       []string  `json:"fallback_provider_config_ids"`
+		Name              string             `json:"name"`
+		ProviderConfigID  string             `json:"provider_config_id"`
+		SystemPrompt      string             `json:"system_prompt"`
+		Labels            string             `json:"labels"`
+		MaxTokens         int64              `json:"max_tokens"`
+		TimeoutSecs       int64              `json:"timeout_secs"`
+		MaxTurns          int64              `json:"max_turns"`
+		EnabledPlugins    string             `json:"enabled_plugins"`
+		EnabledMCPServers string             `json:"enabled_mcp_servers"`
+		CommandAllowlist  string             `json:"command_allowlist"`
+		CommandDenylist   string             `json:"command_denylist"`
+		MaxRetries        *int64             `json:"max_retries"`
+		RetryBackoffSecs  *int64             `json:"retry_backoff_secs"`
+		ResumeSessions    *flexBool          `json:"resume_sessions"`
+		SubtasksEnabled   *flexBool          `json:"subtasks_enabled"`
+		MaxSubtasks       *int64             `json:"max_subtasks"`
+		MaxCostUsd        *float64           `json:"max_cost_usd"`
+		Priority          *int64             `json:"priority"`
+		Effort            *string            `json:"effort"`
+		PermissionMode    *string            `json:"permission_mode"`
+		FallbackIDs       []string           `json:"fallback_provider_config_ids"`
+		EscalationLadder  []agent.LadderRung `json:"escalation_ladder"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -286,6 +338,11 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fallbacks, msg := h.validateFallbacks(r, body.ProviderConfigID, body.FallbackIDs)
+	if msg != "" {
+		Err(w, http.StatusBadRequest, msg)
+		return
+	}
+	ladderJSON, msg := h.validateLadder(r, body.EscalationLadder)
 	if msg != "" {
 		Err(w, http.StatusBadRequest, msg)
 		return
@@ -386,6 +443,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Effort:                    effort,
 		PermissionMode:            permissionMode,
 		FallbackProviderConfigIds: fallbacks,
+		EscalationLadder:          ladderJSON,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -407,6 +465,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			Effort:                    cfg.Effort,
 			PermissionMode:            cfg.PermissionMode,
 			FallbackProviderConfigIds: cfg.FallbackProviderConfigIds,
+			EscalationLadder:          cfg.EscalationLadder,
 			Enabled:                   0, ID: cfg.ID,
 		})
 		if err != nil {
@@ -423,28 +482,29 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name              string    `json:"name"`
-		ProviderConfigID  string    `json:"provider_config_id"`
-		SystemPrompt      string    `json:"system_prompt"`
-		Labels            string    `json:"labels"`
-		MaxTokens         int64     `json:"max_tokens"`
-		TimeoutSecs       int64     `json:"timeout_secs"`
-		MaxTurns          int64     `json:"max_turns"`
-		Enabled           *flexBool `json:"enabled"`
-		EnabledPlugins    string    `json:"enabled_plugins"`
-		EnabledMCPServers string    `json:"enabled_mcp_servers"`
-		CommandAllowlist  string    `json:"command_allowlist"`
-		CommandDenylist   string    `json:"command_denylist"`
-		MaxRetries        *int64    `json:"max_retries"`
-		RetryBackoffSecs  *int64    `json:"retry_backoff_secs"`
-		ResumeSessions    *flexBool `json:"resume_sessions"`
-		SubtasksEnabled   *flexBool `json:"subtasks_enabled"`
-		MaxSubtasks       *int64    `json:"max_subtasks"`
-		MaxCostUsd        *float64  `json:"max_cost_usd"`
-		Priority          *int64    `json:"priority"`
-		Effort            *string   `json:"effort"`
-		PermissionMode    *string   `json:"permission_mode"`
-		FallbackIDs       *[]string `json:"fallback_provider_config_ids"`
+		Name              string              `json:"name"`
+		ProviderConfigID  string              `json:"provider_config_id"`
+		SystemPrompt      string              `json:"system_prompt"`
+		Labels            string              `json:"labels"`
+		MaxTokens         int64               `json:"max_tokens"`
+		TimeoutSecs       int64               `json:"timeout_secs"`
+		MaxTurns          int64               `json:"max_turns"`
+		Enabled           *flexBool           `json:"enabled"`
+		EnabledPlugins    string              `json:"enabled_plugins"`
+		EnabledMCPServers string              `json:"enabled_mcp_servers"`
+		CommandAllowlist  string              `json:"command_allowlist"`
+		CommandDenylist   string              `json:"command_denylist"`
+		MaxRetries        *int64              `json:"max_retries"`
+		RetryBackoffSecs  *int64              `json:"retry_backoff_secs"`
+		ResumeSessions    *flexBool           `json:"resume_sessions"`
+		SubtasksEnabled   *flexBool           `json:"subtasks_enabled"`
+		MaxSubtasks       *int64              `json:"max_subtasks"`
+		MaxCostUsd        *float64            `json:"max_cost_usd"`
+		Priority          *int64              `json:"priority"`
+		Effort            *string             `json:"effort"`
+		PermissionMode    *string             `json:"permission_mode"`
+		FallbackIDs       *[]string           `json:"fallback_provider_config_ids"`
+		EscalationLadder  *[]agent.LadderRung `json:"escalation_ladder"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -516,6 +576,14 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if msg != "" {
 		Err(w, http.StatusBadRequest, msg)
 		return
+	}
+	ladderJSON := existing.EscalationLadder
+	if body.EscalationLadder != nil {
+		ladderJSON, msg = h.validateLadder(r, *body.EscalationLadder)
+		if msg != "" {
+			Err(w, http.StatusBadRequest, msg)
+			return
+		}
 	}
 	if body.EnabledPlugins == "" {
 		body.EnabledPlugins = existing.EnabledPlugins
@@ -597,6 +665,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Effort:                    effort,
 		PermissionMode:            permissionMode,
 		FallbackProviderConfigIds: fallbacks,
+		EscalationLadder:          ladderJSON,
 		ID:                        chi.URLParam(r, "id"),
 	})
 	if err != nil {

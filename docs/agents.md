@@ -16,6 +16,7 @@ references by id. See [Provider Configs](#provider-configs) below.
 | `name` | Human-readable name |
 | `provider_config_id` | References a [Provider Config](#provider-configs) (provider/model/env), managed separately via `/api/v1/provider-configs`. Required. `GET`/list responses embed the resolved config as `provider_config` for convenience. |
 | `fallback_provider_config_ids` | Ordered list of further provider configs to try, after `provider_config_id`, when the ones before them are at their usage limit or paused. Default `[]` (primary only). Each must exist, be distinct and differ from the primary; changing the primary to one in the list drops it from the list. See [Provider list](#provider-list). |
+| `escalation_ladder` | Ordered rungs used when a task keeps failing on this agent's stage. Default `[]` (never escalate). See [Escalation ladder](#escalation-ladder). |
 | `labels` | JSON array of label names this agent handles (e.g. `["plan","work"]`) |
 | `system_prompt` | Custom system instructions; appended with MCP tool guidance automatically |
 | `max_tokens` | Maximum tokens per response (0 = provider default) |
@@ -32,6 +33,23 @@ references by id. See [Provider Configs](#provider-configs) below.
 | `max_subtasks` | Per-parent cap on children a run may create. Default 10. |
 | `max_cost_usd` | Advisory per-task cost budget cap in USD (cumulative across all runs of a task, not per run), checked by the dispatcher before each dispatch. `0` disables the cap (unlimited). Default `0`. On `claude`/`qwen_code`, also enforced mid-run as a kill switch that cancels an in-flight run over budget. See [Cost Budgets](#cost-budgets) below. |
 | `effort` | Optional reasoning effort level: `""` (default/unset), `low`, `medium`, `high`, `xhigh`, or `max`. **`claude` (full), `codex_cli` (partial, clamped), and `opencode` (partial, pass-through via `--variant`)** — see [Effort](#effort) below. Ignored by `qwen_code`. |
+
+## Escalation ladder
+
+Start cheap, escalate on failure. `escalation_ladder` is a JSON array of rungs `{provider_config_id, effort?, fallback_provider_config_ids?}`. **Rung 0 is implicit** — the agent's own `provider_config_id`, `effort` and `fallback_provider_config_ids`; `escalation_ladder[i]` is rung `i+1`. A rung's empty `effort` inherits the agent's. An empty ladder (the default) behaves exactly as before. Max 10 rungs; repeating a provider across rungs is fine (same model, higher effort).
+
+**Rung selection** (at dispatch): `failed attempts = consecutive_failure_count + rework bounces`, rung = `min(failed attempts, len(ladder))`.
+
+- `consecutive_failure_count` is the existing circuit-breaker counter: failed runs, failed verify commands and rejected transitions in the current label. It resets on any label transition, human reply or human rerun.
+- Rework bounces are failure-path transitions back into this agent's label (e.g. review → work), counted newest to oldest. The count resets at a human-triggered transition or when the stage was freshly entered by a non-failure transition.
+- Because the breaker stops at 3 in-label failures and the rework-loop guard at 3 bounces, rungs beyond about 3 are rarely reachable.
+
+**Rate limits** still apply on top: for rung r ≥ 1 the providers tried are the rung's provider, its `fallback_provider_config_ids`, then the agent's own provider list. The rung stays r; its effort applies to whichever provider is used.
+
+**Sessions**: resume is keyed on the provider config, so moving to a different provider config starts a fresh session, while a rung that only changes effort on the same provider config may resume. A human reply keeps the asking run's rung and provider.
+
+**Visibility**: each run records `ladder_rung` (NULL for agents without a ladder), shown in Task Detail's run list (e.g. `rung 2: opus / max`) and summarised on Agent Performance as "Finished by rung". The UI form (Advanced → Escalate on failure) edits each rung's provider and effort; per-rung fallbacks are API/MCP only.
+
 
 ## Provider Configs
 

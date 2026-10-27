@@ -28,6 +28,9 @@ RETURNING *;
 -- name: SetAgentRunProviderConfig :exec
 UPDATE agent_runs SET provider_config_id = ? WHERE id = ?;
 
+-- name: SetAgentRunLadderRung :exec
+UPDATE agent_runs SET ladder_rung = ? WHERE id = ?;
+
 -- name: SetAgentRunFeedback :exec
 UPDATE agent_runs SET feedback = ? WHERE id = ?;
 

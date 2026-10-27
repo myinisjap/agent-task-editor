@@ -637,3 +637,30 @@ func TestProviderConfigsDelete_BlockedWhenReferencedByChatSession(t *testing.T) 
 		t.Fatalf("expected 409 when provider config is referenced by a chat session, got %d: %s", w2.Code, w2.Body.String())
 	}
 }
+
+// A provider config referenced only by an escalation-ladder rung is protected.
+func TestProviderConfigsDelete_BlockedWhenReferencedByLadder(t *testing.T) {
+	router, _ := setupProvidersRouter(t)
+	mk := func(name string) gen.ProviderConfig {
+		w := postJSON(t, router, "/provider-configs", map[string]any{"name": name, "provider": "claude"})
+		var pc gen.ProviderConfig
+		if err := json.NewDecoder(w.Body).Decode(&pc); err != nil {
+			t.Fatal(err)
+		}
+		return pc
+	}
+	primary, big := mk("primary"), mk("big")
+	w := postJSON(t, router, "/agents", map[string]any{
+		"name": "a", "provider_config_id": primary.ID,
+		"escalation_ladder": []map[string]any{{"provider_config_id": big.ID}},
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("seed agent: %d %s", w.Code, w.Body.String())
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/provider-configs/"+big.ID, nil)
+	w2 := httptest.NewRecorder()
+	router.ServeHTTP(w2, req)
+	if w2.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w2.Code, w2.Body.String())
+	}
+}

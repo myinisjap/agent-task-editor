@@ -791,6 +791,8 @@ distinct and differ from `provider_config_id` (`400` otherwise). On update,
 omitting it keeps the stored list (minus a fallback promoted to primary); `[]`
 clears it.
 
+`escalation_ladder` (optional, default `[]`) is an array of `{provider_config_id, effort?, fallback_provider_config_ids?}` rungs; see [agents.md#escalation-ladder](agents.md#escalation-ladder). Unknown provider ids or invalid effort return `400`; omitted on update keeps the stored ladder. Runs carry `ladder_rung` (null when the config has no ladder).
+
 `max_retries`/`retry_backoff_secs` configure auto-retry for *transient*
 provider errors (rate limits, network blips, upstream 5xx) — see
 [agents.md#retry-policy](agents.md#retry-policy). Both are optional on
@@ -1225,6 +1227,7 @@ One row per agent config still present in the database:
   noisy (2 tasks at 100% is not more reliable than 200 tasks at 85%); the
   frontend greys these out rather than hiding them, since the raw number
   and its `n` are still informative together.
+- `ladder_rungs` — only for configs whose runs carry a `ladder_rung`: per finishing rung (the rung of the config's last laddered run on each terminal task) `{rung, tasks_done, avg_cost_to_done_usd}`. Independent of the last-run attribution used by `tasks_done`.
 
 Computed from a full scan of `task_label_history` and `agent_runs` — both
 grow without bound (log retention prunes `agent_logs`, not these) — so
