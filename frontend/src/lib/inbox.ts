@@ -45,29 +45,69 @@ export function sourceEditTasks(tasks: Task[]): SourceEditTask[] {
   return out.sort((a, b) => a.since.localeCompare(b.since))
 }
 
-/** Groups every kind of thing waiting on the human. Order inside a group is preserved. */
+/**
+ * Inbox sections, named by what the human does. This is the single source of
+ * truth for classification and for the shared count:
+ *  - decide: human gates (approve / request changes) and held source-issue edits.
+ *  - answer: waiting_human runs whose escalation takes a written reply
+ *    (agent_question, rework_loop, and unknown/missing codes).
+ *  - fix:    waiting_human runs whose escalation needs a fix or retry
+ *    (auth, toolchain, budget, ...), PR conflicts, failed side effects and
+ *    paused providers.
+ */
+export type InboxSectionKey = 'decide' | 'answer' | 'fix'
+
+export type InboxEntry =
+  | { kind: 'needs_me'; item: NeedsMeItem }
+  | { kind: 'source_edit'; edit: SourceEditTask }
+  | { kind: 'side_effect'; failed: FailedEffectTask }
+  | { kind: 'provider'; provider: PausedProvider }
+
+export type InboxSections = Record<InboxSectionKey, InboxEntry[]>
+
+export const SECTION_ORDER: InboxSectionKey[] = ['decide', 'answer', 'fix']
+
+/** Which section a needs-me item belongs in. */
+export function sectionFor(item: NeedsMeItem): InboxSectionKey {
+  if (item.reason === 'human_gate') return 'decide'
+  if (item.reason === 'pr_conflict') return 'fix'
+  return escalationInfo(item.escalation_reason).action === 'reply' ? 'answer' : 'fix'
+}
+
+function entrySince(e: InboxEntry): string {
+  switch (e.kind) {
+    case 'needs_me': return e.item.since
+    case 'source_edit': return e.edit.since
+    case 'side_effect': return e.failed.since
+    case 'provider': return e.provider.paused_at
+  }
+}
+
+/** Buckets every kind of thing waiting on the human; oldest first within a section. */
 export function buildInbox(
   needsMe: NeedsMeItem[],
   failed: FailedEffectTask[],
   paused: PausedProvider[],
   sourceEdits: SourceEditTask[] = [],
-): InboxGroups {
-  return {
-    reply: needsMe.filter((i) => i.reason === 'waiting_human'),
-    approval: needsMe.filter((i) => i.reason === 'human_gate'),
-    pr_conflict: needsMe.filter((i) => i.reason === 'pr_conflict'),
-    side_effect: failed,
-    source_edit: sourceEdits,
-    provider: paused,
-  }
+): InboxSections {
+  const s: InboxSections = { decide: [], answer: [], fix: [] }
+  for (const item of needsMe) s[sectionFor(item)].push({ kind: 'needs_me', item })
+  for (const edit of sourceEdits) s.decide.push({ kind: 'source_edit', edit })
+  for (const f of failed) s.fix.push({ kind: 'side_effect', failed: f })
+  for (const provider of paused) s.fix.push({ kind: 'provider', provider })
+  for (const k of SECTION_ORDER) s[k].sort((a, b) => entrySince(a).localeCompare(entrySince(b)))
+  return s
 }
 
-export function inboxCount(g: InboxGroups): number {
-  return g.reply.length + g.approval.length + g.pr_conflict.length + g.side_effect.length + g.source_edit.length + g.provider.length
+/** The one count: nav badge, tab badge, Overview and Inbox heading all use this. */
+export function inboxCount(s: InboxSections): number {
+  return s.decide.length + s.answer.length + s.fix.length
 }
 
 export type ItemActions = {
   approve: boolean
+  /** Send the work back with a written note (human `failure` transition). */
+  requestChanges: boolean
   /** Re-dispatch the task as is. */
   retry: boolean
   /** The reason needs a written answer, done on the task page. */
@@ -75,14 +115,14 @@ export type ItemActions = {
   fix?: { to: string; text: string }
 }
 
-/** Which one-click actions an inbox item offers, mirroring the Dashboard queue. */
+/** Which one-click actions an inbox item offers. */
 export function itemActions(item: NeedsMeItem, workflow: Workflow | undefined): ItemActions {
-  if (item.reason === 'pr_conflict') return { approve: false, retry: false, reply: false }
-  const { canApprove } = humanActionsFor(workflow, item.label)
-  if (item.reason === 'human_gate') return { approve: canApprove, retry: false, reply: false }
+  if (item.reason === 'pr_conflict') return { approve: false, requestChanges: false, retry: false, reply: false }
+  const { canApprove, canReject } = humanActionsFor(workflow, item.label)
+  if (item.reason === 'human_gate') return { approve: canApprove, requestChanges: canReject, retry: false, reply: false }
   // waiting_human
   const esc = escalationInfo(item.escalation_reason)
-  if (canApprove) return { approve: true, retry: false, reply: esc.action === 'reply' }
-  if (esc.action === 'reply') return { approve: false, retry: false, reply: true }
-  return { approve: false, retry: true, reply: false, fix: esc.action === 'fix' ? esc.fix : undefined }
+  if (canApprove) return { approve: true, requestChanges: false, retry: false, reply: esc.action === 'reply' }
+  if (esc.action === 'reply') return { approve: false, requestChanges: false, retry: false, reply: true }
+  return { approve: false, requestChanges: false, retry: true, reply: false, fix: esc.action === 'fix' ? esc.fix : undefined }
 }

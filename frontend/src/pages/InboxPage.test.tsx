@@ -9,7 +9,7 @@ import { useHealthStore } from '../stores/health'
 import { useWorkflowStore } from '../stores/workflow'
 
 const m = {
-  needsMe: vi.fn(), apply: vi.fn(), discard: vi.fn(), list: vi.fn(), approve: vi.fn(), rerun: vi.fn(), retry: vi.fn(), dismiss: vi.fn(), health: vi.fn(), resume: vi.fn(),
+  needsMe: vi.fn(), reject: vi.fn(), apply: vi.fn(), discard: vi.fn(), list: vi.fn(), approve: vi.fn(), rerun: vi.fn(), retry: vi.fn(), dismiss: vi.fn(), health: vi.fn(), resume: vi.fn(),
 }
 vi.mock('../api/client', async () => {
   const actual = await vi.importActual<typeof import('../api/client')>('../api/client')
@@ -20,6 +20,7 @@ vi.mock('../api/client', async () => {
       tasks: {
         list: (...a: unknown[]) => m.list(...a),
         approve: (...a: unknown[]) => m.approve(...a),
+        reject: (...a: unknown[]) => m.reject(...a),
         rerun: (...a: unknown[]) => m.rerun(...a),
         retrySideEffects: (...a: unknown[]) => m.retry(...a),
         dismissSideEffects: (...a: unknown[]) => m.dismiss(...a),
@@ -81,6 +82,54 @@ describe('InboxPage', () => {
     expect(screen.getAllByTestId('risk-flag-chips')).toHaveLength(1)
     expect(screen.getByTestId('risk-flag-migration')).toHaveTextContent('Migration')
     expect(screen.getByTestId('risk-flag-tests_removed')).toHaveTextContent('Tests removed')
+  })
+
+  it('shows decision context on a Decide row', async () => {
+    m.needsMe.mockResolvedValue([
+      { ...gateItem, summary: 'Adds the migration', changed: { files: 3, additions: 12, deletions: 4 }, cost_usd: 1.5, verification: 'fail', preview_count: 2 },
+    ])
+    renderPage()
+    await screen.findByText('Ship it')
+    expect(screen.getByTestId('inbox-section-decide')).toBeInTheDocument()
+    expect(screen.getByText('Adds the migration')).toBeInTheDocument()
+    expect(screen.getByTestId('decision-diff')).toHaveTextContent('+12 −4 · 3 files')
+    expect(screen.getByText('$1.50')).toBeInTheDocument()
+    expect(screen.getByText('Verify failed')).toBeInTheDocument()
+    expect(screen.getByText(/2 previews/)).toBeInTheDocument()
+  })
+
+  it('request changes needs a note and rejects with it', async () => {
+    m.needsMe.mockResolvedValue([gateItem])
+    m.reject.mockResolvedValue({})
+    useWorkflowStore.setState({
+      workflows: [{ ...workflow, transitions: [...workflow.transitions, { from_label: 'review', to_label: 'dev', trigger_type: 'human', path: 'failure' }] }] as never,
+    })
+    renderPage()
+    await userEvent.click(await screen.findByRole('button', { name: 'Request changes' }))
+    const send = screen.getByRole('button', { name: 'Send' })
+    expect(send).toBeDisabled()
+    await userEvent.type(screen.getByLabelText('Request changes note'), '  tighten it ')
+    m.needsMe.mockResolvedValue([])
+    await userEvent.click(send)
+    expect(m.reject).toHaveBeenCalledWith('t1', 'tighten it')
+  })
+
+  it('puts a login failure under Fix setup, not Answer', async () => {
+    m.needsMe.mockResolvedValue([{ ...gateItem, task_id: 't9', task_title: 'Stuck', reason: 'waiting_human', escalation_reason: 'auth_required', label: 'dev' }])
+    renderPage()
+    await screen.findByText('Stuck')
+    expect(screen.getByTestId('inbox-section-fix')).toHaveTextContent('Stuck')
+    expect(screen.queryByTestId('inbox-section-answer')).toBeNull()
+    expect(screen.getByRole('link', { name: 'Open Health' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+  })
+
+  it('heading count includes a paused provider', async () => {
+    m.needsMe.mockResolvedValue([gateItem])
+    m.health.mockResolvedValue({ checks: [], paused_providers: [{ provider: 'claude', reason: 'x', paused_at: '2026-01-01T00:00:00Z' }] })
+    renderPage()
+    await screen.findByText(/Claude dispatch is paused/)
+    expect(screen.getByTestId('inbox-total')).toHaveTextContent('(2)')
   })
 
   it('retries a failed side effect', async () => {
