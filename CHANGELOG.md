@@ -21,6 +21,7 @@ triggers the "Release" workflow the same way.
 
 ### Added
 
+- **Agent config version history.** Behaviour-relevant edits (prompt, provider/fallbacks, ladder, effort, limits, permissions, plugins/MCP) write a numbered snapshot to `agent_config_versions` with actor and optional note; runs record `agent_config_version`; new `GET /agents/{id}/versions[/{version}]` and `POST .../restore`; History panel with prompt diff and restore on the agent page; Agent Performance can break down by version / provider config / repo / task type, greying rows with fewer than 5 tasks.
 - **Repo lessons.** Short, human-curated per-repo (or global) lessons stored in `repo_lessons` and managed via `GET/POST /repos/{id}/lessons`, `GET/POST /lessons`, `PATCH/DELETE /lessons/{id}`. Active lessons matching the run's label (and, when set, the task's changed files) are injected into agent prompts under `REPO LESSONS`, capped at 15 lessons / about 2,000 characters. UI comes in a follow-up. Task runs keep Claude Code auto-memory off via `--bare` (now covered by a test and documented).
 - Escalation ladder: agent configs can define `escalation_ladder` rungs (provider config + effort) used after consecutive failures / review bounce-backs on that stage; the rung is recorded on each run, shown in Task Detail, and summarized on Agent Performance. Empty by default (no behaviour change).
 

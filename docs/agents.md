@@ -51,6 +51,19 @@ Start cheap, escalate on failure. `escalation_ladder` is a JSON array of rungs `
 **Visibility**: each run records `ladder_rung` (NULL for agents without a ladder), shown in Task Detail's run list (e.g. `rung 2: opus / max`) and summarised on Agent Performance as "Finished by rung". The UI form (Advanced → Escalate on failure) edits each rung's provider and effort; per-rung fallbacks are API/MCP only.
 
 
+## Version history
+
+Every behavioural change to an agent config is saved as a numbered snapshot in `agent_config_versions` (v1, v2, ...), so a prompt or model edit can be measured before/after.
+
+- **Snapshotted:** `system_prompt`, `provider_config_id`, `fallback_provider_config_ids`, `escalation_ladder`, `effort`, `permission_mode`, `max_turns`, `max_tokens`, `timeout_secs`, `max_cost_usd`, `max_retries`, `retry_backoff_secs`, `resume_sessions`, `subtasks_enabled`, `max_subtasks`, plugins / MCP servers and the command allow/deny lists.
+- **Not versioned:** `name`, `labels`, `enabled` and `priority` (identity / routing). Changing only those, or re-saving identical values, never creates a version.
+- Created through the one update path, so the API, the UI and the board MCP `update_agent` all behave the same. Each version records the actor (when authenticated) and an optional `note` (the "Change note" field on the agent page, or `note` in the request body).
+- **Backfill:** the migration writes v1 for every existing config; a config that still has no history (e.g. inserted by other means) gets a baseline v1 lazily on its first update or history read.
+- **Run tagging:** each run records `agent_config_version` (the latest version when it was dispatched). `NULL` means the run predates version history.
+- **Restore:** `POST /agents/{id}/versions/{version}/restore` applies a snapshot onto the current config (name, labels, enabled, priority are kept) and records it as a **new** version ("Restored from vN"). Provider configs referenced by the snapshot are re-validated (`400` if one was deleted). Restoring something identical to the current config writes nothing.
+- **UI:** the History panel on the agent page lists versions with date, actor, note, a prompt diff against the previous version, and Restore (in-page confirm).
+- **Agent Performance** can break metrics down by version, provider config, repo or task type (`group_by`); rows with fewer than 5 tasks done are greyed out as low-sample.
+
 ## Provider Configs
 
 A **Provider Config** is the provider/model/API-key (env vars) triple: which

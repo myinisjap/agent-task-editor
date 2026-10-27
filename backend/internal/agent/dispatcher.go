@@ -515,6 +515,9 @@ func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched
 	}); err != nil {
 		return true, fmt.Errorf("create %s run: %w", reason, err)
 	}
+	if err := d.q.SetAgentRunConfigVersion(ctx, gen.SetAgentRunConfigVersionParams{AgentConfigID: matched.ID, ID: runID}); err != nil {
+		slog.Warn("tag cost-budget run with config version", "run", runID, "err", err)
+	}
 	// Lock the task on this run, same as a real waiting_human escalation —
 	// stays locked until a human acts (raises the budget, or replies via
 	// DispatchReply, which is not budget-gated). Deliberately set ONLY
@@ -1279,6 +1282,15 @@ func (d *Dispatcher) persistRunRow(ctx context.Context, t gen.Task, matched gen.
 	}); err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("set agent run provider config: %w", err)
+	}
+	// Tag with the config's latest version at dispatch time (a concurrent edit
+	// racing this is negligible). Stays NULL when the config has no versions.
+	if err := tq.SetAgentRunConfigVersion(ctx, gen.SetAgentRunConfigVersionParams{
+		AgentConfigID: matched.ID,
+		ID:            runID,
+	}); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("set agent run config version: %w", err)
 	}
 	if ladderRung != nil {
 		r := int64(*ladderRung)
