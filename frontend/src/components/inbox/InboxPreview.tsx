@@ -11,12 +11,12 @@ import { providerLabel } from '../shared/ProviderPausedBanner'
 import ReviewBriefCard from '../task-detail/ReviewBriefCard'
 import { rejectDisabled, rejectPlaceholder } from '../task-detail/TaskActions'
 import DecisionContext from './DecisionContext'
+import { Badge, Button, Card, Field, buttonClasses, controlClasses } from '../ui'
 
-const BTN = 'inline-flex items-center justify-center px-3 py-1.5 text-xs font-medium rounded text-white disabled:opacity-50'
-const PRIMARY = `${BTN} bg-sky-600 hover:bg-sky-500`
-const SECONDARY = `${BTN} bg-slate-700 hover:bg-slate-600 text-slate-100`
-const KBD = 'ml-1.5 px-1 rounded border border-white/30 text-[10px] font-mono opacity-80'
-const FIELD = 'flex-1 text-xs bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-slate-500'
+const PRIMARY = buttonClasses({ variant: 'primary', size: 'sm' })
+const SECONDARY = buttonClasses({ variant: 'secondary', size: 'sm' })
+const KBD = 'ml-1.5 px-1 rounded border border-current/40 text-[10px] font-mono opacity-80'
+const FIELD = `${controlClasses} text-xs`
 
 export type InboxPreviewProps = {
   entry: InboxEntry | undefined
@@ -46,9 +46,9 @@ export default function InboxPreview(p: InboxPreviewProps) {
   const { entry, busy } = p
   if (!entry) {
     return (
-      <div data-testid="inbox-preview" className="rounded-lg border border-slate-800 p-6 text-sm text-slate-500">
+      <Card data-testid="inbox-preview" padding="none" className="p-6 text-sm text-fg-subtle">
         Select an item
-      </div>
+      </Card>
     )
   }
   const taskId = entryTaskId(entry)
@@ -76,20 +76,20 @@ export default function InboxPreview(p: InboxPreviewProps) {
       age = item.since
       chips = (
         <>
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-pink-900/60 text-pink-200 font-medium">
+          <Badge tone="accent" size="xs">
             {needsMeReasonLabel(item.reason, item.escalation_reason)}
-          </span>
+          </Badge>
           {item.label && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-300">
+            <Badge tone="neutral" size="xs">
               {labelDisplayNameByName(item.label, p.workflow?.labels)}
-            </span>
+            </Badge>
           )}
         </>
       )
       const approveBtn = a.approve && (
-        <button aria-label="Approve" title="Approve (A)" disabled={busy} onClick={p.onApprove} className={`${BTN} bg-emerald-600 hover:bg-emerald-500`}>
+        <Button aria-label="Approve" title="Approve (A)" size="sm" variant="primary" disabled={busy} onClick={p.onApprove}>
           Approve<kbd className={KBD}>a</kbd>
-        </button>
+        </Button>
       )
       if (item.reason === 'human_gate') {
         body = (
@@ -99,31 +99,33 @@ export default function InboxPreview(p: InboxPreviewProps) {
             <div className="flex flex-wrap gap-2">
               {approveBtn}
               {a.requestChanges && (
-                <button
+                <Button
                   aria-label="Request changes" title="Request changes (R)"
+                  size="sm"
+                  variant="danger"
                   disabled={busy}
                   onClick={() => p.setNoteOpen(!p.noteOpen)}
-                  className={`${BTN} bg-red-700 hover:bg-red-600`}
                 >
                   Request changes<kbd className={KBD}>r</kbd>
-                </button>
+                </Button>
               )}
             </div>
             {a.requestChanges && p.noteOpen && (
               <div className="flex gap-2" data-testid="request-changes-form">
-                <textarea
-                  ref={p.noteRef}
-                  aria-label="Request changes note"
-                  value={p.note}
-                  onChange={(e) => p.setNote(e.target.value)}
-                  onKeyDown={escClose(() => p.setNoteOpen(false))}
-                  placeholder={rejectPlaceholder(0)}
-                  rows={3}
-                  className={FIELD}
-                />
-                <button disabled={rejectDisabled(p.note, 0, busy)} onClick={p.onReject} className={`${BTN} bg-red-700 hover:bg-red-600 self-start`}>
+                <Field label="Request changes note" labelHidden className="flex-1">
+                  <textarea
+                    ref={p.noteRef}
+                    value={p.note}
+                    onChange={(e) => p.setNote(e.target.value)}
+                    onKeyDown={escClose(() => p.setNoteOpen(false))}
+                    placeholder={rejectPlaceholder(0)}
+                    rows={3}
+                    className={FIELD}
+                  />
+                </Field>
+                <Button size="sm" variant="danger" disabled={rejectDisabled(p.note, 0, busy)} onClick={p.onReject} className="self-start">
                   Send
-                </button>
+                </Button>
               </div>
             )}
           </>
@@ -131,22 +133,23 @@ export default function InboxPreview(p: InboxPreviewProps) {
       } else if (item.reason === 'waiting_human' && a.reply) {
         body = (
           <>
-            <p className="text-sm text-slate-200 whitespace-pre-wrap break-words">
+            <p className="text-sm text-fg whitespace-pre-wrap break-words">
               {item.message || `${esc.explanation} ${esc.nextStep}`}
             </p>
             {item.run_id ? (
               <div className="flex gap-2">
-                <textarea
-                  ref={p.replyRef}
-                  aria-label="Reply to agent"
-                  value={p.reply}
-                  onChange={(e) => p.setReply(e.target.value)}
-                  onKeyDown={escClose(() => undefined)}
-                  placeholder="Reply to the agent…"
-                  rows={4}
-                  className={FIELD}
-                />
-                <button disabled={busy || !p.reply.trim()} onClick={p.onReply} className={`${PRIMARY} self-start`}>Send</button>
+                <Field label="Reply to agent" labelHidden className="flex-1">
+                  <textarea
+                    ref={p.replyRef}
+                    value={p.reply}
+                    onChange={(e) => p.setReply(e.target.value)}
+                    onKeyDown={escClose(() => undefined)}
+                    placeholder="Reply to the agent…"
+                    rows={4}
+                    className={FIELD}
+                  />
+                </Field>
+                <Button size="sm" variant="primary" disabled={busy || !p.reply.trim()} onClick={p.onReply} className="self-start">Send</Button>
               </div>
             ) : (
               <Link to={openTo} className={PRIMARY}>Reply on the task page</Link>
@@ -158,14 +161,14 @@ export default function InboxPreview(p: InboxPreviewProps) {
         const isConflict = item.reason === 'pr_conflict'
         body = (
           <>
-            <p className="text-sm text-slate-300">
+            <p className="text-sm text-fg">
               {isConflict ? 'The pull request has a merge conflict and cannot continue until it is resolved.' : `${esc.explanation} ${esc.nextStep}`}
             </p>
-            {item.message && <p className="text-xs text-slate-400 whitespace-pre-wrap break-words">{item.message}</p>}
+            {item.message && <p className="text-xs text-fg-muted whitespace-pre-wrap break-words">{item.message}</p>}
             <div className="flex flex-wrap gap-2">
               {a.fix && <Link to={a.fix.to} className={PRIMARY}>{a.fix.text}</Link>}
               {a.retry && (
-                <button disabled={busy} onClick={p.onRetry} className={a.fix ? SECONDARY : PRIMARY}>Retry</button>
+                <Button size="sm" variant={a.fix ? 'secondary' : 'primary'} disabled={busy} onClick={p.onRetry}>Retry</Button>
               )}
               {approveBtn}
               {isConflict && <Link to={openTo} className={PRIMARY}>Open</Link>}
@@ -180,13 +183,13 @@ export default function InboxPreview(p: InboxPreviewProps) {
       age = entry.edit.since
       body = (
         <>
-          <p className="text-sm text-amber-300">
+          <p className="text-sm text-warning">
             The source issue was edited after approval. Review the new text before it reaches the agent.
           </p>
           <div className="flex flex-wrap gap-2">
             <Link to={openTo} className={SECONDARY}>Review</Link>
-            <button disabled={busy} onClick={p.onDiscardSource} className={SECONDARY}>Discard</button>
-            <button disabled={busy} onClick={p.onApplySource} className={PRIMARY}>Apply</button>
+            <Button size="sm" variant="secondary" disabled={busy} onClick={p.onDiscardSource}>Discard</Button>
+            <Button size="sm" variant="primary" disabled={busy} onClick={p.onApplySource}>Apply</Button>
           </div>
         </>
       )
@@ -198,14 +201,14 @@ export default function InboxPreview(p: InboxPreviewProps) {
       body = (
         <>
           {entry.failed.effects.map((ef) => (
-            <p key={ef.kind} className="text-sm text-red-300 break-words">
+            <p key={ef.kind} className="text-sm text-danger break-words">
               {sideEffectText(ef)}
               {ef.last_error ? `: ${ef.last_error}` : ''}
             </p>
           ))}
           <div className="flex flex-wrap gap-2">
-            <button disabled={busy} onClick={p.onDismissEffects} className={SECONDARY}>Dismiss</button>
-            <button disabled={busy} onClick={p.onRetryEffects} className={PRIMARY}>Retry</button>
+            <Button size="sm" variant="secondary" disabled={busy} onClick={p.onDismissEffects}>Dismiss</Button>
+            <Button size="sm" variant="primary" disabled={busy} onClick={p.onRetryEffects}>Retry</Button>
           </div>
         </>
       )
@@ -217,11 +220,11 @@ export default function InboxPreview(p: InboxPreviewProps) {
       age = pv.paused_at
       body = (
         <>
-          <p className="text-sm text-slate-300">
+          <p className="text-sm text-fg">
             {pv.reason || 'The provider failed to authenticate.'} Queued tasks wait until it resumes.
           </p>
           <div className="flex gap-2">
-            <button disabled={busy} onClick={p.onResume} className={PRIMARY}>Resume</button>
+            <Button size="sm" variant="primary" disabled={busy} onClick={p.onResume}>Resume</Button>
           </div>
         </>
       )
@@ -230,19 +233,19 @@ export default function InboxPreview(p: InboxPreviewProps) {
   }
 
   return (
-    <div data-testid="inbox-preview" className="rounded-lg border border-slate-700 bg-slate-900 p-4 flex flex-col gap-3 min-w-0">
+    <Card data-testid="inbox-preview" padding="md" className="flex flex-col gap-3">
       <div className="flex flex-col gap-1.5 min-w-0">
-        <h2 className="text-base font-semibold text-slate-100 break-words">{title}</h2>
+        <h2 className="text-base font-semibold text-fg break-words">{title}</h2>
         <div className="flex flex-wrap items-center gap-2">
           {chips}
-          <span className="text-xs text-slate-500">{formatRelativeAge(age)}</span>
-          <Link to={openTo} data-testid="inbox-preview-open" className="ml-auto text-xs text-sky-400 hover:underline">
-            Open full page<kbd className="ml-1.5 px-1 rounded border border-slate-600 text-[10px] font-mono">↵</kbd>
+          <span className="text-xs text-fg-subtle">{formatRelativeAge(age)}</span>
+          <Link to={openTo} data-testid="inbox-preview-open" className="ml-auto text-xs text-accent-fg hover:underline">
+            Open full page<kbd className="ml-1.5 px-1 rounded border border-border text-[10px] font-mono">↵</kbd>
           </Link>
         </div>
       </div>
       {body}
-      {p.error && <p role="alert" className="text-xs text-red-400">{p.error}</p>}
-    </div>
+      {p.error && <p role="alert" className="text-xs text-danger">{p.error}</p>}
+    </Card>
   )
 }

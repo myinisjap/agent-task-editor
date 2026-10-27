@@ -9,6 +9,7 @@ import RunHistoryList from './RunHistoryList'
 import RunLogPane from './RunLogPane'
 import VerificationPanel from './VerificationPanel'
 import { rejectDisabled, rejectPlaceholder } from './TaskActions'
+import { Badge, Button, Field, controlClasses } from '../ui'
 
 type MainTab = 'plan' | 'diff' | 'logs' | 'details'
 
@@ -96,39 +97,39 @@ export default function ReviewLayout({
   const stacked = variant !== 'desktop'
 
   const commentsNote = openCommentsCount > 0 && (
-    <p className="text-xs text-amber-400">
+    <p className="text-xs text-warning">
       💬 {openCommentsCount} open diff comment{openCommentsCount !== 1 ? 's' : ''} — the next run will see them
     </p>
   )
-  const errorNote = actionError && <p role="alert" className="text-xs text-red-400">{actionError}</p>
+  const errorNote = actionError && <p role="alert" className="text-xs text-danger">{actionError}</p>
 
   const header = phone ? (
-    <div data-testid="review-header" className="shrink-0 border-b border-slate-800 px-3 py-2 flex items-start justify-between gap-2">
+    <div data-testid="review-header" className="shrink-0 border-b border-border px-3 py-2 flex items-start justify-between gap-2">
       <div className="min-w-0">
-        <div className="text-xs text-slate-500 mb-0.5">
-          <button onClick={onBack} className="hover:text-slate-300">← Board</button>
+        <div className="text-xs text-fg-subtle mb-0.5">
+          <button onClick={onBack} className="hover:text-fg">← Board</button>
         </div>
-        <h1 className="text-base font-semibold text-slate-100 break-words">{task.title}</h1>
+        <h1 className="text-base font-semibold text-fg break-words">{task.title}</h1>
         <div className="mt-1">
-          <span data-testid="review-state-chip" className="px-2 py-0.5 text-xs rounded-full bg-amber-900/40 border border-amber-700 text-amber-300 font-medium">
+          <Badge tone="warning" data-testid="review-state-chip">
             Waiting for your review
-          </span>
+          </Badge>
         </div>
       </div>
       {onHelp && <HelpButton onClick={onHelp} title="About this task" />}
     </div>
   ) : (
-    <div data-testid="review-header" className="shrink-0 border-b border-slate-800 px-5 py-3 flex items-start justify-between gap-4">
+    <div data-testid="review-header" className="shrink-0 border-b border-border px-5 py-3 flex items-start justify-between gap-4">
       <div className="min-w-0">
-        <div className="text-xs text-slate-500 mb-1">
-          <button onClick={onBack} className="hover:text-slate-300">← Board</button>
+        <div className="text-xs text-fg-subtle mb-1">
+          <button onClick={onBack} className="hover:text-fg">← Board</button>
           {repoName ? ` / ${repoName}` : ''} / {task.label}
         </div>
-        <h1 className="text-lg font-semibold text-slate-100 break-words">{task.title}</h1>
-        <div className="flex flex-wrap items-center gap-3 mt-1 text-xs text-slate-400">
-          <span data-testid="review-state-chip" className="px-2 py-0.5 rounded-full bg-amber-900/40 border border-amber-700 text-amber-300 font-medium">
+        <h1 className="text-lg font-semibold text-fg break-words">{task.title}</h1>
+        <div className="flex flex-wrap items-center gap-3 mt-1 text-xs text-fg-muted">
+          <Badge tone="warning" data-testid="review-state-chip">
             Waiting for your review
-          </span>
+          </Badge>
           {repoName && <span>{repoName}</span>}
           <span>${(task.cumulative_cost_usd ?? 0).toFixed(2)}</span>
           <span>{runs.length} run{runs.length === 1 ? '' : 's'}</span>
@@ -138,21 +139,14 @@ export default function ReviewLayout({
         <div className="flex items-center gap-2">
           {onHelp && <HelpButton onClick={onHelp} title="About this task" />}
           {canReject && (
-            <button
-              onClick={() => setShowRejectForm((s) => !s)}
-              className="px-4 py-1.5 text-xs font-medium rounded border border-red-700 text-red-300 hover:bg-red-900/30"
-            >
+            <Button size="sm" variant="danger" onClick={() => setShowRejectForm((s) => !s)}>
               Request changes
-            </button>
+            </Button>
           )}
           {canApprove && (
-            <button
-              onClick={onApprove}
-              disabled={actionPending}
-              className="px-4 py-1.5 text-xs font-medium rounded bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
-            >
+            <Button size="sm" variant="primary" onClick={onApprove} disabled={actionPending}>
               {approveLabel}
-            </button>
+            </Button>
           )}
         </div>
         {commentsNote}
@@ -162,29 +156,30 @@ export default function ReviewLayout({
   )
 
   const rejectForm = (
-    <div className={phone ? 'flex flex-col gap-2' : 'shrink-0 border-b border-slate-800 bg-slate-900 px-5 py-3 flex gap-3 items-start'}>
-      <textarea
-        value={rejectNote}
-        onChange={(e) => setRejectNote(e.target.value)}
-        data-reject-note
-        placeholder={rejectPlaceholder(openCommentsCount)}
-        rows={3}
-        className={`flex-1 min-w-0 bg-slate-800 border border-slate-700 rounded px-3 py-2 text-slate-200 placeholder-slate-500 resize-none focus:outline-none focus:border-slate-500 ${phone ? 'text-base w-full' : 'text-xs'}`}
-      />
+    <div className={phone ? 'flex flex-col gap-2' : 'shrink-0 border-b border-border bg-surface-raised px-5 py-3 flex gap-3 items-start'}>
+      <Field label="Rejection note" labelHidden className="flex-1 min-w-0">
+        <textarea
+          value={rejectNote}
+          data-reject-note
+          onChange={(e) => setRejectNote(e.target.value)}
+          placeholder={rejectPlaceholder(openCommentsCount)}
+          rows={3}
+          className={`${controlClasses} resize-none ${phone ? 'text-base' : 'text-xs'}`}
+        />
+      </Field>
       <div className={phone ? 'flex gap-2 [&>button]:flex-1' : 'flex flex-col gap-2'}>
-        <button
+        <Button
+          size="sm"
+          variant="danger"
           onClick={onReject}
           disabled={rejectDisabled(rejectNote, openCommentsCount, actionPending)}
-          className={`px-4 py-1.5 text-xs font-medium rounded bg-red-600 hover:bg-red-500 text-white disabled:opacity-50 ${phone ? 'min-h-[44px]' : ''}`}
+          className={phone ? 'min-h-[44px]' : ''}
         >
           Send back with changes
-        </button>
-        <button
-          onClick={() => setShowRejectForm(false)}
-          className={`px-4 py-1.5 text-xs font-medium rounded bg-slate-700 hover:bg-slate-600 text-slate-100 ${phone ? 'min-h-[44px]' : ''}`}
-        >
+        </Button>
+        <Button size="sm" variant="secondary" onClick={() => setShowRejectForm(false)} className={phone ? 'min-h-[44px]' : ''}>
           Cancel
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -207,14 +202,14 @@ export default function ReviewLayout({
 
   const paneCls = stacked ? '' : 'h-full overflow-y-auto'
   const mainTabs = (
-    <div className={stacked ? 'flex flex-col min-w-0' : 'col-span-2 flex flex-col min-h-0 border-r border-slate-800'}>
-      <div className={`shrink-0 flex items-center gap-2 border-b border-slate-800 px-4 pt-2 ${stacked ? 'overflow-x-auto' : ''}`}>
+    <div className={stacked ? 'flex flex-col min-w-0' : 'col-span-2 flex flex-col min-h-0 border-r border-border'}>
+      <div className={`shrink-0 flex items-center gap-2 border-b border-border px-4 pt-2 ${stacked ? 'overflow-x-auto' : ''}`}>
         {tabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
             className={`px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
-              tab === t.id ? 'bg-slate-800 text-slate-100 border-b-2 border-slate-400' : 'text-slate-500 hover:text-slate-300'
+              tab === t.id ? 'bg-surface-raised text-accent-fg border-b-2 border-accent' : 'text-fg-subtle hover:text-fg'
             }`}
           >
             {t.label}
@@ -225,17 +220,17 @@ export default function ReviewLayout({
         {tab === 'plan' && (
           <div data-testid="review-plan-pane" className={`${paneCls} p-5 flex flex-col gap-4`}>
             {task.description && (
-              <details className="rounded border border-slate-800 bg-slate-900/60 p-3">
-                <summary className="cursor-pointer text-xs font-semibold text-slate-400">Task description</summary>
-                <p className="mt-2 text-sm text-slate-300 whitespace-pre-wrap">{task.description}</p>
+              <details className="rounded border border-border bg-surface-raised/60 p-3">
+                <summary className="cursor-pointer text-xs font-semibold text-fg-muted">Task description</summary>
+                <p className="mt-2 text-sm text-fg whitespace-pre-wrap">{task.description}</p>
               </details>
             )}
             {task.agent_notes ? (
-              <div className="text-sm text-slate-200 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:font-semibold [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_code]:font-mono [&_pre]:overflow-x-auto break-words">
+              <div className="text-sm text-fg [&_h1]:text-base [&_h1]:font-semibold [&_h2]:font-semibold [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-2 [&_code]:font-mono [&_pre]:overflow-x-auto break-words">
                 <ReactMarkdown>{task.agent_notes}</ReactMarkdown>
               </div>
             ) : (
-              <p className="text-sm text-slate-500">No plan notes recorded.</p>
+              <p className="text-sm text-fg-subtle">No plan notes recorded.</p>
             )}
           </div>
         )}
@@ -319,28 +314,21 @@ export default function ReviewLayout({
       </div>
       <div
         data-testid="review-action-bar"
-        className="shrink-0 border-t border-slate-700 bg-slate-900 p-3 flex flex-col gap-2 max-md:mb-[var(--ate-bottom-bar-height,0px)] max-h-[55vh] overflow-y-auto"
+        className="shrink-0 border-t border-border bg-surface-raised p-3 flex flex-col gap-2 max-md:mb-[var(--ate-bottom-bar-height,0px)] max-h-[55vh] overflow-y-auto"
       >
         {commentsNote}
         {errorNote}
         {showRejectForm && canReject && rejectForm}
         <div className="flex gap-2 [&>button]:flex-1">
           {canReject && (
-            <button
-              onClick={() => setShowRejectForm((s) => !s)}
-              className="min-h-[44px] px-3 text-sm font-medium rounded border border-red-700 text-red-300 hover:bg-red-900/30"
-            >
+            <Button variant="danger" onClick={() => setShowRejectForm((s) => !s)} className="min-h-[44px]">
               Request changes
-            </button>
+            </Button>
           )}
           {canApprove && (
-            <button
-              onClick={onApprove}
-              disabled={actionPending}
-              className="min-h-[44px] px-3 text-sm font-medium rounded bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
-            >
+            <Button variant="primary" onClick={onApprove} disabled={actionPending} className="min-h-[44px]">
               {approveLabel}
-            </button>
+            </Button>
           )}
         </div>
       </div>

@@ -1,11 +1,20 @@
 import { useEffect, useState } from 'react'
 import { api, type RunVerification } from '../../api/client'
+import type { BadgeTone } from '../ui'
 
 export const STATUS_STYLE: Record<RunVerification['status'], { label: string; cls: string }> = {
   pass: { label: 'Verification passed', cls: 'bg-emerald-900/50 text-emerald-300 border-emerald-700' },
   fail: { label: 'Verification failed', cls: 'bg-red-900/50 text-red-300 border-red-700' },
   timeout: { label: 'Verification timed out', cls: 'bg-red-900/50 text-red-300 border-red-700' },
   error: { label: 'Verification could not run', cls: 'bg-amber-900/50 text-amber-300 border-amber-700' },
+}
+
+// Semantic Badge tone per verification status (used by the migrated ReviewBriefCard).
+export const VERIFICATION_TONE: Record<RunVerification['status'], BadgeTone> = {
+  pass: 'success',
+  fail: 'danger',
+  timeout: 'danger',
+  error: 'warning',
 }
 
 function formatDuration(ms: number): string {

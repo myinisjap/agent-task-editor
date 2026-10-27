@@ -17,10 +17,10 @@ import { formatRelativeAge } from '../lib/format'
 import { sideEffectText } from '../components/shared/SideEffectBadge'
 import { providerLabel } from '../components/shared/ProviderPausedBanner'
 import type { NeedsMeItem } from '../api/client'
+import { Badge, Button, Card, Field, PageFrame, buttonClasses, controlClasses } from '../components/ui'
 
-const BTN = 'flex-1 md:flex-none inline-flex items-center justify-center min-h-[44px] md:min-h-0 px-3 py-1.5 text-xs font-medium rounded text-white disabled:opacity-50'
-const PRIMARY = `${BTN} bg-sky-600 hover:bg-sky-500`
-const SECONDARY = `${BTN} bg-slate-700 hover:bg-slate-600 text-slate-100`
+const BTN = 'flex-1 md:flex-none min-h-[44px] md:min-h-0'
+const linkBtn = (variant: 'primary' | 'secondary') => buttonClasses({ variant, size: 'sm', className: BTN })
 
 const SECTION_META: Record<InboxSectionKey, { title: string; subtitle: string }> = {
   decide: { title: 'Decide', subtitle: 'Approve or request changes' },
@@ -33,10 +33,10 @@ function Section({ id, count, children }: { id: InboxSectionKey; count: number; 
   const { title, subtitle } = SECTION_META[id]
   return (
     <section className="mb-8" data-testid={`inbox-section-${id}`}>
-      <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">
+      <h2 className="text-xs font-medium text-fg-subtle uppercase tracking-wide mb-1">
         {title} ({count})
       </h2>
-      <p className="text-xs text-slate-500 mb-3">{subtitle}</p>
+      <p className="text-xs text-fg-subtle mb-3">{subtitle}</p>
       <div className="flex flex-col gap-3">{children}</div>
     </section>
   )
@@ -61,9 +61,11 @@ function Row({ children, error, to, extra, selected, onSelect }: { children: Rea
     navigate(to)
   }
   return (
-    <div
+    <Card
       ref={ref}
-      className={`bg-slate-900 border rounded-lg p-4 min-w-0 ${selected ? 'border-sky-500 ring-2 ring-sky-500' : 'border-slate-700'}${onSelect ? ' cursor-pointer' : ''}`}
+      padding="md"
+      selected={selected}
+      interactive={!!onSelect}
       data-testid="inbox-item"
       data-selected={selected ? 'true' : undefined}
       aria-current={selected ? 'true' : undefined}
@@ -71,8 +73,8 @@ function Row({ children, error, to, extra, selected, onSelect }: { children: Rea
     >
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 md:gap-4">{children}</div>
       {extra}
-      {error && <p role="alert" className="text-xs text-red-400 mt-2">{error}</p>}
-    </div>
+      {error && <p role="alert" className="text-xs text-danger mt-2">{error}</p>}
+    </Card>
   )
 }
 
@@ -212,82 +214,91 @@ export default function InboxPage() {
     const note = notes[item.task_id] ?? ''
     const noteField = !isWide && isGate && a.requestChanges && open && (
       <div className="mt-3 flex flex-col md:flex-row gap-2" data-testid="request-changes-form">
-        <textarea
-          aria-label="Request changes note"
-          value={note}
-          onChange={(e) => setNotes((n) => ({ ...n, [item.task_id]: e.target.value }))}
-          placeholder="What needs to change?"
-          rows={2}
-          className="flex-1 text-xs bg-slate-800 border border-slate-700 rounded px-2.5 py-1.5 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-slate-500"
-        />
-        <button
+        <Field label="Request changes note" labelHidden className="flex-1">
+          <textarea
+            value={note}
+            onChange={(e) => setNotes((n) => ({ ...n, [item.task_id]: e.target.value }))}
+            placeholder="What needs to change?"
+            rows={2}
+            className={`${controlClasses} text-xs`}
+          />
+        </Field>
+        <Button
+          size="sm"
+          variant="danger"
           disabled={busy[item.task_id] || !note.trim()}
           onClick={() => sendChanges(item.task_id)}
-          className={`${BTN} bg-red-700 hover:bg-red-600`}
+          className={BTN}
         >
           Send
-        </button>
+        </Button>
       </div>
     )
     return (
       <Row key={item.task_id} to={`/tasks/${item.task_id}`} error={isWide ? undefined : errors[item.task_id]} extra={noteField || undefined} {...rowProps({ kind: 'needs_me', item })}>
         <div className="min-w-0 break-words">
-          <Link to={`/tasks/${item.task_id}`} className="text-sm font-medium text-slate-200 hover:text-slate-50 hover:underline">
+          <Link to={`/tasks/${item.task_id}`} className="text-sm font-medium text-fg hover:text-fg hover:underline">
             {item.task_title}
           </Link>
-          <span className="ml-2 align-middle text-[10px] px-1.5 py-0.5 rounded bg-pink-900/60 text-pink-200 font-medium">
+          <Badge tone="accent" size="xs" className="ml-2 align-middle">
             {needsMeReasonLabel(item.reason, item.escalation_reason)}
-          </span>
+          </Badge>
           {item.label && (
-            <span className="ml-2 align-middle text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-300">
+            <Badge tone="neutral" size="xs" className="ml-2 align-middle">
               {labelDisplayNameByName(item.label, wf?.labels)}
-            </span>
+            </Badge>
           )}
-          {item.message && <p className="text-xs text-slate-400 mt-1">{item.message}</p>}
+          {item.message && <p className="text-xs text-fg-muted mt-1">{item.message}</p>}
           {isGate && <DecisionContext item={item} />}
           {item.reason === 'waiting_human' && (() => {
             const esc = escalationInfo(item.escalation_reason)
-            return <p className="text-xs text-slate-500 mt-1">{esc.explanation} {esc.nextStep}</p>
+            return <p className="text-xs text-fg-subtle mt-1">{esc.explanation} {esc.nextStep}</p>
           })()}
         </div>
         <div className="md:shrink-0 flex flex-col items-stretch md:items-end gap-2">
-          <span className="text-xs text-slate-500" title={new Date(item.since).toLocaleString()}>
+          <span className="text-xs text-fg-subtle" title={new Date(item.since).toLocaleString()}>
             {formatRelativeAge(item.since)}
           </span>
           {!isWide && <div className="flex flex-wrap gap-2">
             {a.fix && (
-              <Link to={a.fix.to} className={PRIMARY}>{a.fix.text}</Link>
+              <Link to={a.fix.to} className={linkBtn('primary')}>{a.fix.text}</Link>
             )}
-            {a.reply && <Link to={`/tasks/${item.task_id}`} className={PRIMARY}>Reply</Link>}
+            {a.reply && <Link to={`/tasks/${item.task_id}`} className={linkBtn('primary')}>Reply</Link>}
             {a.retry && (
-              <button
+              <Button
+                size="sm"
+                variant={a.fix ? 'secondary' : 'primary'}
                 disabled={busy[item.task_id]}
                 onClick={() => run(item.task_id, () => api.tasks.rerun(item.task_id), refreshAll)}
-                className={a.fix ? SECONDARY : PRIMARY}
+                className={BTN}
               >
                 Retry
-              </button>
+              </Button>
             )}
             {a.approve && (
-              <button
+              <Button
+                size="sm"
+                variant="primary"
                 disabled={busy[item.task_id]}
                 onClick={() => run(item.task_id, () => api.tasks.approve(item.task_id), refreshAll)}
-                className={`${BTN} bg-emerald-600 hover:bg-emerald-500`}
+                className={BTN}
               >
                 Approve
-              </button>
+              </Button>
             )}
             {a.requestChanges && (
-              <button
+              <Button
+                size="sm"
+                variant="danger"
                 disabled={busy[item.task_id]}
                 onClick={() => setNoteOpen((o) => ({ ...o, [item.task_id]: !o[item.task_id] }))}
-                className={`${BTN} bg-red-700 hover:bg-red-600`}
+                className={BTN}
               >
                 Request changes
-              </button>
+              </Button>
             )}
             {!a.reply && (
-              <Link to={`/tasks/${item.task_id}`} className={SECONDARY}>Open</Link>
+              <Link to={`/tasks/${item.task_id}`} className={linkBtn('secondary')}>Open</Link>
             )}
           </div>}
         </div>
@@ -304,34 +315,38 @@ export default function InboxPage() {
         return (
           <Row key={`fx:${task.id}`} to={`/tasks/${task.id}`} error={isWide ? undefined : errors[`fx:${task.id}`]} {...rowProps(e)}>
             <div className="min-w-0 break-words">
-              <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-slate-200 hover:text-slate-50 hover:underline">
+              <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-fg hover:text-fg hover:underline">
                 {task.title}
               </Link>
               {effects.map((ef) => (
-                <p key={ef.kind} className="text-xs text-red-300 mt-1">
+                <p key={ef.kind} className="text-xs text-danger mt-1">
                   {sideEffectText(ef)}
                   {ef.last_error ? `: ${ef.last_error}` : ''}
                 </p>
               ))}
             </div>
             <div className="md:shrink-0 flex flex-col items-stretch md:items-end gap-2">
-              <span className="text-xs text-slate-500">{formatRelativeAge(since)}</span>
+              <span className="text-xs text-fg-subtle">{formatRelativeAge(since)}</span>
               {!isWide && (
                 <>
-                  <button
+                  <Button
+                    size="sm"
+                    variant="secondary"
                     disabled={busy[`fx:${task.id}`]}
                     onClick={() => run(`fx:${task.id}`, () => api.tasks.dismissSideEffects(task.id), refreshEffects)}
-                    className={SECONDARY}
+                    className={BTN}
                   >
                     Dismiss
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="primary"
                     disabled={busy[`fx:${task.id}`]}
                     onClick={() => run(`fx:${task.id}`, () => api.tasks.retrySideEffects(task.id), refreshEffects)}
-                    className={PRIMARY}
+                    className={BTN}
                   >
                     Retry
-                  </button>
+                  </Button>
                 </>
               )}
             </div>
@@ -343,31 +358,35 @@ export default function InboxPage() {
         return (
           <Row key={`su:${task.id}`} to={`/tasks/${task.id}`} error={isWide ? undefined : errors[`su:${task.id}`]} {...rowProps(e)}>
             <div className="min-w-0 break-words">
-              <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-slate-200 hover:text-slate-50 hover:underline">
+              <Link to={`/tasks/${task.id}`} className="text-sm font-medium text-fg hover:text-fg hover:underline">
                 {task.title}
               </Link>
-              <p className="text-xs text-amber-300 mt-1">
+              <p className="text-xs text-warning mt-1">
                 The source issue was edited after approval. Review the new text before it reaches the agent.
               </p>
             </div>
             <div className="md:shrink-0 flex flex-col items-stretch md:items-end gap-2">
-              <span className="text-xs text-slate-500">{formatRelativeAge(since)}</span>
+              <span className="text-xs text-fg-subtle">{formatRelativeAge(since)}</span>
               {!isWide && <div className="flex flex-wrap gap-2">
-                <Link to={`/tasks/${task.id}`} className={SECONDARY}>Review</Link>
-                <button
+                <Link to={`/tasks/${task.id}`} className={linkBtn('secondary')}>Review</Link>
+                <Button
+                  size="sm"
+                  variant="secondary"
                   disabled={busy[`su:${task.id}`]}
                   onClick={() => run(`su:${task.id}`, () => api.tasks.discardSourceUpdate(task.id), refreshEffects)}
-                  className={SECONDARY}
+                  className={BTN}
                 >
                   Discard
-                </button>
-                <button
+                </Button>
+                <Button
+                  size="sm"
+                  variant="primary"
                   disabled={busy[`su:${task.id}`]}
                   onClick={() => run(`su:${task.id}`, () => api.tasks.applySourceUpdate(task.id), refreshEffects)}
-                  className={PRIMARY}
+                  className={BTN}
                 >
                   Apply
-                </button>
+                </Button>
               </div>}
             </div>
           </Row>
@@ -378,24 +397,26 @@ export default function InboxPage() {
         return (
           <Row key={`pv:${p.provider}`} error={isWide ? undefined : errors[`pv:${p.provider}`]} {...rowProps(e)}>
             <div className="min-w-0 break-words">
-              <p className="text-sm font-medium text-slate-200">
+              <p className="text-sm font-medium text-fg">
                 {providerLabel(p.provider)} dispatch is paused
               </p>
-              <p className="text-xs text-slate-400 mt-1">
+              <p className="text-xs text-fg-muted mt-1">
                 {p.reason || 'The provider failed to authenticate.'} Queued tasks wait until it resumes.{' '}
                 <Link to="/settings/health" className="underline">View health</Link>
               </p>
             </div>
             <div className="md:shrink-0 flex flex-col items-stretch md:items-end gap-2">
-              <span className="text-xs text-slate-500">{formatRelativeAge(p.paused_at)}</span>
+              <span className="text-xs text-fg-subtle">{formatRelativeAge(p.paused_at)}</span>
               {!isWide && (
-                <button
+                <Button
+                  size="sm"
+                  variant="primary"
                   disabled={busy[`pv:${p.provider}`]}
                   onClick={() => run(`pv:${p.provider}`, () => resume(p.provider), () => undefined)}
-                  className={PRIMARY}
+                  className={BTN}
                 >
                   Resume
-                </button>
+                </Button>
               )}
             </div>
           </Row>
@@ -453,32 +474,37 @@ export default function InboxPage() {
   ))
 
   return (
-    <div className={`p-4 md:p-6 mx-auto ${isWide ? 'max-w-[1600px]' : 'max-w-5xl'}`} data-testid="inbox-page">
-      <div className="flex items-baseline gap-2 mb-6">
-        <h1 className="text-xl font-semibold text-slate-100">Inbox</h1>
-        <span data-testid="inbox-total" className="text-sm text-slate-400">({total})</span>
-        {isWide && (
-          <button
-            aria-label="Keyboard shortcuts"
-            data-testid="inbox-shortcuts-toggle"
-            aria-expanded={legend}
-            onClick={() => setLegend((v) => !v)}
-            className="ml-1 w-5 h-5 text-xs rounded-full border border-slate-600 text-slate-400 hover:text-slate-200"
-          >
-            ?
-          </button>
-        )}
-      </div>
+    <PageFrame
+      title="Inbox"
+      width={isWide ? 'wide' : 'default'}
+      testId="inbox-page"
+      titleAdornment={
+        <>
+          <span data-testid="inbox-total" className="text-sm text-fg-muted">({total})</span>
+          {isWide && (
+            <button
+              aria-label="Keyboard shortcuts"
+              data-testid="inbox-shortcuts-toggle"
+              aria-expanded={legend}
+              onClick={() => setLegend((v) => !v)}
+              className="ml-1 w-5 h-5 text-xs rounded-full border border-border text-fg-muted hover:text-fg"
+            >
+              ?
+            </button>
+          )}
+        </>
+      }
+    >
 
       {isWide && legend && (
-        <p data-testid="inbox-shortcuts" className="text-xs text-slate-400 mb-4 -mt-3">
+        <p data-testid="inbox-shortcuts" className="text-xs text-fg-muted mb-4 -mt-3">
           <kbd>j</kbd>/<kbd>k</kbd> or ↑/↓ move · <kbd>a</kbd> approve · <kbd>r</kbd> request changes · <kbd>Enter</kbd>/<kbd>o</kbd> open full page · <kbd>Esc</kbd> close note/legend · <kbd>?</kbd> all shortcuts
         </p>
       )}
 
       {total === 0 && (
-        <div data-testid="inbox-empty" className="text-center text-slate-500 py-16">
-          <p className="text-sm text-slate-300">You&apos;re all caught up.</p>
+        <div data-testid="inbox-empty" className="text-center text-fg-subtle py-16">
+          <p className="text-sm text-fg">You&apos;re all caught up.</p>
           <p className="text-xs mt-1">Nothing is waiting on you. New items appear here as agents need you.</p>
         </div>
       )}
@@ -491,6 +517,6 @@ export default function InboxPage() {
       ) : (
         sectionsNode
       )}
-    </div>
+    </PageFrame>
   )
 }
