@@ -168,3 +168,19 @@ func firstN(s string, n int) (string, bool) {
 	}
 	return string(r[:n]), true
 }
+
+// OneLine returns the first non-empty line of s with any leading markdown
+// marker stripped, capped at n runes (with an ellipsis when cut).
+func OneLine(s string, n int) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "#-*> "))
+		if line == "" {
+			continue
+		}
+		if r := []rune(line); len(r) > n {
+			return strings.TrimSpace(string(r[:n])) + "…"
+		}
+		return line
+	}
+	return ""
+}
