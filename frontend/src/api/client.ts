@@ -35,6 +35,8 @@ export type ReviewComment = Schemas['ReviewComment']
 export type TaskSourceComment = Schemas['TaskSourceComment']
 export type AgentRun = Schemas['AgentRun']
 export type RunVerification = Schemas['RunVerification']
+export type TaskPreviewCapture = Schemas['TaskPreviewCapture']
+export type TaskPreviewImage = Schemas['TaskPreviewImage']
 export type ReviewBrief = Schemas['ReviewBrief']
 export type RiskFlag = Schemas['RiskFlag']
 export type RiskFlagCode = Schemas['RiskFlagCode']
@@ -311,6 +313,9 @@ export const api = {
     // reviewBrief is the deterministic risk-flag/verification summary for a
     // task waiting on a human (GET /tasks/{id}/review-brief).
     reviewBrief: (id: string) => request<ReviewBrief>(`/tasks/${id}/review-brief`),
+    // previews is the latest preview screenshot capture (capture is null when
+    // none was taken).
+    previews: (id: string) => request<{ capture: TaskPreviewCapture | null }>(`/tasks/${id}/previews`),
     getRun: (id: string, runId: string) => request<AgentRun>(`/tasks/${id}/runs/${runId}`),
     // listLabelHistory returns the task's label-transition audit trail
     // (oldest first), including the resolved actor for human transitions.

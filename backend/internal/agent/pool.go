@@ -84,6 +84,11 @@ type Pool struct {
 	// verify.go). Optional: with it nil, a repo that has a verify command
 	// configured fails closed (the task is escalated to a human).
 	Verifier Verifier
+	// Previewer captures UI screenshots for the review brief (see preview.go).
+	// Optional: nil turns the feature off.
+	Previewer PreviewCapturer
+	// UploadDir is where preview PNGs are stored (shared with attachments).
+	UploadDir string
 
 	// running tracks the cancel func for each in-flight run so a human can stop
 	// a runaway agent (see Cancel). Populated in run(), removed when it returns.
@@ -547,6 +552,10 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	}
 
 	p.applyTerminalTransition(ctx, job, result, finalStatus, resolvedLabel, log)
+
+	if finalStatus == "completed" && result.Outcome == "success" && resolvedLabel != "" {
+		p.maybeCapturePreview(ctx, job, resolvedLabel, log)
+	}
 
 	// Clear rate-limit backoff on any non-rate-limited completion (success or normal failure).
 	// Conditional on no newer 429 having landed since this run started, so a

@@ -127,6 +127,9 @@ type createRepoBody struct {
 	// default timeout.
 	VerifyCommand        *string `json:"verify_command"`
 	VerifyTimeoutSeconds *int64  `json:"verify_timeout_seconds"`
+	PreviewCommand       *string `json:"preview_command"`
+	PreviewRoutes        *string `json:"preview_routes"`
+	PreviewPathsGlob     *string `json:"preview_paths_glob"`
 }
 
 func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -222,6 +225,11 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	pv, ok := resolvePreview(w, body.PreviewCommand, body.PreviewRoutes, body.PreviewPathsGlob, previewSettings{})
+	if !ok {
+		return
+	}
+
 	repo, err := h.q.CreateRepo(r.Context(), gen.CreateRepoParams{
 		ID:                            uuid.NewString(),
 		Name:                          body.Name,
@@ -241,6 +249,9 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		RuntimeLanguages:              runtimeLanguages,
 		VerifyCommand:                 verifyCommand,
 		VerifyTimeoutSeconds:          verifyTimeout,
+		PreviewCommand:                pv.Command,
+		PreviewRoutes:                 pv.Routes,
+		PreviewPathsGlob:              pv.PathsGlob,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -656,6 +667,9 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		// Verify fields: nil (omitted) leaves the stored value untouched.
 		VerifyCommand        *string `json:"verify_command"`
 		VerifyTimeoutSeconds *int64  `json:"verify_timeout_seconds"`
+		PreviewCommand       *string `json:"preview_command"`
+		PreviewRoutes        *string `json:"preview_routes"`
+		PreviewPathsGlob     *string `json:"preview_paths_glob"`
 	}
 	if err := json.Unmarshal(bodyBytes, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -816,6 +830,11 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	pv, ok := resolvePreview(w, body.PreviewCommand, body.PreviewRoutes, body.PreviewPathsGlob, previewSettings{existing.PreviewCommand, existing.PreviewRoutes, existing.PreviewPathsGlob})
+	if !ok {
+		return
+	}
+
 	if issueSyncEnabled != 0 {
 		if remoteURL == nil || *remoteURL == "" {
 			Err(w, http.StatusBadRequest, "issue sync requires a GitHub remote_url")
@@ -889,6 +908,9 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		RuntimeLanguages:              runtimeLanguages,
 		VerifyCommand:                 verifyCommand,
 		VerifyTimeoutSeconds:          verifyTimeout,
+		PreviewCommand:                pv.Command,
+		PreviewRoutes:                 pv.Routes,
+		PreviewPathsGlob:              pv.PathsGlob,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -1048,4 +1070,71 @@ func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmpName, path)
+}
+
+const (
+	maxPreviewRoutes    = 20
+	maxPreviewRouteLen  = 512
+	maxPreviewGlobLines = 50
+)
+
+// previewSettings are the three repo preview_* values as stored (newline
+// separated lists).
+type previewSettings struct {
+	Command   string
+	Routes    string
+	PathsGlob string
+}
+
+func previewLines(s string) []string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	var out []string
+	for _, l := range strings.Split(s, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// resolvePreview validates the preview_command / preview_routes /
+// preview_paths_glob request fields. A nil field keeps the current value.
+func resolvePreview(w http.ResponseWriter, cmd, routes, globs *string, cur previewSettings) (previewSettings, bool) {
+	out := cur
+	if cmd != nil {
+		c := strings.TrimSpace(*cmd)
+		if len(c) > maxVerifyCommandLen || strings.ContainsRune(c, 0) {
+			Err(w, http.StatusBadRequest, fmt.Sprintf("preview_command must be at most %d characters and contain no NUL bytes", maxVerifyCommandLen))
+			return out, false
+		}
+		out.Command = c
+	}
+	if routes != nil {
+		lines := previewLines(*routes)
+		if len(lines) > maxPreviewRoutes {
+			Err(w, http.StatusBadRequest, fmt.Sprintf("preview_routes allows at most %d routes", maxPreviewRoutes))
+			return out, false
+		}
+		for _, l := range lines {
+			if !strings.HasPrefix(l, "/") || strings.ContainsAny(l, " \t\x00") || strings.Contains(l, "://") || len(l) > maxPreviewRouteLen {
+				Err(w, http.StatusBadRequest, fmt.Sprintf("preview_routes: %q must be a path starting with / (no spaces or scheme, at most %d characters)", l, maxPreviewRouteLen))
+				return out, false
+			}
+		}
+		out.Routes = strings.Join(lines, "\n")
+	}
+	if globs != nil {
+		if strings.ContainsRune(*globs, 0) {
+			Err(w, http.StatusBadRequest, "preview_paths_glob must not contain NUL bytes")
+			return out, false
+		}
+		lines := previewLines(*globs)
+		if len(lines) > maxPreviewGlobLines {
+			Err(w, http.StatusBadRequest, fmt.Sprintf("preview_paths_glob allows at most %d lines", maxPreviewGlobLines))
+			return out, false
+		}
+		out.PathsGlob = strings.Join(lines, "\n")
+	}
+	return out, true
 }

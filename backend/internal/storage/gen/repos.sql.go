@@ -21,9 +21,9 @@ func (q *Queries) CountTasksByRepo(ctx context.Context, repoID string) (int64, e
 }
 
 const createRepo = `-- name: CreateRepo :one
-INSERT INTO repos (id, name, path, remote_url, workflow_id, issue_sync_enabled, issue_sync_label, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label, runtime_languages, verify_command, verify_timeout_seconds)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label, runtime_languages, verify_command, verify_timeout_seconds
+INSERT INTO repos (id, name, path, remote_url, workflow_id, issue_sync_enabled, issue_sync_label, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label, runtime_languages, verify_command, verify_timeout_seconds, preview_command, preview_routes, preview_paths_glob)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label, runtime_languages, verify_command, verify_timeout_seconds, preview_command, preview_routes, preview_paths_glob
 `
 
 type CreateRepoParams struct {
@@ -45,6 +45,9 @@ type CreateRepoParams struct {
 	RuntimeLanguages              string  `json:"runtime_languages"`
 	VerifyCommand                 string  `json:"verify_command"`
 	VerifyTimeoutSeconds          int64   `json:"verify_timeout_seconds"`
+	PreviewCommand                string  `json:"preview_command"`
+	PreviewRoutes                 string  `json:"preview_routes"`
+	PreviewPathsGlob              string  `json:"preview_paths_glob"`
 }
 
 func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) (Repo, error) {
@@ -67,6 +70,9 @@ func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) (Repo, e
 		arg.RuntimeLanguages,
 		arg.VerifyCommand,
 		arg.VerifyTimeoutSeconds,
+		arg.PreviewCommand,
+		arg.PreviewRoutes,
+		arg.PreviewPathsGlob,
 	)
 	var i Repo
 	err := row.Scan(
@@ -91,6 +97,9 @@ func (q *Queries) CreateRepo(ctx context.Context, arg CreateRepoParams) (Repo, e
 		&i.RuntimeLanguages,
 		&i.VerifyCommand,
 		&i.VerifyTimeoutSeconds,
+		&i.PreviewCommand,
+		&i.PreviewRoutes,
+		&i.PreviewPathsGlob,
 	)
 	return i, err
 }
@@ -105,7 +114,7 @@ func (q *Queries) DeleteRepo(ctx context.Context, id string) error {
 }
 
 const getRepo = `-- name: GetRepo :one
-SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label, runtime_languages, verify_command, verify_timeout_seconds FROM repos WHERE id = ?
+SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label, runtime_languages, verify_command, verify_timeout_seconds, preview_command, preview_routes, preview_paths_glob FROM repos WHERE id = ?
 `
 
 func (q *Queries) GetRepo(ctx context.Context, id string) (Repo, error) {
@@ -133,12 +142,15 @@ func (q *Queries) GetRepo(ctx context.Context, id string) (Repo, error) {
 		&i.RuntimeLanguages,
 		&i.VerifyCommand,
 		&i.VerifyTimeoutSeconds,
+		&i.PreviewCommand,
+		&i.PreviewRoutes,
+		&i.PreviewPathsGlob,
 	)
 	return i, err
 }
 
 const listIssueSyncRepos = `-- name: ListIssueSyncRepos :many
-SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label, runtime_languages, verify_command, verify_timeout_seconds FROM repos WHERE issue_sync_enabled != 0 ORDER BY created_at DESC
+SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label, runtime_languages, verify_command, verify_timeout_seconds, preview_command, preview_routes, preview_paths_glob FROM repos WHERE issue_sync_enabled != 0 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListIssueSyncRepos(ctx context.Context) ([]Repo, error) {
@@ -172,6 +184,9 @@ func (q *Queries) ListIssueSyncRepos(ctx context.Context) ([]Repo, error) {
 			&i.RuntimeLanguages,
 			&i.VerifyCommand,
 			&i.VerifyTimeoutSeconds,
+			&i.PreviewCommand,
+			&i.PreviewRoutes,
+			&i.PreviewPathsGlob,
 		); err != nil {
 			return nil, err
 		}
@@ -187,7 +202,7 @@ func (q *Queries) ListIssueSyncRepos(ctx context.Context) ([]Repo, error) {
 }
 
 const listRepos = `-- name: ListRepos :many
-SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label, runtime_languages, verify_command, verify_timeout_seconds FROM repos ORDER BY created_at DESC
+SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label, runtime_languages, verify_command, verify_timeout_seconds, preview_command, preview_routes, preview_paths_glob FROM repos ORDER BY created_at DESC
 `
 
 func (q *Queries) ListRepos(ctx context.Context) ([]Repo, error) {
@@ -221,6 +236,9 @@ func (q *Queries) ListRepos(ctx context.Context) ([]Repo, error) {
 			&i.RuntimeLanguages,
 			&i.VerifyCommand,
 			&i.VerifyTimeoutSeconds,
+			&i.PreviewCommand,
+			&i.PreviewRoutes,
+			&i.PreviewPathsGlob,
 		); err != nil {
 			return nil, err
 		}
@@ -236,7 +254,7 @@ func (q *Queries) ListRepos(ctx context.Context) ([]Repo, error) {
 }
 
 const listReposPage = `-- name: ListReposPage :many
-SELECT r.id, r.name, r.path, r.remote_url, r.workflow_id, r.created_at, r.issue_sync_enabled, r.issue_sync_label, r.clone_status, r.clone_error, r.issue_writeback_enabled, r.pr_review_auto_transition_enabled, r.issue_sync_update_policy, r.issue_sync_gone_action, r.issue_sync_gone_label, r.issue_comment_sync_enabled, r.max_concurrent_runs, r.issue_writeback_label, r.runtime_languages, r.verify_command, r.verify_timeout_seconds FROM repos r
+SELECT r.id, r.name, r.path, r.remote_url, r.workflow_id, r.created_at, r.issue_sync_enabled, r.issue_sync_label, r.clone_status, r.clone_error, r.issue_writeback_enabled, r.pr_review_auto_transition_enabled, r.issue_sync_update_policy, r.issue_sync_gone_action, r.issue_sync_gone_label, r.issue_comment_sync_enabled, r.max_concurrent_runs, r.issue_writeback_label, r.runtime_languages, r.verify_command, r.verify_timeout_seconds, r.preview_command, r.preview_routes, r.preview_paths_glob FROM repos r
 WHERE (
     ?1 = ''
     OR r.created_at < (SELECT created_at FROM repos WHERE id = ?1)
@@ -288,6 +306,9 @@ func (q *Queries) ListReposPage(ctx context.Context, arg ListReposPageParams) ([
 			&i.RuntimeLanguages,
 			&i.VerifyCommand,
 			&i.VerifyTimeoutSeconds,
+			&i.PreviewCommand,
+			&i.PreviewRoutes,
+			&i.PreviewPathsGlob,
 		); err != nil {
 			return nil, err
 		}
@@ -321,9 +342,9 @@ func (q *Queries) SetRepoCloneStatus(ctx context.Context, arg SetRepoCloneStatus
 
 const updateRepo = `-- name: UpdateRepo :one
 UPDATE repos
-SET name = ?, path = ?, remote_url = ?, workflow_id = ?, issue_sync_enabled = ?, issue_sync_label = ?, issue_writeback_enabled = ?, pr_review_auto_transition_enabled = ?, issue_sync_update_policy = ?, issue_sync_gone_action = ?, issue_sync_gone_label = ?, issue_comment_sync_enabled = ?, max_concurrent_runs = ?, issue_writeback_label = ?, runtime_languages = ?, verify_command = ?, verify_timeout_seconds = ?
+SET name = ?, path = ?, remote_url = ?, workflow_id = ?, issue_sync_enabled = ?, issue_sync_label = ?, issue_writeback_enabled = ?, pr_review_auto_transition_enabled = ?, issue_sync_update_policy = ?, issue_sync_gone_action = ?, issue_sync_gone_label = ?, issue_comment_sync_enabled = ?, max_concurrent_runs = ?, issue_writeback_label = ?, runtime_languages = ?, verify_command = ?, verify_timeout_seconds = ?, preview_command = ?, preview_routes = ?, preview_paths_glob = ?
 WHERE id = ?
-RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label, runtime_languages, verify_command, verify_timeout_seconds
+RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label, runtime_languages, verify_command, verify_timeout_seconds, preview_command, preview_routes, preview_paths_glob
 `
 
 type UpdateRepoParams struct {
@@ -344,6 +365,9 @@ type UpdateRepoParams struct {
 	RuntimeLanguages              string  `json:"runtime_languages"`
 	VerifyCommand                 string  `json:"verify_command"`
 	VerifyTimeoutSeconds          int64   `json:"verify_timeout_seconds"`
+	PreviewCommand                string  `json:"preview_command"`
+	PreviewRoutes                 string  `json:"preview_routes"`
+	PreviewPathsGlob              string  `json:"preview_paths_glob"`
 	ID                            string  `json:"id"`
 }
 
@@ -366,6 +390,9 @@ func (q *Queries) UpdateRepo(ctx context.Context, arg UpdateRepoParams) (Repo, e
 		arg.RuntimeLanguages,
 		arg.VerifyCommand,
 		arg.VerifyTimeoutSeconds,
+		arg.PreviewCommand,
+		arg.PreviewRoutes,
+		arg.PreviewPathsGlob,
 		arg.ID,
 	)
 	var i Repo
@@ -391,6 +418,9 @@ func (q *Queries) UpdateRepo(ctx context.Context, arg UpdateRepoParams) (Repo, e
 		&i.RuntimeLanguages,
 		&i.VerifyCommand,
 		&i.VerifyTimeoutSeconds,
+		&i.PreviewCommand,
+		&i.PreviewRoutes,
+		&i.PreviewPathsGlob,
 	)
 	return i, err
 }

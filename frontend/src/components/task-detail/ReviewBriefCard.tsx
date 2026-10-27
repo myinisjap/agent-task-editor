@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, type ReviewBrief } from '../../api/client'
 import RiskFlagChips from '../shared/RiskFlagChips'
+import PreviewStrip from './PreviewStrip'
 import { STATUS_STYLE } from './VerificationPanel'
 
 function formatDuration(ms: number): string {
@@ -96,6 +97,8 @@ export default function ReviewBriefCard({ taskId, refreshKey = '' }: { taskId: s
           </>
         )}
       </Row>
+
+      <PreviewStrip taskId={taskId} refreshKey={refreshKey} label="Preview" />
 
       <Row label="Verified">
         <div className="flex flex-wrap items-center gap-2">

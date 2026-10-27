@@ -33,6 +33,7 @@ SQLite with WAL (Write-Ahead Logging) enabled for better concurrent read perform
 - `chat.sql` — chat session CRUD (interactive PTY terminal sessions)
 - `repos.sql` — repository CRUD
 - `runs.sql` — agent run CRUD and log storage
+- `previews.sql` — task preview screenshot captures + images
 - `dashboard.sql` — aggregate queries for the dashboard
 - `repo_lessons.sql` — curated per-repo/global lessons injected into agent prompts
 - `review_comments.sql` — inline diff review comment CRUD, both locally-created and GitHub-ingested

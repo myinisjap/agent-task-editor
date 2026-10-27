@@ -308,6 +308,16 @@ func main() {
 	subtaskCoord.GitName, subtaskCoord.GitEmail = pool.GitName, pool.GitEmail
 	pool.Subtasks = subtaskCoord
 	pool.Verifier = providers.CommandVerifier{}
+	previewScript := cfg.PreviewCaptureScript
+	if previewScript == "" {
+		previewScript = "/opt/preview-capture/capture.mjs"
+	}
+	pool.Previewer = providers.PreviewCapturer{ScriptPath: previewScript}
+	pool.UploadDir = uploadDir
+	// A capture left running by a previous process can never finish.
+	if err := gen.New(db.SQL()).MarkStalePreviewCapturesFailed(context.Background()); err != nil {
+		slog.Warn("preview: mark stale captures failed", "err", err)
+	}
 	dispatcher := agent.NewDispatcher(db.SQL(), pool, engine, providerFactory)
 	dispatcher.RateLimits = rateLimits
 	dispatcher.ProviderPauses = providerPauses
