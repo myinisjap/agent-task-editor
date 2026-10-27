@@ -9,6 +9,7 @@ export default function SettingsPage() {
     { to: '/settings/pricing', label: 'Pricing' },
     { to: '/settings/intake-rules', label: 'Intake Rules' },
     { to: '/settings/templates', label: 'Templates' },
+    { to: '/settings/lessons', label: 'Lessons' },
     {
       to: '/settings/health',
       label: 'Health',

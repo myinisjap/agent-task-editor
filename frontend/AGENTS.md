@@ -27,7 +27,8 @@ src/
 │   ├── board/        AgentGroupColumn, AgentLogEntry, GitStateBadge, NewTaskModal, TaskBoard, TaskCard, TaskColumn
 │   ├── chat/          TerminalKeyBar (mobile Esc/Tab/arrow/Ctrl row for the chat terminal)
 │   ├── diff/          FileDiffViewer (syntax-highlighted git diff + inline review comments)
-│   └── shared/        ApiTokenGate, GitHubAuthWarning, NavSidebar, WorkflowFlowchart
+│   ├── lessons/       LessonForm, LessonsPanel (repo/global lessons), RememberLessonModal
+│   └── shared/        ApiTokenGate, GitHubAuthWarning, NavSidebar, Toast, WorkflowFlowchart
 ├── pages/
 │   ├── BoardPage.tsx        Main Kanban board
 │   ├── TaskDetailPage.tsx   Task detail + live agent log stream

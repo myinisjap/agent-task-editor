@@ -150,6 +150,9 @@ With `issue_sync_update_policy: always`, an edit to the source issue made *after
 ### `DELETE /tasks/{id}/source-update`
 Discards the held source-issue edit without applying it. The same upstream text is not held again; a further edit to the issue is. Returns the task. `404` / `409` as above.
 
+### `GET /tasks/{id}/human-decisions`
+Returns the human replies to the task's `waiting_human` runs, oldest first (replied rows only; unanswered questions are excluded). Each item has `run_id`, `label`, `escalation_reason`, `question`, `reply`, `replied_at`, `asked_at` and `agent_name` (empty if the agent config was deleted). `404` if the task does not exist.
+
 ### `GET /tasks/{id}/label-history`
 Returns the task's label-transition audit trail (`task_label_history`), oldest first:
 
@@ -462,6 +465,36 @@ Update a template (same body as create). `404` if missing, `409` on name conflic
 Delete a template. Returns `204`.
 
 ---
+
+## Skills
+
+Provider-neutral Agent Skills library (see [skills.md](skills.md)). Admin-only:
+the MCP sidecar's scoped tokens are rejected with 403 on every route here.
+
+### `GET /skills`
+List skills: `[{id, name, description, enabled, created_at, updated_at}]`.
+
+### `POST /skills`
+Create from JSON `{"skill_md": "---\nname: x\ndescription: y\n---\n..."}` or an
+`application/zip` body (max 1 MB; path traversal, absolute paths and symlinks
+are rejected). `201` with the skill; `400` for invalid frontmatter/zip; `409`
+if the name exists.
+
+### `GET /skills/{id}`
+The skill plus `skill_md` and `files`.
+
+### `PATCH /skills/{id}`
+`{"enabled"?: bool, "skill_md"?: string}` or a zip body to replace content (the
+frontmatter `name` must stay the same).
+
+### `DELETE /skills/{id}`
+Deletes the skill and its folder; detaches it from all agents and repos.
+
+### `GET /agents/{id}/skills`, `PUT /agents/{id}/skills`
+### `GET /repos/{id}/skills`, `PUT /repos/{id}/skills`
+`PUT` replaces the attached set: `{"skill_ids": ["..."]}`; `400` on an unknown
+id. At run start the union of the agent's and repo's enabled skills is copied
+into the worktree.
 
 ## Repo Lessons
 

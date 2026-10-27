@@ -47,7 +47,13 @@ function NotePanel({ note }: { note: string }) {
 
 // Human-triggered entries show the named API token's actor, or "you" when no
 // named tokens (API_TOKENS) are configured and the actor is empty.
-export default function LabelHistoryList({ history }: { history: TaskLabelHistoryEntry[] }) {
+export default function LabelHistoryList({
+  history,
+  onRemember,
+}: {
+  history: TaskLabelHistoryEntry[]
+  onRemember?: (text: string) => void
+}) {
   if (history.length === 0) return null
 
   return (
@@ -80,6 +86,15 @@ export default function LabelHistoryList({ history }: { history: TaskLabelHistor
               )}
             </div>
             {entry.note && <NotePanel note={entry.note} />}
+            {onRemember && entry.trigger === 'human' && entry.note && (
+              <button
+                onClick={() => onRemember(entry.note ?? '')}
+                aria-label="Remember for this repo"
+                className="ml-2 mt-0.5 text-[11px] text-blue-400 hover:text-blue-300 hover:underline"
+              >
+                Remember for this repo
+              </button>
+            )}
           </div>
         ))}
       </div>

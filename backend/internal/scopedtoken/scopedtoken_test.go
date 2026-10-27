@@ -92,3 +92,20 @@ func TestChatProfileGrants(t *testing.T) {
 		}
 	}
 }
+
+func TestGrant_NeverAllowsSkills(t *testing.T) {
+	paths := []string{"/api/v1/skills", "/api/v1/skills/abc", "/api/v1/agents/abc/skills", "/api/v1/repos/abc/skills"}
+	grants := []Grant{{Kind: KindRun, RunID: "r", TaskID: "t1"}, {Kind: KindChat, Chat: "c"}}
+	for _, p := range []string{"readonly", "full", "admin"} {
+		grants = append(grants, Grant{Kind: KindChat, Chat: "c", Profile: p})
+	}
+	for _, g := range grants {
+		for _, p := range paths {
+			for _, m := range []string{"GET", "POST", "PUT", "PATCH", "DELETE"} {
+				if g.Allows(m, p) {
+					t.Errorf("grant %+v must not allow %s %s", g, m, p)
+				}
+			}
+		}
+	}
+}
