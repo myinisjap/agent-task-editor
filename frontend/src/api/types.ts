@@ -1559,6 +1559,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/human-decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a task's human replies to waiting_human runs
+         * @description Replied decisions only (question-only rows are excluded), oldest first. These are the same replies shown to later runs under HUMAN DECISIONS ON THIS TASK.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskHumanDecision"][];
+                    };
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/runs": {
         parameters: {
             query?: never;
@@ -1633,6 +1680,54 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["RunVerification"][];
                     };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/review-brief": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Review brief for a task
+         * @description Deterministic risk flags, change summary, latest verification, run/rework/cost totals and the latest agent summary. Diff-derived parts are cached per branch head. Advisory only; no LLM calls.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The review brief. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReviewBrief"];
+                    };
+                };
+                /** @description Task not found. */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
                 };
             };
         };
@@ -2304,6 +2399,381 @@ export interface paths {
                 };
             };
         };
+        trace?: never;
+    };
+    "/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List skills */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Skills sorted by name */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Skill"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Create a skill from a SKILL.md body or a zip of a skill folder
+         * @description Send JSON `{skill_md}` or an `application/zip` body (max 1 MB, at most 200 files; SKILL.md at the root or in a single top-level folder). Zips with path traversal, absolute paths or symlinks are rejected.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        skill_md: string;
+                    };
+                    "application/zip": string;
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Skill"];
+                    };
+                };
+                /** @description Invalid SKILL.md frontmatter or unsafe zip */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description A skill with that name already exists */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/skills/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get a skill with its SKILL.md and file list */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The skill */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Skill"];
+                    };
+                };
+                /** @description Skill not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Delete a skill (also detaches it everywhere) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Skill not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Enable/disable a skill and/or replace its content
+         * @description JSON `{enabled?, skill_md?}` or an `application/zip` body replacing the content. Replacement content must keep the skill's name.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        enabled?: boolean;
+                        skill_md?: string;
+                    };
+                    "application/zip": string;
+                };
+            };
+            responses: {
+                /** @description Updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Skill"];
+                    };
+                };
+                /** @description Invalid content or name mismatch */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Skill not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/agents/{id}/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** List skills attached to an agent config */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Attached skills */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Skill"][];
+                    };
+                };
+                /** @description Agent config not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        /** Replace the set of skills attached to an agent config */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SkillIDs"];
+                };
+            };
+            responses: {
+                /** @description The new attached set */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Skill"][];
+                    };
+                };
+                /** @description Unknown skill id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Agent config not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{id}/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** List skills attached to a repo */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Attached skills */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Skill"][];
+                    };
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        /** Replace the set of skills attached to a repo */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SkillIDs"];
+                };
+            };
+            responses: {
+                /** @description The new attached set */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Skill"][];
+                    };
+                };
+                /** @description Unknown skill id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/schedules": {
@@ -5104,6 +5574,75 @@ export interface components {
              * @description When the task started needing a human; the list is sorted by this ascending.
              */
             since: string;
+            /** @description Review-brief flag codes; present only for human_gate items whose branch diff could be computed and raised at least one flag. */
+            risk_flags?: components["schemas"]["RiskFlagCode"][];
+        };
+        /**
+         * @description Deterministic, advisory risk flag computed from the task's branch diff. migration - a migrations/ path, a .sql file named like schema, or DDL (CREATE/ALTER/DROP TABLE|INDEX|VIEW|TRIGGER) in a .sql file. auth_or_security - path contains auth, oauth, token, secret, middleware, crypto, password, credential, jwt, csrf, cors, permission, security or session, or a .env* file. dependencies - manifests/lockfiles (go.mod, package.json, requirements*.txt, Cargo.*, ...) or a Dockerfile FROM change. tests_removed - a test file deleted, net test functions removed, or skip/only markers added. ci_config - .github/workflows, .gitea/workflows or .gitlab-ci.yml. large_change - more than 800 changed lines (lockfiles/generated excluded) or more than 25 files. outside_plan_scope - the plan in agent_notes lists files and the diff touches others (skipped when the plan has no file list).
+         * @enum {string}
+         */
+        RiskFlagCode: "migration" | "auth_or_security" | "dependencies" | "tests_removed" | "ci_config" | "large_change" | "outside_plan_scope";
+        RiskFlag: {
+            code: components["schemas"]["RiskFlagCode"];
+            /** @description Human-readable explanation of why the flag fired. */
+            reason: string;
+            /** @description Offending files (at most 10); empty for large_change. */
+            files: string[];
+        };
+        /** @description Deterministic summary shown above the diff when a task is waiting on a human. No LLM is involved; flags are advisory and never approve anything. */
+        ReviewBrief: {
+            /** @description Whether the task's label is currently a human gate. */
+            human_gate: boolean;
+            changed: {
+                files: number;
+                additions: number;
+                deletions: number;
+                /** @description Up to 10 files with the most churn. */
+                top_files: {
+                    path: string;
+                    /** @enum {string} */
+                    status: "added" | "modified" | "deleted" | "renamed";
+                    additions: number;
+                    deletions: number;
+                }[];
+            };
+            risk_flags: components["schemas"]["RiskFlag"][];
+            /** @description Latest verify-command result; null when none ran. */
+            verification: {
+                status: string;
+                command: string;
+                exit_code: number | null;
+                duration_ms: number;
+                /** @description Last ~20 lines (at most 2000 chars) of output. */
+                output_tail: string;
+                truncated: boolean;
+                /** Format: date-time */
+                created_at: string;
+            } | null;
+            runs: {
+                total: number;
+                failed: number;
+                /** @description Transitions into a label the task already visited. */
+                rework_loops: number;
+                cost_usd: number;
+                /** @description True when some run's cost could not be priced. */
+                cost_unknown: boolean;
+            };
+            /** @description Latest store_info from a run (first 1500 chars), else the tail of agent_notes; null when both are empty. */
+            agent_summary: {
+                /** @enum {string} */
+                source: "stored_info" | "agent_notes";
+                run_id: string;
+                agent_name: string;
+                text: string;
+                truncated: boolean;
+            } | null;
+            /** @description False when the task has no branch or it cannot be resolved. */
+            diff_available: boolean;
+            /** @description The diff exceeded the size limit; numbers are best effort. */
+            truncated: boolean;
+            /** Format: date-time */
+            computed_at: string;
         };
         /** @description The provider/model/API-key (env vars) triple, split out of AgentConfig so it can be shared/reused by chat sessions and agent configs alike. */
         ProviderConfig: {
@@ -5308,6 +5847,26 @@ export interface components {
             blocked_by_count: number;
             /** @description Count of dependents */
             blocking_count: number;
+        };
+        /** @description An Agent Skills folder (SKILL.md with name + description frontmatter, plus optional files) in the provider-neutral skills library. Trusted admin config: only the normal API token can read or write it, never an MCP sidecar scoped token. Enabled skills attached to an agent config or its repo are copied into the run's worktree. */
+        Skill: {
+            id: string;
+            /** @description Unique slug from the SKILL.md frontmatter */
+            name: string;
+            /** @description From the SKILL.md frontmatter */
+            description: string;
+            enabled: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description SKILL.md contents (GET /skills/{id} only) */
+            skill_md?: string;
+            /** @description Relative file paths (GET /skills/{id} only) */
+            files?: string[];
+        };
+        SkillIDs: {
+            skill_ids: string[];
         };
         /** @description Reusable pre-filled title/description/type for recurring shapes of work (e.g. "upgrade dependency X", "fix flaky test"). Applied in the new-task form; creating a task from a template just pre-fills fields. */
         TaskTemplate: {
@@ -5785,6 +6344,20 @@ export interface components {
              * @description When this row was ingested
              */
             created_at: string;
+        };
+        /** @description A human reply to a waiting_human run, shown to later runs under HUMAN DECISIONS ON THIS TASK. Only replied rows are returned. */
+        TaskHumanDecision: {
+            run_id: string;
+            label: string;
+            escalation_reason: string;
+            question: string;
+            reply: string | null;
+            /** Format: date-time */
+            replied_at: string | null;
+            /** Format: date-time */
+            asked_at: string;
+            /** @description Empty when the agent config was deleted */
+            agent_name: string;
         };
         AgentRun: {
             id: string;

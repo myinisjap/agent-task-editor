@@ -87,7 +87,7 @@ func TestEnsureWorktree_StaleWorktreePath_Reprovisions(t *testing.T) {
 	if _, ok := existingWorktree(task); ok {
 		t.Fatalf("existingWorktree must not report a stale, deleted path as usable")
 	}
-	res, err := d.worktreeSetup(task, repoRow, nil, slog.Default())(ctx)
+	res, err := d.worktreeSetup(task, repoRow, nil, "", "", slog.Default())(ctx)
 	if err != nil {
 		t.Fatalf("worktreeSetup: %v", err)
 	}

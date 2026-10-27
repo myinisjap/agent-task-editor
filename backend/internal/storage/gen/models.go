@@ -37,6 +37,11 @@ type AgentConfig struct {
 	EscalationLadder          string    `json:"escalation_ladder"`
 }
 
+type AgentConfigSkill struct {
+	AgentConfigID string `json:"agent_config_id"`
+	SkillID       string `json:"skill_id"`
+}
+
 type AgentConfigVersion struct {
 	ID            string    `json:"id"`
 	AgentConfigID string    `json:"agent_config_id"`
@@ -198,6 +203,11 @@ type RepoLesson struct {
 	LastCheckedAt *time.Time `json:"last_checked_at"`
 }
 
+type RepoSkill struct {
+	RepoID  string `json:"repo_id"`
+	SkillID string `json:"skill_id"`
+}
+
 type RunVerification struct {
 	RunID      string    `json:"run_id"`
 	TaskID     string    `json:"task_id"`
@@ -208,6 +218,15 @@ type RunVerification struct {
 	Truncated  int64     `json:"truncated"`
 	DurationMs int64     `json:"duration_ms"`
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+type Skill struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Enabled     int64     `json:"enabled"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type Task struct {

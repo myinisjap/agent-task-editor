@@ -475,6 +475,13 @@ export function ReposHelp() {
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
+        <h3 className="text-slate-100 font-semibold">Lessons</h3>
+        <p>
+          The <strong>Lessons</strong> button on a repo opens short notes (max 300 characters)
+          that are shown to future agent runs on that repo. Add, edit, retire or delete them there.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
         <h3 className="text-slate-100 font-semibold">Agent runtime (toolchain pins)</h3>
         <p>
           The <strong>Agent runtime</strong> section pins the language versions agent runs use for

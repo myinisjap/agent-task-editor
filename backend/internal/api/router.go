@@ -10,6 +10,8 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
+	"github.com/myinisjap/agent-task-editor/backend/internal/reviewbrief"
+	"github.com/myinisjap/agent-task-editor/backend/internal/skills"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -53,7 +55,9 @@ type RouterDeps struct {
 	// for the api_auth health warning.
 	ListenAddr string
 	UploadDir  string
-	MCPBinary  string
+	// SkillsDir is where skill folders are stored (SKILLS_DIR).
+	SkillsDir string
+	MCPBinary string
 
 	BackupDir      string
 	BackupInterval time.Duration
@@ -84,6 +88,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	repoBaseDir, uploadDir := deps.RepoBaseDir, deps.UploadDir
 	dispatcherLiveness := deps.DispatcherLiveness
 	q := gen.New(db.SQL())
+	briefCache := reviewbrief.NewCache()
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, deps.Canceller, deps.ReplyDispatcher, deps.BlockReasons)
 	tasksH.SetPublisher(hub)
@@ -98,6 +103,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	lessonsH := handlers.NewLessonsHandler(q)
 	schedulesH := handlers.NewSchedulesHandler(q)
 	intakeRulesH := handlers.NewIntakeRulesHandler(q)
+	skillsH := handlers.NewSkillsHandler(q, db.SQL(), skills.Store{Dir: deps.SkillsDir})
 	// dispatcherLiveness may also implement GlobalCostReporter (as
 	// *agent.Dispatcher does) to supply the dashboard's global spend-ceiling
 	// snapshot/forecast — same optional-capability pattern as HealthHandler.
@@ -214,6 +220,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Patch("/tasks/{id}/notes", tasksH.UpdateNotes)
 			r.Post("/tasks/{id}/rerun", tasksH.Rerun)
 			r.Get("/tasks/{id}/diff", tasksH.Diff)
+			r.Get("/tasks/{id}/review-brief", handlers.NewReviewBriefHandler(q, briefCache).Get)
 			r.Get("/tasks/{id}/pr-url", tasksH.PRURL)
 			r.Post("/tasks/{id}/pr", tasksH.CreatePR)
 			r.Post("/tasks/{id}/side-effects/retry", tasksH.RetrySideEffects)
@@ -330,6 +337,8 @@ func NewRouter(deps RouterDeps) http.Handler {
 
 			// Ingested source-issue comment thread (see tasksource.Importer)
 			r.Get("/tasks/{id}/source-comments", tasksH.ListSourceComments)
+			// Human replies to waiting_human runs (for "Remember for this repo").
+			r.Get("/tasks/{id}/human-decisions", tasksH.ListHumanDecisions)
 
 			// Mints a short-lived, single-use ticket for authenticating the
 			// WebSocket upgrade (GET /ws?ticket=...) without putting the
@@ -383,8 +392,21 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Get("/repos/{id}/tree", reposH.Tree)
 			r.Post("/repos/{id}/runtime/detect", reposH.Detect)
 
+			// Skills library (admin config; deliberately absent from scopedtoken routes)
+			r.Get("/skills", skillsH.List)
+			r.Post("/skills", skillsH.Create)
+			r.Get("/skills/{id}", skillsH.Get)
+			r.Patch("/skills/{id}", skillsH.Update)
+			r.Delete("/skills/{id}", skillsH.Delete)
+			r.Get("/agents/{id}/skills", skillsH.ListForAgent)
+			r.Put("/agents/{id}/skills", skillsH.SetForAgent)
+			r.Get("/repos/{id}/skills", skillsH.ListForRepo)
+			r.Put("/repos/{id}/skills", skillsH.SetForRepo)
+
 			// Dashboard
-			r.Get("/needs-me", handlers.NewNeedsMeHandler(q).List)
+			needsMeH := handlers.NewNeedsMeHandler(q)
+			needsMeH.SetBriefCache(briefCache)
+			r.Get("/needs-me", needsMeH.List)
 			r.Get("/dashboard", dashH.Get)
 			r.Get("/dashboard/cost-by-task", dashH.CostByTask)
 			r.Get("/dashboard/outcome-quality", outcomeQualityH.Get)

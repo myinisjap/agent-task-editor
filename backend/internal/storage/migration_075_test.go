@@ -5,19 +5,19 @@ import (
 	"testing"
 )
 
-// TestMigration074BackfillsVersionOne seeds an agent config at schema 73,
+// TestMigration075BackfillsVersionOne seeds an agent config at schema 74,
 // migrates up, and checks a v1 snapshot row exists with the expected keys
 // and normalised types.
-func TestMigration074BackfillsVersionOne(t *testing.T) {
-	db, err := Open(t.TempDir() + "/mig074.db")
+func TestMigration075BackfillsVersionOne(t *testing.T) {
+	db, err := Open(t.TempDir() + "/mig075.db")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	defer func() { _ = db.Close() }()
 	sqlDB := db.SQL()
 	m := newMigrator063(t, db)
-	if err := m.Migrate(73); err != nil {
-		t.Fatalf("to 73: %v", err)
+	if err := m.Migrate(74); err != nil {
+		t.Fatalf("to 74: %v", err)
 	}
 	assertColumnAbsent(t, sqlDB, "agent_runs", "agent_config_version")
 	for _, stmt := range []string{
@@ -29,7 +29,7 @@ func TestMigration074BackfillsVersionOne(t *testing.T) {
 			t.Fatalf("seed: %v", err)
 		}
 	}
-	if err := m.Migrate(74); err != nil {
+	if err := m.Migrate(75); err != nil {
 		t.Fatalf("up to 74: %v", err)
 	}
 	assertColumnPresent(t, sqlDB, "agent_runs", "agent_config_version")

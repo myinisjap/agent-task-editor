@@ -54,7 +54,7 @@ func newTestRouterFull(t *testing.T, apiToken string, named map[string]string, m
 		DB: db, Engine: engine, Hub: hub, CORSOrigins: "*", AllowedHosts: "*",
 		BearerToken: apiToken, NamedTokens: named,
 		MetricsToken: metricsToken, MetricsPublic: metricsPublic,
-		UploadDir: t.TempDir(), BackupInterval: 24 * time.Hour, BackupKeep: 7,
+		UploadDir: t.TempDir(), SkillsDir: t.TempDir(), BackupInterval: 24 * time.Hour, BackupKeep: 7,
 		Version: "dev", MaxWorkers: 5,
 	})
 }
@@ -279,7 +279,7 @@ func newWSTestRouter(t *testing.T, apiToken string, namedTokens map[string]strin
 	r := api.NewRouter(api.RouterDeps{
 		DB: db, Engine: engine, Hub: hub, CORSOrigins: "*",
 		BearerToken: apiToken, NamedTokens: namedTokens,
-		UploadDir: t.TempDir(), BackupInterval: 24 * time.Hour, BackupKeep: 7,
+		UploadDir: t.TempDir(), SkillsDir: t.TempDir(), BackupInterval: 24 * time.Hour, BackupKeep: 7,
 		Version: "dev", Terminal: fakeRouterTerminal{}, MaxWorkers: 5,
 	})
 	return r, hub
@@ -411,6 +411,24 @@ func TestAPIv1_ScopedSidecarTokens(t *testing.T) {
 		{http.MethodPost, "/api/v1/tasks/task-1/subtasks"},
 		{http.MethodDelete, "/api/v1/tasks/task-1"},
 	} {
+		if c := do(tc.m, tc.p, chat); c != http.StatusForbidden {
+			t.Errorf("chat token %s %s: want 403, got %d", tc.m, tc.p, c)
+		}
+	}
+
+	// Skills are trusted admin config: no scoped token (run or chat, nor any
+	// MCP tool profile) may read or write them.
+	for _, tc := range []struct{ m, p string }{
+		{http.MethodGet, "/api/v1/skills"},
+		{http.MethodPost, "/api/v1/skills"},
+		{http.MethodPatch, "/api/v1/skills/abc"},
+		{http.MethodDelete, "/api/v1/skills/abc"},
+		{http.MethodPut, "/api/v1/agents/abc/skills"},
+		{http.MethodPut, "/api/v1/repos/abc/skills"},
+	} {
+		if c := do(tc.m, tc.p, run); c != http.StatusForbidden {
+			t.Errorf("run token %s %s: want 403, got %d", tc.m, tc.p, c)
+		}
 		if c := do(tc.m, tc.p, chat); c != http.StatusForbidden {
 			t.Errorf("chat token %s %s: want 403, got %d", tc.m, tc.p, c)
 		}
