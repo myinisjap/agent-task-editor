@@ -3717,6 +3717,171 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/{id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** List an agent config's version history (newest first, with snapshots) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentConfigVersion"][];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        /** Get one version snapshot */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    version: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentConfigVersion"];
+                    };
+                };
+                /** @description Non-integer version */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/versions/{version}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore a version as a new version
+         * @description Applies the snapshot onto the current config (name, labels, enabled and priority are kept) and records a new version, unless the result is identical to the current config. Provider configs referenced by the snapshot are re-validated.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    version: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        note?: string;
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentConfig"];
+                    };
+                };
+                /** @description Snapshot references a deleted provider config or is otherwise invalid */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/models": {
         parameters: {
             query?: never;
@@ -4393,13 +4558,15 @@ export interface paths {
         };
         /**
          * Per-agent-config outcome-quality analytics (rework, cost-to-done, review burden, human-touch, escalation)
-         * @description Returns the OutcomeQuality analytics table: per-agent-config rework rate, cost-to-done, review burden, human-touch rate, and escalation rate — metrics that answer "did the work stick", which Dashboard.agent_config_stats' success_rate_percent cannot. Computed from a full scan of task_label_history and agent_runs, so results are cached for a short TTL rather than being live — see docs/api.md#dashboard. Optionally scoped to a single repo via ?repo_id=, since aggregate cross-repo numbers can hide a config that is excellent on one codebase and poor on another.
+         * @description Returns the OutcomeQuality analytics table: per-agent-config rework rate, cost-to-done, review burden, human-touch rate, and escalation rate — metrics that answer "did the work stick", which Dashboard.agent_config_stats' success_rate_percent cannot. Computed from a full scan of task_label_history and agent_runs, so results are cached for a short TTL rather than being live — see docs/api.md#dashboard. Optionally scoped to a single repo via ?repo_id=, since aggregate cross-repo numbers can hide a config that is excellent on one codebase and poor on another. Use ?group_by= to break rows down by version, provider config, repo or task type (default: config).
          */
         get: {
             parameters: {
                 query?: {
                     /** @description When set, every metric is recomputed over only the tasks belonging to this repo instead of the cached all-repos snapshot. */
                     repo_id?: string;
+                    /** @description Break rows down by this dimension. Invalid values return 400. */
+                    group_by?: "config" | "version" | "provider_config" | "repo" | "task_type";
                 };
                 header?: never;
                 path?: never;
@@ -5950,6 +6117,40 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        /** @description Behaviour-relevant fields of an agent config at one version. name, labels, enabled and priority are not versioned. */
+        AgentConfigSnapshot: {
+            system_prompt?: string;
+            provider_config_id?: string;
+            fallback_provider_config_ids?: string[];
+            escalation_ladder?: components["schemas"]["EscalationRung"][];
+            effort?: string;
+            permission_mode?: string;
+            max_turns?: number;
+            max_tokens?: number;
+            timeout_secs?: number;
+            /** Format: double */
+            max_cost_usd?: number;
+            max_retries?: number;
+            retry_backoff_secs?: number;
+            resume_sessions?: boolean;
+            subtasks_enabled?: boolean;
+            max_subtasks?: number;
+            enabled_plugins?: string[];
+            enabled_mcp_servers?: string[];
+            command_allowlist?: string[];
+            command_denylist?: string[];
+        };
+        AgentConfigVersion: {
+            id: string;
+            agent_config_id: string;
+            /** @description 1-based, increasing per agent config. */
+            version: number;
+            snapshot: components["schemas"]["AgentConfigSnapshot"];
+            actor_id?: string | null;
+            note?: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
         EscalationRung: {
             /** @description Existing provider config used on this rung. */
             provider_config_id: string;
@@ -5962,6 +6163,8 @@ export interface components {
             fallback_provider_config_ids?: string[];
         };
         AgentConfig: {
+            /** @description Latest version number in the config's version history (null when it has none yet). Create/update bodies accept an optional `note` recorded on the new version. */
+            current_version?: number | null;
             id: string;
             name: string;
             /** @description References a ProviderConfig (provider/model/env), which is created and managed separately via /provider-configs and may be shared with other agent configs or chat sessions. */
@@ -6181,6 +6384,8 @@ export interface components {
             provider_config_id?: string | null;
             /** @description Escalation ladder rung the run used (0 = the agent config's own provider/effort); null when the agent config had no ladder. */
             ladder_rung?: number | null;
+            /** @description Agent config version the run was dispatched with; null for runs from before version history. */
+            agent_config_version?: number | null;
             /** @enum {string} */
             status: "pending" | "running" | "completed" | "failed" | "waiting_human" | "cancelled" | "interrupted";
             feedback?: string | null;
@@ -6405,8 +6610,23 @@ export interface components {
         };
         /** @description Per-agent-config outcome-quality analytics: did the work stick, not just did the run exit cleanly. See [docs/api.md#dashboard](../docs/api.md#dashboard) for full metric definitions, attribution rules, and caveats. */
         OutcomeQuality: {
+            /**
+             * @description Dimension the rows are broken down by.
+             * @enum {string}
+             */
+            group_by?: "config" | "version" | "provider_config" | "repo" | "task_type";
             configs: {
                 agent_config_id: string;
+                /** @description Unique row id (config id + dimension value). */
+                group_key?: string;
+                /** @description Display label of the dimension value (v3, unversioned, provider config name, repo name, task type); absent for group_by=config. */
+                group_value?: string;
+                version?: number | null;
+                provider_config_id?: string;
+                repo_id?: string;
+                task_type?: string;
+                /** @description true when tasks_done is below 5. */
+                low_sample?: boolean;
                 agent_name: string;
                 provider: string;
                 /** @description Number of tasks whose last run was under this config and which reached a terminal label. Shared denominator for avg_cost_to_done_usd, rework_rate_percent, human_touch_rate_percent, and avg_review_comments. */

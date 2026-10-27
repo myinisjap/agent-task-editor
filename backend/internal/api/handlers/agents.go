@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
@@ -107,6 +108,9 @@ type agentConfigView struct {
 	ResumeSessions   bool                `json:"resume_sessions"`
 	SubtasksEnabled  bool                `json:"subtasks_enabled"`
 	ProviderConfig   *gen.ProviderConfig `json:"provider_config,omitempty"`
+	// CurrentVersion is the latest version number in the config's history
+	// (nil when it has none yet).
+	CurrentVersion *int64 `json:"current_version"`
 }
 
 // safeConfig builds the response view for an agent config, looking up its
@@ -131,6 +135,9 @@ func (h *AgentsHandler) safeConfig(r *http.Request, cfg gen.AgentConfig) agentCo
 			redacted := redactedProviderConfig(pc)
 			view.ProviderConfig = &redacted
 		}
+	}
+	if n, err := h.q.GetLatestAgentConfigVersionNumber(r.Context(), cfg.ID); err == nil && n > 0 {
+		view.CurrentVersion = &n
 	}
 	return view
 }
@@ -245,11 +252,12 @@ func (b *flexBool) UnmarshalJSON(data []byte) error {
 }
 
 type AgentsHandler struct {
-	q *gen.Queries
+	q  *gen.Queries
+	db *sql.DB
 }
 
-func NewAgentsHandler(q *gen.Queries) *AgentsHandler {
-	return &AgentsHandler{q: q}
+func NewAgentsHandler(q *gen.Queries, db *sql.DB) *AgentsHandler {
+	return &AgentsHandler{q: q, db: db}
 }
 
 // List returns a page of agent configs (enabled or not), newest first. Query
@@ -313,6 +321,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		PermissionMode    *string            `json:"permission_mode"`
 		FallbackIDs       []string           `json:"fallback_provider_config_ids"`
 		EscalationLadder  []agent.LadderRung `json:"escalation_ladder"`
+		Note              string             `json:"note"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -420,7 +429,16 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		startEnabled = 0
 	}
 
-	cfg, err := h.q.CreateAgentConfig(r.Context(), gen.CreateAgentConfigParams{
+	ctx := r.Context()
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	tq := h.q.WithTx(tx)
+
+	cfg, err := tq.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
 		ID:                        uuid.NewString(),
 		Name:                      body.Name,
 		ProviderConfigID:          body.ProviderConfigID,
@@ -449,10 +467,18 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	createNote := strings.TrimSpace(body.Note)
+	if createNote == "" {
+		createNote = "Created"
+	}
+	if _, err := recordVersion(ctx, tq, cfg, middleware.ActorFromContext(ctx), createNote); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	if startEnabled == 0 {
 		// disable the freshly created config
-		cfg, err = h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
+		cfg, err = tq.UpdateAgentConfig(ctx, gen.UpdateAgentConfigParams{
 			Name: cfg.Name, ProviderConfigID: cfg.ProviderConfigID,
 			SystemPrompt: cfg.SystemPrompt, Labels: cfg.Labels,
 			MaxTokens: cfg.MaxTokens, TimeoutSecs: cfg.TimeoutSecs, MaxTurns: cfg.MaxTurns,
@@ -472,11 +498,19 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		if err := tx.Commit(); err != nil {
+			Err(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		w.Header().Set("X-Label-Conflict", conflict)
 		JSON(w, http.StatusCreated, h.safeConfig(r, cfg))
 		return
 	}
 
+	if err := tx.Commit(); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	JSON(w, http.StatusCreated, h.safeConfig(r, cfg))
 }
 
@@ -505,6 +539,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		PermissionMode    *string             `json:"permission_mode"`
 		FallbackIDs       *[]string           `json:"fallback_provider_config_ids"`
 		EscalationLadder  *[]agent.LadderRung `json:"escalation_ladder"`
+		Note              *string             `json:"note"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -642,7 +677,20 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		permissionMode = *body.PermissionMode
 	}
 
-	cfg, err := h.q.UpdateAgentConfig(r.Context(), gen.UpdateAgentConfigParams{
+	ctx := r.Context()
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer func() { _ = tx.Rollback() }()
+	tq := h.q.WithTx(tx)
+	if err := ensureBaselineVersion(ctx, tq, existing); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	cfg, err := tq.UpdateAgentConfig(ctx, gen.UpdateAgentConfigParams{
 		Name:                      body.Name,
 		ProviderConfigID:          body.ProviderConfigID,
 		SystemPrompt:              body.SystemPrompt,
@@ -669,6 +717,20 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		ID:                        chi.URLParam(r, "id"),
 	})
 	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if behaviourChanged(existing, cfg) {
+		note := ""
+		if body.Note != nil {
+			note = strings.TrimSpace(*body.Note)
+		}
+		if _, err := recordVersion(ctx, tq, cfg, middleware.ActorFromContext(ctx), note); err != nil {
+			Err(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}

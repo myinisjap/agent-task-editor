@@ -883,6 +883,40 @@ components:
         updated_at:  { type: string, format: date-time }
       required: [id, name, description, labels, transitions, created_at, updated_at]
 
+    AgentConfigSnapshot:
+      type: object
+      description: "Behaviour-relevant fields of an agent config at one version. name, labels, enabled and priority are not versioned."
+      properties:
+        system_prompt: { type: string }
+        provider_config_id: { type: string }
+        fallback_provider_config_ids: { type: array, items: { type: string } }
+        escalation_ladder: { type: array, items: { $ref: "#/components/schemas/EscalationRung" } }
+        effort: { type: string }
+        permission_mode: { type: string }
+        max_turns: { type: integer }
+        max_tokens: { type: integer }
+        timeout_secs: { type: integer }
+        max_cost_usd: { type: number, format: double }
+        max_retries: { type: integer }
+        retry_backoff_secs: { type: integer }
+        resume_sessions: { type: boolean }
+        subtasks_enabled: { type: boolean }
+        max_subtasks: { type: integer }
+        enabled_plugins: { type: array, items: { type: string } }
+        enabled_mcp_servers: { type: array, items: { type: string } }
+        command_allowlist: { type: array, items: { type: string } }
+        command_denylist: { type: array, items: { type: string } }
+    AgentConfigVersion:
+      type: object
+      required: [id, agent_config_id, version, snapshot, created_at]
+      properties:
+        id: { type: string }
+        agent_config_id: { type: string }
+        version: { type: integer, description: "1-based, increasing per agent config." }
+        snapshot: { $ref: "#/components/schemas/AgentConfigSnapshot" }
+        actor_id: { type: string, nullable: true }
+        note: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
     EscalationRung:
       type: object
       required: [provider_config_id]
@@ -899,6 +933,7 @@ components:
     AgentConfig:
       type: object
       properties:
+        current_version: { type: integer, nullable: true, description: "Latest version number in the config's version history (null when it has none yet). Create/update bodies accept an optional `note` recorded on the new version." }
         id:            { type: string }
         name:          { type: string }
         provider_config_id:
@@ -1392,6 +1427,7 @@ components:
         agent_config_id:  { type: string, nullable: true, description: "Agent config that ran this task; set NULL if that config is later deleted." }
         provider_config_id: { type: string, nullable: true, description: "Provider config the run used (the agent config's primary or one of its fallbacks); null for runs from before provider fallbacks." }
         ladder_rung:      { type: integer, nullable: true, description: "Escalation ladder rung the run used (0 = the agent config's own provider/effort); null when the agent config had no ladder." }
+        agent_config_version: { type: integer, nullable: true, description: "Agent config version the run was dispatched with; null for runs from before version history." }
         status:           { type: string, enum: [pending, running, completed, failed, waiting_human, cancelled, interrupted] }
         feedback:         { type: string, nullable: true }
         stored_info:      { type: string, nullable: true, description: "Free-form info the agent stored for this run (via the MCP store_info tool); null when none." }
@@ -1639,6 +1675,8 @@ components:
               output_tokens:          { type: integer }
               cost_usd:               { type: number, format: double }
             required:
+              - group_key
+              - low_sample
               - agent_config_id
               - agent_name
               - provider
@@ -1814,6 +1852,7 @@ components:
         [docs/api.md#dashboard](../docs/api.md#dashboard) for full metric
         definitions, attribution rules, and caveats.
       properties:
+        group_by: { type: string, enum: [config, version, provider_config, repo, task_type], description: "Dimension the rows are broken down by." }
         configs:
           type: array
           items:
@@ -1834,6 +1873,13 @@ components:
               current label has workflow_labels.is_terminal set.
             properties:
               agent_config_id:            { type: string }
+              group_key: { type: string, description: "Unique row id (config id + dimension value)." }
+              group_value: { type: string, description: "Display label of the dimension value (v3, unversioned, provider config name, repo name, task type); absent for group_by=config." }
+              version: { type: integer, nullable: true }
+              provider_config_id: { type: string }
+              repo_id: { type: string }
+              task_type: { type: string }
+              low_sample: { type: boolean, description: "true when tasks_done is below 5." }
               agent_name:                 { type: string }
               provider:                   { type: string }
               tasks_done:
@@ -4171,6 +4217,74 @@ paths:
       responses:
         "204": { description: Deleted }
 
+  /agents/{id}/versions:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: List an agent config's version history (newest first, with snapshots)
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AgentConfigVersion" } }
+        "404": { description: Not found }
+
+  /agents/{id}/versions/{version}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: version
+        in: path
+        required: true
+        schema: { type: integer }
+    get:
+      summary: Get one version snapshot
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentConfigVersion" }
+        "400": { description: Non-integer version }
+        "404": { description: Not found }
+
+  /agents/{id}/versions/{version}/restore:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: version
+        in: path
+        required: true
+        schema: { type: integer }
+    post:
+      summary: Restore a version as a new version
+      description: >
+        Applies the snapshot onto the current config (name, labels, enabled and
+        priority are kept) and records a new version, unless the result is
+        identical to the current config. Provider configs referenced by the
+        snapshot are re-validated.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentConfig" }
+        "400": { description: Snapshot references a deleted provider config or is otherwise invalid }
+        "404": { description: Not found }
+
   /agents/models:
     get:
       summary: Get available models for a provider
@@ -4512,6 +4626,8 @@ paths:
         docs/api.md#dashboard. Optionally scoped to a single repo via
         ?repo_id=, since aggregate cross-repo numbers can hide a config that
         is excellent on one codebase and poor on another.
+        Use ?group_by= to break rows down by version, provider config, repo or
+        task type (default: config).
       parameters:
         - name: repo_id
           in: query
@@ -4520,6 +4636,10 @@ paths:
             belonging to this repo instead of the cached all-repos
             snapshot.
           schema: { type: string }
+        - name: group_by
+          in: query
+          description: Break rows down by this dimension. Invalid values return 400.
+          schema: { type: string, enum: [config, version, provider_config, repo, task_type], default: config }
       responses:
         "200":
           content:

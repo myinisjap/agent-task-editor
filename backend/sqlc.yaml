@@ -74,7 +74,8 @@ sql:
       - "internal/storage/migrations/072_repo_lessons.up.sql"
       - "internal/storage/migrations/073_agent_escalation_ladder.up.sql"
       - "internal/storage/migrations/074_skills.up.sql"
-      - "internal/storage/migrations/075_subtask_fanout.up.sql"
+      - "internal/storage/migrations/075_agent_config_versions.up.sql"
+      - "internal/storage/migrations/077_subtask_fanout.up.sql"
     gen:
       go:
         package: "gen"
