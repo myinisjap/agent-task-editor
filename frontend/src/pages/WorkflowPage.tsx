@@ -1,3 +1,5 @@
+import { Check, X } from 'lucide-react'
+import { Button, Icon, PageFrame } from '../components/ui'
 import { useEffect, useRef, useState } from 'react'
 import { api, authedRawFetch, type Workflow } from '../api/client'
 import { useWorkflowStore } from '../stores/workflow'
@@ -5,7 +7,6 @@ import WorkflowFlowchart from '../components/shared/WorkflowFlowchart'
 import { parseWorkflowYaml } from '../lib/parseWorkflowYaml'
 import { validateWorkflow, type WorkflowValidationError } from '../lib/validateWorkflow'
 import HelpModal from '../components/shared/HelpModal'
-import HelpButton from '../components/shared/HelpButton'
 import { WorkflowHelp } from '../components/shared/pageHelp'
 import ModalShell from '../components/shared/ModalShell'
 
@@ -44,42 +45,42 @@ function NewWorkflowModal({
       onClose={onClose}
       ariaLabel="New Workflow"
       initialFocusRef={inputRef}
-      className="bg-slate-900 border border-slate-700 rounded-lg shadow-xl p-6 w-full max-w-sm flex flex-col gap-4"
+      className="bg-surface-raised border border-border rounded-lg shadow-xl p-6 w-full max-w-sm flex flex-col gap-4"
     >
       <form
         onSubmit={handleSubmit}
         className="flex flex-col gap-4"
       >
-        <h2 className="text-lg font-semibold text-slate-100">New Workflow</h2>
+        <h2 className="text-lg font-semibold text-fg">New Workflow</h2>
 
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-slate-400 font-medium">Name *</label>
+          <label className="text-xs text-fg-muted font-medium">Name *</label>
           <input
             ref={inputRef}
             value={name}
             onChange={(e) => { setName(e.target.value); setError(null) }}
-            className="bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-accent"
+            className="bg-surface-sunken border border-border rounded px-3 py-2 text-sm text-fg focus:outline-none focus:ring-1 focus:ring-accent"
             placeholder="My Workflow"
           />
         </div>
 
         <div className="flex flex-col gap-1">
-          <label className="text-xs text-slate-400 font-medium">Description (optional)</label>
+          <label className="text-xs text-fg-muted font-medium">Description (optional)</label>
           <input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            className="bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-accent"
+            className="bg-surface-sunken border border-border rounded px-3 py-2 text-sm text-fg focus:outline-none focus:ring-1 focus:ring-accent"
             placeholder="A short description…"
           />
         </div>
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
+        {error && <p className="text-sm text-danger">{error}</p>}
 
         <div className="flex justify-end gap-2">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-1.5 text-sm rounded bg-slate-700 hover:bg-slate-600 text-slate-200 transition-colors"
+            className="px-4 py-1.5 text-sm rounded bg-border hover:bg-slate-600 text-fg transition-colors"
           >
             Cancel
           </button>
@@ -285,115 +286,122 @@ export default function WorkflowPage() {
   const noWorkflows = workflows.length === 0
 
   return (
-    <div className="flex flex-col h-full" data-testid="workflow-page">
-      {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 flex-shrink-0">
-        {/* Workflow Tab Bar */}
-        <div className="flex items-center gap-2 overflow-x-auto min-w-0">
-          {noWorkflows ? (
-            <span className="text-sm text-slate-500">No workflows yet</span>
-          ) : (
-            workflows.map((wf) => (
-              <div key={wf.id} className="relative flex items-center group">
-                <button
-                  onClick={() => loadWorkflow(wf.id)}
-                  className={`px-3 py-1.5 text-sm rounded-md transition-colors whitespace-nowrap ${
-                    wf.id === selectedWorkflowId
-                      ? 'bg-accent text-on-accent font-medium'
-                      : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
-                  }`}
-                >
-                  {wf.name}
-                </button>
-                {/* Delete button — visible on hover or when this tab is active */}
-                {deleteConfirmId === wf.id ? (
-                  <span className="flex items-center gap-1 ml-1">
-                    <button
-                      onClick={() => handleDelete(wf.id)}
-                      disabled={deleting}
-                      className="text-xs px-1.5 py-0.5 rounded bg-danger-solid hover:bg-danger-solid/90 text-on-accent disabled:opacity-50"
-                    >
-                      {deleting ? '…' : 'Confirm'}
-                    </button>
-                    <button
-                      onClick={() => setDeleteConfirmId(null)}
-                      className="text-xs px-1.5 py-0.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-300"
-                    >
-                      Cancel
-                    </button>
-                  </span>
-                ) : (
-                  <button
-                    onClick={() => setDeleteConfirmId(wf.id)}
-                    title={`Delete "${wf.name}"`}
-                    className="ml-1 opacity-0 group-hover:opacity-100 focus:opacity-100 text-slate-500 hover:text-red-400 transition-opacity text-xs leading-none"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            ))
-          )}
-
-          {/* New Workflow button */}
-          <button
-            onClick={() => setShowNewModal(true)}
-            className="flex items-center gap-1 px-3 py-1.5 text-sm rounded-md bg-slate-800 border border-dashed border-slate-600 text-slate-400 hover:border-slate-400 hover:text-slate-200 transition-colors whitespace-nowrap"
-          >
-            <span>+</span>
-            <span>New Workflow</span>
-          </button>
-        </div>
-
-        {/* Right actions */}
-        <div className="flex items-center gap-3 ml-4 flex-shrink-0">
-          {error && <span className="text-sm text-red-400">{error}</span>}
-          {saved && <span className="text-sm text-emerald-400">Saved ✓</span>}
-          <HelpButton onClick={() => setShowHelpModal(true)} title="How workflows work" />
-          <button
+    <PageFrame
+      title="Workflow"
+      width="full"
+      fill
+      testId="workflow-page"
+      help={{ onClick: () => setShowHelpModal(true), title: 'How workflows work' }}
+      actions={
+        <div className="flex items-center gap-3">
+          {error && <span className="text-sm text-danger">{error}</span>}
+          {saved && <span className="text-sm text-success inline-flex items-center gap-1"><Icon icon={Check} size="sm" />Saved</span>}
+          <Button
+            variant="primary"
             onClick={handleSave}
             disabled={saving || !selectedWorkflowId || yamlLoadedId !== selectedWorkflowId}
-            className="px-4 py-1.5 text-sm font-medium rounded bg-accent hover:bg-accent/90 text-on-accent disabled:opacity-50 transition-colors"
           >
             {saving ? 'Saving…' : 'Save'}
-          </button>
+          </Button>
         </div>
+      }
+    >
+      <div className="flex flex-col flex-1 min-h-0">
+      <div className="flex items-center gap-2 pb-4 border-b border-border shrink-0">
+      {/* Workflow Tab Bar */}
+      <div className="flex items-center gap-2 overflow-x-auto min-w-0">
+        {noWorkflows ? (
+          <span className="text-sm text-fg-subtle">No workflows yet</span>
+        ) : (
+          workflows.map((wf) => (
+            <div key={wf.id} className="relative flex items-center group">
+              <button
+                onClick={() => loadWorkflow(wf.id)}
+                className={`px-3 py-1.5 text-sm rounded-md transition-colors whitespace-nowrap ${
+                  wf.id === selectedWorkflowId
+                    ? 'bg-accent text-on-accent font-medium'
+                    : 'bg-surface-sunken text-fg-muted hover:bg-border hover:text-fg'
+                }`}
+              >
+                {wf.name}
+              </button>
+              {/* Delete button — visible on hover or when this tab is active */}
+              {deleteConfirmId === wf.id ? (
+                <span className="flex items-center gap-1 ml-1">
+                  <button
+                    onClick={() => handleDelete(wf.id)}
+                    disabled={deleting}
+                    className="text-xs px-1.5 py-0.5 rounded bg-danger-solid hover:bg-danger-solid/90 text-on-accent disabled:opacity-50"
+                  >
+                    {deleting ? '…' : 'Confirm'}
+                  </button>
+                  <button
+                    onClick={() => setDeleteConfirmId(null)}
+                    className="text-xs px-1.5 py-0.5 rounded bg-border hover:bg-border/70 text-fg-muted"
+                  >
+                    Cancel
+                  </button>
+                </span>
+              ) : (
+                <button
+                  onClick={() => setDeleteConfirmId(wf.id)}
+                  title={`Delete "${wf.name}"`}
+                    aria-label={`Delete "${wf.name}"`}
+                  className="ml-1 opacity-0 group-hover:opacity-100 focus:opacity-100 text-fg-subtle hover:text-danger transition-opacity text-xs leading-none"
+                >
+                  <Icon icon={X} size="sm" />
+                </button>
+              )}
+            </div>
+          ))
+        )}
+
+        {/* New Workflow button */}
+        <button
+          onClick={() => setShowNewModal(true)}
+          className="flex items-center gap-1 px-3 py-1.5 text-sm rounded-md bg-surface-sunken border border-dashed border-border text-fg-muted hover:border-fg-muted hover:text-fg transition-colors whitespace-nowrap"
+        >
+          <span>+</span>
+          <span>New Workflow</span>
+        </button>
+      </div>
+
       </div>
 
       {/* Empty state */}
       {noWorkflows ? (
-        <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">
+        <div className="flex-1 flex items-center justify-center text-fg-subtle text-sm">
           No workflows. Create one to get started.
         </div>
       ) : (
         <>
           {/* Split pane: flowchart left, YAML editor right */}
-          <div className="flex-1 p-4 min-h-0 flex flex-col md:flex-row gap-4 overflow-auto md:overflow-hidden">
+          <div className="flex-1 py-4 min-h-0 flex flex-col md:flex-row gap-4 overflow-auto md:overflow-hidden">
             {/* Left: Flowchart */}
             <div className="flex-1 min-w-0 min-h-[40vh] md:min-h-0 flex flex-col gap-1">
-              <span className="text-xs text-slate-500 font-medium uppercase tracking-wide">
+              <span className="text-xs text-fg-subtle font-medium uppercase tracking-wide">
                 Visual Preview
                 <span className="ml-1 normal-case font-normal">(reflects last saved state)</span>
               </span>
-              <div className="flex-1 rounded border border-slate-700 overflow-hidden bg-slate-950">
+              <div className="flex-1 rounded border border-border overflow-hidden bg-surface">
                 <WorkflowFlowchart workflow={workflow} />
               </div>
             </div>
 
             {/* Right: YAML Editor */}
             <div className="flex-1 min-w-0 min-h-[40vh] md:min-h-0 flex flex-col gap-1">
-              <span className="text-xs text-slate-500 font-medium uppercase tracking-wide">YAML Editor</span>
+              <span className="text-xs text-fg-subtle font-medium uppercase tracking-wide">YAML Editor</span>
               <textarea
                 value={yaml}
                 onChange={(e) => { setYaml(e.target.value); setError(null); setValidationErrors([]) }}
                 spellCheck={false}
-                className="flex-1 bg-slate-900 border border-slate-700 rounded p-4 text-sm text-slate-100 font-mono focus:outline-none focus:ring-1 focus:ring-accent resize-none"
+                className="flex-1 bg-surface-raised border border-border rounded p-4 text-sm text-fg font-mono focus:outline-none focus:ring-1 focus:ring-accent resize-none"
                 placeholder={selectedWorkflowId ? 'Enter YAML…' : 'Select a workflow to edit'}
               />
               {validationErrors.length > 0 && (
                 <div className="mt-1 flex flex-col gap-0.5 rounded border border-red-800 bg-red-950/40 px-3 py-2 max-h-32 overflow-y-auto">
                   {validationErrors.map((e, i) => (
-                    <p key={i} className="text-xs text-red-400">
+                    <p key={i} className="text-xs text-danger">
                       {e.label ? `[${e.label}] ` : ''}{e.message}
                     </p>
                   ))}
@@ -403,23 +411,23 @@ export default function WorkflowPage() {
           </div>
 
           {/* Legend */}
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-6 py-2 border-t border-slate-800 flex-shrink-0">
-            <span className="text-xs text-slate-500">Legend:</span>
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 py-2 border-t border-border flex-shrink-0">
+            <span className="text-xs text-fg-subtle">Legend:</span>
             <div className="flex items-center gap-1.5">
               <svg width="24" height="8"><line x1="0" y1="4" x2="24" y2="4" stroke="#22c55e" strokeWidth="2" markerEnd="url(#arrow)" /></svg>
-              <span className="text-xs text-slate-400">Success (bottom→top)</span>
+              <span className="text-xs text-fg-muted">Success (bottom→top)</span>
             </div>
             <div className="flex items-center gap-1.5">
               <svg width="24" height="8"><line x1="0" y1="4" x2="24" y2="4" stroke="#ef4444" strokeWidth="2" /></svg>
-              <span className="text-xs text-slate-400">Failure (right=agent / left=human)</span>
+              <span className="text-xs text-fg-muted">Failure (right=agent / left=human)</span>
             </div>
             <div className="flex items-center gap-1.5">
               <svg width="24" height="8"><line x1="0" y1="4" x2="24" y2="4" stroke="#94a3b8" strokeWidth="2" /></svg>
-              <span className="text-xs text-slate-400">Solid = human</span>
+              <span className="text-xs text-fg-muted">Solid = human</span>
             </div>
             <div className="flex items-center gap-1.5">
               <svg width="24" height="8"><line x1="0" y1="4" x2="24" y2="4" stroke="#94a3b8" strokeWidth="2" strokeDasharray="6 3" /></svg>
-              <span className="text-xs text-slate-400">Dashed = agent</span>
+              <span className="text-xs text-fg-muted">Dashed = agent</span>
             </div>
           </div>
         </>
@@ -439,6 +447,7 @@ export default function WorkflowPage() {
           <WorkflowHelp />
         </HelpModal>
       )}
-    </div>
+      </div>
+    </PageFrame>
   )
 }
