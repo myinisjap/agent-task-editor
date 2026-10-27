@@ -3015,7 +3015,7 @@ export interface paths {
                         /** @default 0 */
                         sort_order?: number;
                         /** @enum {string} */
-                        match_source?: "" | "manual" | "issue" | "schedule" | "subtask";
+                        match_source?: "" | "manual" | "issue" | "schedule" | "webhook" | "subtask";
                         match_repo_id?: string | null;
                         match_labels?: string[];
                         match_title_pattern?: string;
@@ -3194,7 +3194,7 @@ export interface paths {
                         /** @default 0 */
                         sort_order?: number;
                         /** @enum {string} */
-                        match_source?: "" | "manual" | "issue" | "schedule" | "subtask";
+                        match_source?: "" | "manual" | "issue" | "schedule" | "webhook" | "subtask";
                         match_repo_id?: string | null;
                         match_labels?: string[];
                         match_title_pattern?: string;
@@ -4937,6 +4937,427 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/intake-endpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List intake webhook endpoints */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Endpoints (secrets omitted) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntakeEndpoint"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Create an intake webhook endpoint
+         * @description The response includes the generated HMAC `secret`; it is not retrievable again.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["IntakeEndpointBody"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntakeEndpointCreated"];
+                    };
+                };
+                /** @description Validation error */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intake-endpoints/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get an intake webhook endpoint */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The endpoint (secret omitted) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntakeEndpoint"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        /**
+         * Update an intake webhook endpoint
+         * @description Does not change the secret; use rotate-secret.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["IntakeEndpointBody"];
+                };
+            };
+            responses: {
+                /** @description Updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntakeEndpoint"];
+                    };
+                };
+                /** @description Validation error */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        /** Delete an intake webhook endpoint */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intake-endpoints/{id}/rotate-secret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rotate an endpoint's HMAC secret
+         * @description The old secret stops working immediately. The new one is shown only in this response.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description New secret */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            secret: string;
+                        };
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intake-endpoints/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview how a sample payload would be turned into a task
+         * @description Renders the templates and runs intake rules. Creates nothing.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["IntakeEndpointTestRequest"];
+                };
+            };
+            responses: {
+                /** @description Rendered preview */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntakeEndpointTestResponse"];
+                    };
+                };
+                /** @description Missing or invalid payload */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No workflow resolvable */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intake/{endpoint_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deliver a signed event to an intake endpoint
+         * @description NOT behind bearer auth; authenticated by the HMAC-SHA256 of the raw body, keyed with the endpoint secret, sent as `X-ATE-Signature-256: sha256=<hex>` (constant-time compare). Body is capped at 256 KB, must be a JSON object, and each endpoint accepts at most 30 authenticated requests per minute. Creates a task (source `webhook`, on the workflow's gate label unless the endpoint sets a target label), or, when the dedupe key matches an open task, appends the event as an untrusted source comment to it. See docs/task-sources.md.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "X-ATE-Signature-256": string;
+                };
+                path: {
+                    endpoint_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description Deduplicated into an existing open task */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            task_id?: string;
+                            deduped?: boolean;
+                        };
+                    };
+                };
+                /** @description Task created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            task_id?: string;
+                            created?: boolean;
+                        };
+                    };
+                };
+                /** @description Unreadable body */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Missing or invalid signature */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Endpoint disabled */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown endpoint */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Body larger than 256 KB */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Content type is not application/json */
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No workflow resolvable for the endpoint */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Rate limit exceeded */
+                429: {
+                    headers: {
+                        "Retry-After"?: number;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/github/webhook": {
         parameters: {
             query?: never;
@@ -5979,7 +6400,7 @@ export interface components {
              * @description If set, the task is in a backed-off auto-retry state and will not be picked up by the dispatcher again until this time.
              */
             next_retry_at?: string | null;
-            /** @description Where the task was imported from ("github" for the GitHub Issues importer, "gitea" for the Gitea Issues importer against a self-hosted instance). Empty for manually created tasks. */
+            /** @description Where the task was imported from ("github" for the GitHub Issues importer, "gitea" for the Gitea Issues importer against a self-hosted instance, "webhook" for an intake webhook endpoint). Empty for manually created tasks. */
             source?: string;
             /** @description External item the task was imported from, unique within source (e.g. "owner/repo#123"). Empty for manually created tasks. */
             source_ref?: string;
@@ -6233,10 +6654,10 @@ export interface components {
             /** @description Lower sorts first; first-match-wins evaluation order among enabled rules. */
             sort_order: number;
             /**
-             * @description Empty = any. Only 'issue' and 'schedule' are currently evaluated by any code path.
+             * @description Empty = any. Only 'issue', 'schedule' and 'webhook' are currently evaluated by any code path.
              * @enum {string}
              */
-            match_source: "" | "manual" | "issue" | "schedule" | "subtask";
+            match_source: "" | "manual" | "issue" | "schedule" | "webhook" | "subtask";
             /** @description Null = any repo. */
             match_repo_id?: string | null;
             /** @description ANY-of, case-insensitive. Empty = any. */
@@ -6266,6 +6687,66 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /** @description A signed inbound webhook endpoint that creates tasks (see docs/task-sources.md). The HMAC secret is never included here; it is returned only by create and rotate-secret. */
+        IntakeEndpoint: {
+            id: string;
+            name: string;
+            repo_id: string;
+            /** @description Null = the repo's workflow. */
+            workflow_id: string | null;
+            /** @description Empty = the workflow's human-gate label. A non-gate label starts tasks without human review. */
+            target_label: string;
+            enabled: boolean;
+            title_template: string;
+            /** @description Empty = the payload pretty-printed as JSON. */
+            description_template: string;
+            /** @description Empty = never dedupe. */
+            dedupe_key_template: string;
+            /** Format: date-time */
+            last_received_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            secret_set: boolean;
+            /** @example /api/v1/intake/<id> */
+            url_path: string;
+        };
+        IntakeEndpointCreated: components["schemas"]["IntakeEndpoint"] & {
+            /** @description HMAC secret. Shown only once. */
+            secret: string;
+        };
+        IntakeEndpointBody: {
+            name: string;
+            repo_id: string;
+            workflow_id?: string | null;
+            target_label?: string;
+            /** @description Default true. */
+            enabled?: boolean;
+            title_template: string;
+            description_template?: string;
+            dedupe_key_template?: string;
+        };
+        /** @description Sample payload plus optional unsaved template overrides. */
+        IntakeEndpointTestRequest: {
+            payload: {
+                [key: string]: unknown;
+            };
+            title_template?: string;
+            description_template?: string;
+            dedupe_key_template?: string;
+        };
+        IntakeEndpointTestResponse: {
+            title: string;
+            description: string;
+            dedupe_key: string;
+            label: string;
+            workflow_id: string;
+            priority: number;
+            matched_rule_id: string | null;
+            /** @description Open task a real delivery would append a comment to. */
+            existing_task_id: string | null;
         };
         /** @description DB-backed settings for the automatic local-backup scheduler (see docs/backup.md). Changes take effect on the scheduler's next scheduled run without a restart. Whether the scheduler is enabled at all remains a deploy-time-only choice (BACKUP_DIR). */
         BackupSettings: {
