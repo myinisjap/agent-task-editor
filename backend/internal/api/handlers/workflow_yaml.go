@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -20,6 +21,7 @@ type yamlWorkflow struct {
 
 type yamlLabel struct {
 	Name         string `yaml:"name"`
+	DisplayName  string `yaml:"display_name,omitempty"`
 	Color        string `yaml:"color"`
 	SortOrder    int    `yaml:"sort_order"`
 	AgentIgnore  bool   `yaml:"agent_ignore,omitempty"`
@@ -59,6 +61,9 @@ func (wf yamlWorkflow) validate() error {
 		}
 	}
 	for _, l := range wf.Labels {
+		if _, err := validateLabelDisplayName(l.Name, l.DisplayName); err != nil {
+			return err
+		}
 		if err := validateLabelColor(l.Name, l.Color); err != nil {
 			return err
 		}
@@ -96,6 +101,7 @@ func (h *WorkflowsHandler) ExportWorkflowYAML(w http.ResponseWriter, r *http.Req
 		}
 		yl := yamlLabel{
 			Name:         l.Name,
+			DisplayName:  l.DisplayName,
 			Color:        l.Color,
 			SortOrder:    int(l.SortOrder),
 			AgentIgnore:  l.AgentIgnore != 0,
@@ -207,6 +213,7 @@ func (h *WorkflowsHandler) UpdateWorkflowYAML(w http.ResponseWriter, r *http.Req
 			ID:            uuid.NewString(),
 			WorkflowID:    wfID,
 			Name:          l.Name,
+			DisplayName:   strings.TrimSpace(l.DisplayName),
 			Color:         l.Color,
 			SortOrder:     int64(l.SortOrder),
 			AgentIgnore:   agentIgnore,
@@ -319,6 +326,7 @@ func (h *WorkflowsHandler) ImportWorkflowYAML(w http.ResponseWriter, r *http.Req
 			ID:            uuid.NewString(),
 			WorkflowID:    wfID,
 			Name:          l.Name,
+			DisplayName:   strings.TrimSpace(l.DisplayName),
 			Color:         l.Color,
 			SortOrder:     int64(l.SortOrder),
 			AgentIgnore:   agentIgnore,

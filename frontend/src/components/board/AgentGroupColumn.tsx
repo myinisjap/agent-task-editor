@@ -3,6 +3,7 @@ import { useDroppable } from '@dnd-kit/core'
 import type { Task, WorkflowLabel } from '../../api/client'
 import { api } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
+import { labelDisplayName, labelDisplayNameByName } from '../../lib/labelDisplay'
 import TaskCard from './TaskCard'
 import { dropStateClass, type DropState } from './dropState'
 
@@ -23,7 +24,7 @@ type Props = {
 /**
  * Renders a collapsed agent-only group of columns as a single board column.
  *
- * - No named header — just a subtle ⚙ icon and a task count badge.
+ * - Header: a subtle ⚙ icon, the grouped labels' display names, and a task count badge.
  * - Tasks show a small label badge indicating which actual column they're in.
  * - Dropping a task onto this column moves it to the first label in the group.
  */
@@ -32,6 +33,7 @@ export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLi
   const dropId = labels[0]?.name ?? '__agent-group__'
   const { setNodeRef, isOver } = useDroppable({ id: dropId })
   const remove = useTasksStore((s) => s.remove)
+  const groupTitle = labels.map(labelDisplayName).join(' · ')
 
   const handleDelete = useCallback(async (taskId: string) => {
     try {
@@ -52,11 +54,10 @@ export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLi
 
   return (
     <div className={`flex flex-col shrink-0${className ? ` ${className}` : ' w-72'}`}>
-      {/* Minimal header — no label name */}
       <div className="flex items-center justify-between px-3 py-2 mb-2">
-        <span className="text-xs text-slate-600 flex items-center gap-1.5">
+        <span className="text-xs text-slate-500 flex items-center gap-1.5 min-w-0" title={groupTitle}>
           <span>⚙</span>
-          <span className="uppercase tracking-wide font-semibold">agent</span>
+          <span className="font-semibold truncate">{groupTitle}</span>
         </span>
         <span className="text-xs text-slate-500 bg-slate-800 rounded-full px-2 py-0.5">{tasks.length}</span>
       </div>
@@ -74,7 +75,7 @@ export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLi
             costWarned={costWarnedTaskIds?.has(task.id)}
             onDelete={handleDelete}
             onDuplicate={onDuplicate}
-            showColumnLabel={task.label}
+            showColumnLabel={labelDisplayNameByName(task.label, labels)}
             selected={selectedIds?.has(task.id)}
             onToggleSelect={onToggleSelect ? handleToggleSelect : undefined}
           />

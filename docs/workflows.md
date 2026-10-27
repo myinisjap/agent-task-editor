@@ -14,6 +14,7 @@ A workflow is the state machine that governs how tasks progress. Each workflow c
 | `agent_ignore` | bool | Agents cannot move tasks to this label; dispatcher skips tasks already here |
 | `is_terminal` | bool | No further transitions; task is complete |
 | `create_pr` | bool | Any transition into this label pushes the task's branch and auto-opens (or reuses) a PR on the repo's forge (GitHub via the REST API, or Gitea). Requires a repo `remote_url` on a supported forge and working push/auth; best-effort, so a failure is logged and the transition still commits. Equivalent to clicking "Create PR" manually. The seeded Default workflow sets it on `review`. **At most one label per workflow may set this** — saving a workflow with two is rejected. |
+| `display_name` | string, optional | Human-readable title shown in the UI (column headers, chips, graph nodes), at most 64 characters, whitespace-trimmed. Empty or omitted means the UI derives one from `name` (`-`/`_` become spaces, sentence case: `not_ready` → "Not ready"). UI-only: `name` stays the identifier in the API, URLs and transitions. The Default workflow seeds friendly names. |
 | `wip_limit` | int, nullable | Max number of (non-archived) tasks allowed on this label. `null`/unset = unlimited — a label with no limit behaves exactly as before this feature existed. Must be a positive integer when set; `0` or negative is rejected. |
 | `wip_limit_hard` | bool | Enforcement mode for `wip_limit`. **Soft (default, `false`)**: the board column header shows `count / limit` and flags the column once its count reaches or exceeds the limit, but nothing is blocked. **Hard (`true`)**: in addition to the visual flag, the dispatcher will not pick up a task whose agent "success" transition would land it on this label while the label's count is already at or over its limit — the task simply stays where it is and is re-evaluated on the next sweep (a few seconds later), so work queues upstream instead of erroring mid-run. Hard mode never blocks a run that is already in flight from landing in a full column; that stays visual-only. Setting `wip_limit_hard` without a `wip_limit` has no effect (there's nothing to enforce). |
 | `verify_mode` | `inherit` \| `custom` \| `disabled` | Per-label override of the repo's [verify command](#verify-commands). `inherit` (default, may be omitted) uses the repo command; `custom` runs this label's `verify_command` instead; `disabled` skips verification for runs that succeed on this label. |
@@ -136,7 +137,9 @@ If no matching transition is defined for the current label, the endpoint returns
 
 ## Review brief
 
-When a task sits on a **human-gate** label (no agent-triggerable way out and at least one human transition, the same rule as `GET /needs-me` `human_gate`; `agent_ignore` backlog labels excluded), the Task Detail page shows a compact **Review brief** at the top of the Overview tab and above the diff on the Diff tab, and the Inbox shows the flag chips on the row. It is computed from existing data with **no LLM calls**, and it is **advisory only**: nothing is ever approved or blocked because of a flag.
+When a task sits on a **human-gate** label (no agent-triggerable way out and at least one human transition, the same rule as `GET /needs-me` `human_gate`; `agent_ignore` backlog labels excluded), the Task Detail page shows a compact **Review brief** below the task header on the Overview tab and above the diff on the Diff tab, and the Inbox shows the flag chips on the row. It is computed from existing data with **no LLM calls**, and it is **advisory only**: nothing is ever approved or blocked because of a flag.
+
+On screens at least 1280px wide, a task on a human gate (strict rule: every exit is a human transition, or `agent_ignore`) gets a decision-first layout: a header with title, state, repo, cost, run count and the Approve / Request changes buttons ("Approve and open PR" when the target label opens a PR); the diff (with preview strip) or, on plan-review labels, the plan in the main pane with logs and details as tabs; and a sticky right rail with the brief, verification and runs. Narrower screens keep the tabbed layout.
 
 The brief is served by `GET /tasks/{id}/review-brief`; the Inbox gets flag codes only (`risk_flags` on `/needs-me` items, human-gate items only).
 
@@ -213,6 +216,7 @@ labels:
     color: "#F59E0B"
     sort_order: 1
   - name: review
+    display_name: Human review # optional UI title
     color: "#EC4899"
     sort_order: 2
     wip_limit: 5        # column shows "count / 5" and flags over-limit

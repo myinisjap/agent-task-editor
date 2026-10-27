@@ -274,8 +274,7 @@ function TaskCard({
         selected ? 'border-indigo-500' : blocked ? 'border-amber-700/60' : 'border-slate-700'
       } ${task.archived || blocked ? 'opacity-60' : ''}`}
     >
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="flex items-start gap-2 min-w-0">
+      <div className="flex items-start gap-2 mb-1.5">
           {onToggleSelect && (
             <input
               type="checkbox"
@@ -292,9 +291,96 @@ function TaskCard({
               title="Select for bulk actions"
             />
           )}
-          <span className="text-sm text-slate-100 font-medium leading-snug">{task.title}</span>
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
+          <span
+            data-testid="task-card-title"
+            className="flex-1 min-w-0 text-sm text-slate-100 font-medium leading-snug line-clamp-3 break-words"
+            title={task.title}
+          >
+            {task.title}
+          </span>
+          <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={async (e) => {
+              e.stopPropagation()
+              try {
+                const updated = await api.tasks.setPaused(task.id, !task.paused)
+                upsert(updated)
+              } catch (err) {
+                alert(String(err))
+              }
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            // Visually hidden until the card is hovered/focused or the
+            // device can't hover (touch) — see `controlsVisible` above.
+            // tabIndex tracks the same condition dynamically (0 when
+            // visible, -1 when not) rather than a permanent -1, so the
+            // button stays reachable via keyboard once the card is focused,
+            // instead of being unreachable outright (see issue #350).
+            tabIndex={actionTabIndex}
+            className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-amber-400 transition-opacity leading-none`}
+            title={task.paused ? 'Resume task' : 'Pause task'}
+          >
+            {task.paused ? '▶' : '⏸'}
+          </button>
+          <button
+            onClick={async (e) => {
+              e.stopPropagation()
+              try {
+                const updated = await api.tasks.setArchived(task.id, !task.archived)
+                upsert(updated)
+              } catch (err) {
+                alert(String(err))
+              }
+            }}
+            onPointerDown={(e) => e.stopPropagation()}
+            tabIndex={actionTabIndex}
+            className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none`}
+            title={task.archived ? 'Unarchive task' : 'Archive task — hide from the board'}
+          >
+            {task.archived ? '↩' : '🗄'}
+          </button>
+          {isEditable && (
+            <button
+              onClick={handleEditClick}
+              onPointerDown={(e) => e.stopPropagation()}
+              tabIndex={actionTabIndex}
+              className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none`}
+              title="Edit task"
+            >
+              ✎
+            </button>
+          )}
+          {onDuplicate && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onDuplicate(task)
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              tabIndex={actionTabIndex}
+              className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none`}
+              title="Duplicate task"
+            >
+              ⧉
+            </button>
+          )}
+          {onDelete && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                if (window.confirm('Delete this task?')) onDelete(task.id)
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              tabIndex={actionTabIndex}
+              className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-red-400 transition-opacity leading-none`}
+              title="Delete task"
+            >
+              ✕
+            </button>
+          )}
+          </div>
+      </div>
+      <div data-testid="task-card-badges" className="flex flex-wrap items-center gap-1.5 mb-2 empty:hidden">
           {isChild && (
             <button
               onClick={(e) => { e.stopPropagation(); navigate(`/tasks/${task.parent_task_id}`) }}
@@ -398,9 +484,11 @@ function TaskCard({
             </span>
           )}
           {isRunning && !needsMe && (
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse mt-1" title="Agent running" />
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="Agent running" />
           )}
-          {!isRunning && task.active_run_status === 'waiting_human' && (
+          {/* The needs-me entry already carries the reason; this is the fallback
+              for when the needs-me store hasn't loaded or has no entry. */}
+          {!isRunning && !needsMe && task.active_run_status === 'waiting_human' && (
             <span
               className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-medium"
               title="The agent is waiting for a human to respond"
@@ -437,86 +525,6 @@ function TaskCard({
               {task.transient_retry_count ? `↻ Retrying (${task.transient_retry_count})` : '⏳ Cooling down'}
             </span>
           )}
-          <button
-            onClick={async (e) => {
-              e.stopPropagation()
-              try {
-                const updated = await api.tasks.setPaused(task.id, !task.paused)
-                upsert(updated)
-              } catch (err) {
-                alert(String(err))
-              }
-            }}
-            onPointerDown={(e) => e.stopPropagation()}
-            // Visually hidden until the card is hovered/focused or the
-            // device can't hover (touch) — see `controlsVisible` above.
-            // tabIndex tracks the same condition dynamically (0 when
-            // visible, -1 when not) rather than a permanent -1, so the
-            // button stays reachable via keyboard once the card is focused,
-            // instead of being unreachable outright (see issue #350).
-            tabIndex={actionTabIndex}
-            className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-amber-400 transition-opacity leading-none`}
-            title={task.paused ? 'Resume task' : 'Pause task'}
-          >
-            {task.paused ? '▶' : '⏸'}
-          </button>
-          <button
-            onClick={async (e) => {
-              e.stopPropagation()
-              try {
-                const updated = await api.tasks.setArchived(task.id, !task.archived)
-                upsert(updated)
-              } catch (err) {
-                alert(String(err))
-              }
-            }}
-            onPointerDown={(e) => e.stopPropagation()}
-            tabIndex={actionTabIndex}
-            className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none`}
-            title={task.archived ? 'Unarchive task' : 'Archive task — hide from the board'}
-          >
-            {task.archived ? '↩' : '🗄'}
-          </button>
-          {isEditable && (
-            <button
-              onClick={handleEditClick}
-              onPointerDown={(e) => e.stopPropagation()}
-              tabIndex={actionTabIndex}
-              className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none`}
-              title="Edit task"
-            >
-              ✎
-            </button>
-          )}
-          {onDuplicate && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                onDuplicate(task)
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
-              tabIndex={actionTabIndex}
-              className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none`}
-              title="Duplicate task"
-            >
-              ⧉
-            </button>
-          )}
-          {onDelete && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation()
-                if (window.confirm('Delete this task?')) onDelete(task.id)
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
-              tabIndex={actionTabIndex}
-              className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-red-400 transition-opacity leading-none`}
-              title="Delete task"
-            >
-              ✕
-            </button>
-          )}
-        </div>
       </div>
       {showColumnLabel && (
         <div className="mb-1.5">

@@ -57,9 +57,9 @@ func (q *Queries) CreateWorkflow(ctx context.Context, arg CreateWorkflowParams) 
 }
 
 const createWorkflowLabel = `-- name: CreateWorkflowLabel :one
-INSERT INTO workflow_labels (id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command
+INSERT INTO workflow_labels (id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command, display_name)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command, display_name
 `
 
 type CreateWorkflowLabelParams struct {
@@ -75,6 +75,7 @@ type CreateWorkflowLabelParams struct {
 	WipLimitHard  int64  `json:"wip_limit_hard"`
 	VerifyMode    string `json:"verify_mode"`
 	VerifyCommand string `json:"verify_command"`
+	DisplayName   string `json:"display_name"`
 }
 
 func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLabelParams) (WorkflowLabel, error) {
@@ -91,6 +92,7 @@ func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLab
 		arg.WipLimitHard,
 		arg.VerifyMode,
 		arg.VerifyCommand,
+		arg.DisplayName,
 	)
 	var i WorkflowLabel
 	err := row.Scan(
@@ -106,6 +108,7 @@ func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLab
 		&i.WipLimitHard,
 		&i.VerifyMode,
 		&i.VerifyCommand,
+		&i.DisplayName,
 	)
 	return i, err
 }
@@ -237,7 +240,7 @@ func (q *Queries) GetWorkflowTransition(ctx context.Context, arg GetWorkflowTran
 }
 
 const listWorkflowLabels = `-- name: ListWorkflowLabels :many
-SELECT id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command FROM workflow_labels WHERE workflow_id = ? ORDER BY sort_order ASC
+SELECT id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command, display_name FROM workflow_labels WHERE workflow_id = ? ORDER BY sort_order ASC
 `
 
 func (q *Queries) ListWorkflowLabels(ctx context.Context, workflowID string) ([]WorkflowLabel, error) {
@@ -262,6 +265,7 @@ func (q *Queries) ListWorkflowLabels(ctx context.Context, workflowID string) ([]
 			&i.WipLimitHard,
 			&i.VerifyMode,
 			&i.VerifyCommand,
+			&i.DisplayName,
 		); err != nil {
 			return nil, err
 		}

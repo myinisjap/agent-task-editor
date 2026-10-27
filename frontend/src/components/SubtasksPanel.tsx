@@ -1,3 +1,4 @@
+import { labelDisplayNameByName } from '../lib/labelDisplay'
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { Task, WorkflowLabel } from '../api/client'
@@ -153,7 +154,7 @@ export default function SubtasksPanel({
                 >
                   {c.title}
                 </button>
-                <span className="text-slate-500 shrink-0">{c.label}</span>
+                <span className="text-slate-500 shrink-0">{labelDisplayNameByName(c.label, labels)}</span>
                 <span data-testid="subtask-status" className={`shrink-0 text-[10px] ${statusColor[subtaskStatus(c, labels)]}`}>
                   {subtaskStatus(c, labels)}
                 </span>
