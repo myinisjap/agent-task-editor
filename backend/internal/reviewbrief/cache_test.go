@@ -21,12 +21,12 @@ func TestCache_Diff(t *testing.T) {
 	git("init", "-b", "main")
 	git("config", "user.email", "t@example.com")
 	git("config", "user.name", "T")
-	os.WriteFile(dir+"/base.txt", []byte("base\n"), 0o644)
+	must(t, os.WriteFile(dir+"/base.txt", []byte("base\n"), 0o644))
 	git("add", ".")
 	git("commit", "-m", "base")
 	git("checkout", "-b", "feat")
-	os.MkdirAll(dir+"/db/migrations", 0o755)
-	os.WriteFile(dir+"/db/migrations/1.sql", []byte("create table x(a int);\n"), 0o644)
+	must(t, os.MkdirAll(dir+"/db/migrations", 0o755))
+	must(t, os.WriteFile(dir+"/db/migrations/1.sql", []byte("create table x(a int);\n"), 0o644))
 	git("add", ".")
 	git("commit", "-m", "mig")
 
@@ -40,7 +40,7 @@ func TestCache_Diff(t *testing.T) {
 		t.Fatalf("first = %+v err=%v", r, err)
 	}
 	// New commit within the fresh window is not seen (no git call at all).
-	os.WriteFile(dir+"/a_test.go", []byte("package a\n"), 0o644)
+	must(t, os.WriteFile(dir+"/a_test.go", []byte("package a\n"), 0o644))
 	git("add", ".")
 	git("commit", "-m", "more")
 	r2, _ := c.Diff(context.Background(), nil, task)
@@ -68,9 +68,19 @@ func TestCache_Diff_Unavailable(t *testing.T) {
 		t.Fatalf("%+v %v", r, err)
 	}
 	dir := t.TempDir()
-	exec.Command("git", "-C", dir, "init", "-b", "main").Run()
+	if err := exec.Command("git", "-C", dir, "init", "-b", "main").Run(); err != nil {
+		t.Fatal(err)
+	}
+
 	r, err = c.Diff(context.Background(), nil, gen.Task{ID: "y", Branch: "nope", BaseRef: "main", WorktreePath: dir})
 	if err != nil || r.Available {
 		t.Fatalf("%+v %v", r, err)
+	}
+}
+
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
 	}
 }
