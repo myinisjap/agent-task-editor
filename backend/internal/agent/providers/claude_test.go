@@ -514,13 +514,13 @@ func TestClaudeExitCode1_IsFailed(t *testing.T) {
 	var found bool
 	for _, e := range logs {
 		if e.Type == agent.LogSystem {
-			if contains(e.Content, "treating as failed") {
+			if contains(e.Content, "Run failed:") {
 				found = true
 			}
 		}
 	}
 	if !found {
-		t.Logf("(optional) expected a 'treating as failed' log entry; logs: %v", logContents(logs))
+		t.Logf("(optional) expected a 'Run failed:' log entry; logs: %v", logContents(logs))
 	}
 }
 

@@ -21,6 +21,9 @@ triggers the "Release" workflow the same way.
 
 ### Changed
 
+- **Readable run logs.** System events in the Logs tab now carry a severity (errors red, warnings amber, info neutral). Internal events (CLI pid, effort, UI invalidate, unknown CLI bookkeeping) only show with Debug on. Log entries get a monotonic `seq` (migration 081, on `AgentLog` and the `agent.log`/replay WebSocket entries) so same-second entries keep their real order (a failure no longer appears above "Session started"). The exit-error/outcome conflict line now reads "Run failed: <cli> exited with an error (it had reported "success")". Escalations in Inbox, Dashboard and Task Detail show a one-line explanation and next step for every reason.
+
+
 - **One quiet, tiered status area.** Only a provider-dispatch pause shows a slim, session-dismissible banner (one line on phones); other health problems show as a counted dot on Settings/Health; advice (backups, `REPO_BASE_DIR`, update checks) lives only on Settings → Health with a per-check "Don't remind me" (API-unauthenticated stays un-snoozable). The Get Started card shows one "N setup issues · View health" line, and "Notifications blocked" in the sidebar now explains how to re-enable notifications.
 - **Decision-first review on Task Detail (desktop).** Tasks waiting at a human gate get a review layout at ≥1280px: header with title, state, repo, cost, run count and Approve ("Approve and open PR" when the next label opens a PR) / Request changes; the diff (with preview strip) or plan in the main pane, logs/details as tabs; and a sticky right rail with the review brief, verification and runs. The review brief now always sits below the task title.
 

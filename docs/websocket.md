@@ -460,6 +460,7 @@ An async repo clone failed. Same purpose as `repo.clone_done` — the
 
 ### `agent.log`
 A single log entry from a running agent. Sent for every line of output in real time.
+`entry.seq` is a monotonic per-entry sequence (microsecond-based) used to order entries that share the same second-resolution `at`.
 `entry.id` is the persisted `agent_logs` row id (the same id returned by
 `agent.log_replay` and `GET /tasks/{id}/runs/{run_id}/logs`), so clients can
 dedupe a live entry against a later replay/page by id alone — important after
@@ -473,6 +474,7 @@ a reconnect, where the server re-sends the log tail via `agent.log_replay`.
     "task_id": "uuid",
     "entry": {
       "id": "uuid",
+      "seq": 1714000000000000,
       "type": "stdout | stderr | system | tool_call | tool_result",
       "content": "string",
       "at": "RFC3339 timestamp"
@@ -499,6 +501,7 @@ can be fetched via `GET /tasks/{id}/runs/{run_id}/logs?before=…`.
     "entries": [
       {
         "id": "uuid",
+        "seq": 1714000000000000,
         "type": "stdout | stderr | system | tool_call | tool_result",
         "content": "string",
         "at": "RFC3339 timestamp"
@@ -512,7 +515,7 @@ can be fetched via `GET /tasks/{id}/runs/{run_id}/logs?before=…`.
 Sent to a single client when events were dropped for it. Each client has a
 bounded send buffer (256 messages) and `Hub.Publish` never blocks on a slow
 client: when the buffer is full the event is dropped (and counted in
-`ate_ws_broadcast_dropped_total`). Events carry no sequence numbers, so the
+`ate_ws_broadcast_dropped_total`). Events carry no delivery sequence numbers (the `seq` on log entries only orders entries within a run), so the
 client could not otherwise tell. Instead the server flags the client as lagged
 and, once its buffer has fully drained, sends one `resync` frame (after every
 event that was queued before it). The flag is cleared only when that frame is

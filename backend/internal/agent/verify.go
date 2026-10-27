@@ -249,6 +249,7 @@ func (p *Pool) recordVerification(ctx context.Context, job Job, command string, 
 		Timestamp:  time.Now(),
 		Type:       "system",
 		Content:    fmt.Sprintf("Verification %s: %s", res.Status, command),
+		Seq:        NextLogSeq(),
 	}); err != nil {
 		log.Warn("pool: verification log line", "err", err)
 	}

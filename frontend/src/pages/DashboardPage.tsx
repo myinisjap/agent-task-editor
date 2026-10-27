@@ -339,9 +339,7 @@ export default function DashboardPage() {
                       return (
                         <div className="flex items-center gap-2">
                           <p className="flex-1 text-xs text-slate-500">
-                            {esc.action === 'fix'
-                              ? 'Fix the cause first, then retry.'
-                              : 'Retry re-runs the task as is; open it to reply with guidance instead.'}
+                            {esc.nextStep}
                           </p>
                           {esc.action === 'fix' && esc.fix && (
                             <button

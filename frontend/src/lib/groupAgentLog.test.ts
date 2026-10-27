@@ -200,3 +200,16 @@ describe('resultView', () => {
     expect(view.body).toBe('file body')
   })
 })
+
+describe('groupLogRows debug filtering', () => {
+  it('hides debug system events unless debug is on, always shows others', () => {
+    const entries = [
+      log('system', 'started claude pid=3548'),
+      log('stdout', { type: 'system', subtype: 'ui_invalidate' }),
+      log('stdout', { type: 'system', subtype: 'init' }),
+      log('system', 'rate limit resets at 5pm'),
+    ]
+    expect(groupLogRows(entries, false, false)).toHaveLength(2)
+    expect(groupLogRows(entries, true, false)).toHaveLength(4)
+  })
+})

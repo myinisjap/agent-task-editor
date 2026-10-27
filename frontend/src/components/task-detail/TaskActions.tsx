@@ -67,6 +67,12 @@ export default function TaskActions({
       <p className="text-sm font-medium text-slate-200 mb-3">
         {needsHuman ? esc.label : 'Human review required'}
       </p>
+      {needsHuman && (
+        <div className="text-xs text-slate-400 mb-3 space-y-0.5">
+          <p>{esc.explanation}</p>
+          <p>Next: {esc.nextStep}</p>
+        </div>
+      )}
       {message && (
         <p className="text-xs text-slate-400 mb-3 bg-slate-800 rounded p-2 whitespace-pre-wrap">
           {message}

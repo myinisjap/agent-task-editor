@@ -548,3 +548,10 @@ func prependPath(env []string, dir string) []string {
 	}
 	return out
 }
+
+// exitErrorOutcomeMsg is the system log line emitted when a CLI exits non-zero
+// even though it had already reported an outcome. The non-zero exit wins, so
+// the run is failed; the message states that without contradicting itself.
+func exitErrorOutcomeMsg(cli, outcome string) string {
+	return fmt.Sprintf("Run failed: %s exited with an error (it had reported %q)", cli, outcome)
+}

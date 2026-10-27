@@ -9,6 +9,7 @@ import { useHealthStore } from '../stores/health'
 import { useWorkflowStore } from '../stores/workflow'
 import { buildInbox, inboxCount, itemActions } from '../lib/inbox'
 import { needsMeReasonLabel } from '../lib/needsMe'
+import { escalationInfo } from '../lib/escalation'
 import { formatRelativeAge } from '../lib/format'
 import { sideEffectText } from '../components/shared/SideEffectBadge'
 import { providerLabel } from '../components/shared/ProviderPausedBanner'
@@ -104,6 +105,10 @@ export default function InboxPage() {
             </span>
           )}
           {item.message && <p className="text-xs text-slate-400 mt-1">{item.message}</p>}
+          {item.reason === 'waiting_human' && (() => {
+            const esc = escalationInfo(item.escalation_reason)
+            return <p className="text-xs text-slate-500 mt-1">{esc.explanation} {esc.nextStep}</p>
+          })()}
           {item.risk_flags && item.risk_flags.length > 0 && (
             <div className="mt-1">
               <RiskFlagChips codes={item.risk_flags} />

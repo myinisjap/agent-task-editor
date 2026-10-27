@@ -737,6 +737,10 @@ Get a page of a run's persisted log entries, in chronological order (oldest
 first). A long verbose run can produce tens of thousands of entries, so the
 endpoint is paginated.
 
+Entries are ordered by `(timestamp, seq)`. Timestamps have one-second
+resolution, so each entry carries a monotonic int64 `seq` that gives a stable
+order within the same second.
+
 Query params:
 
 | Param | Meaning |
