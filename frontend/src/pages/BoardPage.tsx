@@ -14,6 +14,7 @@ import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
 import { BoardHelp } from '../components/shared/pageHelp'
 import { useDebouncedCallback } from '../lib/useDebouncedCallback'
+import { useIsMobile } from '../lib/useIsMobile'
 
 const CONDENSED_STORAGE_KEY = 'board.condensed'
 
@@ -39,6 +40,7 @@ export default function BoardPage() {
   const upsert = useTasksStore((s) => s.upsert)
   const { workflows, fetch: fetchWorkflows, setSelectedId, active } = useWorkflowStore()
   const { repos, fetch: fetchRepos } = useReposStore()
+  const isMobile = useIsMobile()
   const [runningTaskIds, setRunningTaskIds] = useState(() => new Set<string>())
   // Per-task cumulative cost ($), keyed by task id — powers the "Filtered
   // cost" badge below. Fetched once on mount and refreshed on agent-done
@@ -78,6 +80,9 @@ export default function BoardPage() {
   const rawGitState = searchParams.get('git_state') ?? ''
   const filterGitState = GIT_STATES.includes(rawGitState) ? rawGitState : ''
   const showArchived = searchParams.get('archived') === '1'
+
+  // View option (not a filter): swimlanes per repo. Kept in the URL, but not cleared by "Clear filters".
+  const groupByRepo = searchParams.get('group') === 'repo'
 
   const setFilterParam = (key: string, value: string) => {
     setSearchParams(
@@ -434,6 +439,21 @@ export default function BoardPage() {
             <span>{condensed ? '⊟' : '⊞'}</span>
             <span>{condensed ? 'Expanded' : 'Condensed'}</span>
           </button>
+          {!isMobile && (
+            <button
+              onClick={() => setFilterParam('group', groupByRepo ? '' : 'repo')}
+              aria-pressed={groupByRepo}
+              title={groupByRepo ? 'Show a single board' : 'Group the board into one swimlane per repo'}
+              className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md border transition-colors ${
+                groupByRepo
+                  ? 'bg-indigo-600 border-indigo-500 text-indigo-100 hover:bg-indigo-600'
+                  : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
+              }`}
+            >
+              <span>☰</span>
+              <span>Group by repo</span>
+            </button>
+          )}
           <HelpButton onClick={() => setShowHelp(true)} title="About the board" />
         </div>
       </div>
@@ -570,6 +590,9 @@ export default function BoardPage() {
             transitions={transitions}
             selectedIds={selectedIds}
             onToggleSelect={toggleSelect}
+            workflowId={workflow?.id}
+            groupByRepo={groupByRepo}
+            repos={repos}
           />
         </div>
       )}
