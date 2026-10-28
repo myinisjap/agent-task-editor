@@ -20,6 +20,7 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Chat terminal copies on select.** Selecting text in the chat terminal now copies it to the clipboard (hold Shift/Option while dragging if the CLI has mouse reporting on).
 - **Command palette and keyboard shortcuts.** Cmd/Ctrl+K opens a palette to jump to a task by title or short id, create a task, go to any page (Inbox, Board, Chat, Pipeline, Repos, Settings and Insights tabs), and run actions on the task you have open (move to a legal label, approve / request changes, rerun, open or create the PR, pause/resume, archive). Global shortcuts (ignored while typing, and off on touch devices): `c` new task, `g i` / `g b` / `g p` / `g s` go to Inbox / Board / Pipeline / Settings, `/` focus the board search, `?` shows a sheet of all shortcuts. Hints appear in the palette and button tooltips. On phones the palette is reachable from More → "Search and commands". In the Inbox, `?` now opens the full shortcut sheet.
 
 ### Changed
