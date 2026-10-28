@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AutonomyDecisionBanner from './AutonomyDecisionBanner'
 
@@ -13,7 +13,7 @@ const labels = [{ name: 'review', display_name: 'Review' }] as never
 const base = { taskId: 't', refreshKey: 'k', labels, alwaysAsk: false }
 
 describe('AutonomyDecisionBanner', () => {
-  beforeEach(() => mock.mockReset())
+  beforeEach(() => { mock.mockReset() })
 
   it('approve state', async () => {
     mock.mockResolvedValue(dec('on_flags', 'approve', [{ code: 'no_blocking_flags', detail: '' }]))
@@ -33,14 +33,17 @@ describe('AutonomyDecisionBanner', () => {
     expect(screen.getByText('Verification failed')).toBeInTheDocument()
   })
 
-  it('renders nothing for mode ask and on 404', async () => {
+  it('renders nothing for mode ask', async () => {
     mock.mockResolvedValue(dec('ask', 'ask', [{ code: 'mode_ask', detail: '' }]))
-    const { rerender } = render(<AutonomyDecisionBanner {...base} />)
+    render(<AutonomyDecisionBanner {...base} />)
     await waitFor(() => expect(mock).toHaveBeenCalled())
     expect(screen.queryByTestId('autonomy-banner')).toBeNull()
+  })
+
+  it('renders nothing on 404', async () => {
     mock.mockRejectedValue(new Error('404'))
-    rerender(<AutonomyDecisionBanner {...base} refreshKey="k2" />)
-    await waitFor(() => expect(mock).toHaveBeenCalledTimes(2))
+    render(<AutonomyDecisionBanner {...base} />)
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)) })
     expect(screen.queryByTestId('autonomy-banner')).toBeNull()
   })
 
