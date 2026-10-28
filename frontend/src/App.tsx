@@ -107,7 +107,7 @@ export default function App() {
             the actually-visible height. */}
         <div className="flex h-dvh overflow-hidden">
           <NavSidebar open={menuOpen} onOpenChange={setMenuOpen} />
-          <main className="flex-1 overflow-auto bg-slate-950 pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0">
+          <main className="flex-1 min-h-0 min-w-0 flex flex-col overflow-auto bg-slate-950 pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0">
             <ProviderPausedBanner />
             <AppRoutes />
           </main>
