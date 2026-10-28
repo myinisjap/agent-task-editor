@@ -1113,10 +1113,12 @@ Returns aggregated statistics:
     "tripped": false,
     "daily_forecast_usd": 9.75,
     "monthly_forecast_usd": 195.0
-  }
+  },
+  "today": { "done_count": 3, "verify_total": 5, "verify_passed": 4, "runs_started": 9 }
 }
 ```
 
+- `today` — activity since local midnight in the server's timezone (set `TZ`; defaults to UTC if unset), window `[midnight, next midnight)`. `done_count` is the number of distinct non-archived tasks that entered an `is_terminal` label (from label history), at most once per task. `verify_total` / `verify_passed` count verification records (same source as the `task.verification` WS event; `verify_passed` is status `pass`; archived tasks are not filtered out); the client computes the percentage. `runs_started` counts agent runs by `started_at`.
 - `label_counts` — number of tasks currently in each workflow label.
 - `active_agents` — agent runs currently in progress.
 - `intervention_queue` — runs in `waiting_human`, awaiting a human. Each item includes the task's current `task_label` and `workflow_id` so clients can tell whether approve/reject apply (a human `success`/`failure` transition from that label) or only a reply does. (The Dashboard UI now uses [`GET /needs-me`](#get-needs-me) instead, which also covers human gates and PR conflicts.)
