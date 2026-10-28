@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { api, type ReviewBrief } from '../../api/client'
 import RiskFlagChips from '../shared/RiskFlagChips'
 import PreviewStrip from './PreviewStrip'
@@ -23,10 +23,12 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 // summary" card shown while a task waits on a human (docs/workflows.md#review-brief).
 // It renders nothing while loading, on error, or when the task is not at a
 // human gate. `refreshKey` changes when the label or verification changes.
-export default function ReviewBriefCard({ taskId, refreshKey = '', hidePreview = false, compact = false, filesOpen = false }: { taskId: string | undefined; refreshKey?: string | number; hidePreview?: boolean; compact?: boolean; filesOpen?: boolean }) {
+export default function ReviewBriefCard({ taskId, refreshKey = '', hidePreview = false, compact = false, filesOpen = false, footer, onLoaded }: { footer?: ReactNode; onLoaded?: (brief: ReviewBrief | null) => void; taskId: string | undefined; refreshKey?: string | number; hidePreview?: boolean; compact?: boolean; filesOpen?: boolean }) {
   const [brief, setBrief] = useState<ReviewBrief | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [showFull, setShowFull] = useState(false)
+  const onLoadedRef = useRef(onLoaded)
+  onLoadedRef.current = onLoaded
 
   useEffect(() => {
     if (!taskId) return
@@ -34,10 +36,10 @@ export default function ReviewBriefCard({ taskId, refreshKey = '', hidePreview =
     api.tasks
       .reviewBrief(taskId)
       .then((b) => {
-        if (!cancelled) setBrief(b)
+        if (!cancelled) { setBrief(b); onLoadedRef.current?.(b) }
       })
       .catch(() => {
-        if (!cancelled) setBrief(null)
+        if (!cancelled) { setBrief(null); onLoadedRef.current?.(null) }
       })
     return () => {
       cancelled = true
@@ -81,6 +83,7 @@ export default function ReviewBriefCard({ taskId, refreshKey = '', hidePreview =
             <span className="text-fg-subtle">No verify command ran</span>
           )}
         </Row>
+        {footer}
       </Card>
     )
   }
