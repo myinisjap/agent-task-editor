@@ -516,3 +516,7 @@ func ruleOutsidePlan(files []FileChange, planText string) *Flag {
 	return newFlag(FlagOutsidePlanScope,
 		fmt.Sprintf("%d changed file(s) not mentioned in the plan's file list (heuristic)", len(out)), out)
 }
+
+// FlagCodes lists every known flag code, in constant order. Used to validate
+// autonomy ask_on lists.
+var FlagCodes = []string{FlagMigration, FlagAuthOrSecurity, FlagDependencies, FlagTestsRemoved, FlagCIConfig, FlagLargeChange, FlagOutsidePlanScope}

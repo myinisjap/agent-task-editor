@@ -152,6 +152,11 @@ func TestMigration063TaskSideTables(t *testing.T) {
 
 	// API level: the JSON for every task is identical to what the old
 	// 37-column row produced, and the plain task keeps the old defaults.
+	// gen.Task is generated against the latest schema (it includes always_ask
+	// from 082), so read it at the latest version, then step back to 63.
+	if err := m.Migrate(82); err != nil {
+		t.Fatalf("up to 82: %v", err)
+	}
 	q := gen.New(sqlDB)
 	got, err := q.GetTask(context.Background(), "full")
 	if err != nil {
@@ -176,6 +181,9 @@ func TestMigration063TaskSideTables(t *testing.T) {
 	if plain.Branch != "" || plain.GitState != "" || plain.PrUrl != "" || plain.PrMergeable != "" ||
 		plain.WritebackClosed != 0 || plain.WritebackInProgressSent != 0 || plain.WritebackPrCommented != 0 {
 		t.Fatalf("plain task has non-default git/write-back fields: %+v", plain)
+	}
+	if err := m.Migrate(63); err != nil {
+		t.Fatalf("back down to 63: %v", err)
 	}
 
 	// Cascade delete removes the side rows.

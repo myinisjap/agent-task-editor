@@ -147,4 +147,17 @@ describe('workflowEdit', () => {
     expect(doc.transitions[0]).toEqual({ from: 'todo', to: 'work', trigger: 'human' })
     expect(doc.transitions[1]).toEqual({ from: 'work', to: 'done', trigger: 'agent', path: 'success' })
   })
+
+  it('preserves a label autonomy block through a draft save', () => {
+    const d = base()
+    expect(JSON.parse(serializeDraft(d)).labels[1]).not.toHaveProperty('autonomy')
+    const withAuto = updateLabel(d, 'work', {
+      autonomy: { mode: 'on_flags', ask_on: ['migration'], hold_seconds: 600, max_cost_usd: 5 },
+    })
+    expect(JSON.parse(serializeDraft(withAuto)).labels[1].autonomy).toEqual({
+      mode: 'on_flags', ask_on: ['migration'], hold: '600s', max_cost_usd: 5,
+    })
+    const ask = updateLabel(d, 'work', { autonomy: { mode: 'ask', ask_on: [], hold_seconds: 600, max_cost_usd: null } })
+    expect(JSON.parse(serializeDraft(ask)).labels[1]).not.toHaveProperty('autonomy')
+  })
 })

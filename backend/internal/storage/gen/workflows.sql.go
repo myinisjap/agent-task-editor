@@ -59,7 +59,7 @@ func (q *Queries) CreateWorkflow(ctx context.Context, arg CreateWorkflowParams) 
 const createWorkflowLabel = `-- name: CreateWorkflowLabel :one
 INSERT INTO workflow_labels (id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command, display_name)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command, display_name
+RETURNING id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command, display_name, autonomy_mode, autonomy_ask_on, autonomy_hold_seconds, autonomy_max_cost_usd
 `
 
 type CreateWorkflowLabelParams struct {
@@ -109,6 +109,10 @@ func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLab
 		&i.VerifyMode,
 		&i.VerifyCommand,
 		&i.DisplayName,
+		&i.AutonomyMode,
+		&i.AutonomyAskOn,
+		&i.AutonomyHoldSeconds,
+		&i.AutonomyMaxCostUsd,
 	)
 	return i, err
 }
@@ -240,7 +244,7 @@ func (q *Queries) GetWorkflowTransition(ctx context.Context, arg GetWorkflowTran
 }
 
 const listWorkflowLabels = `-- name: ListWorkflowLabels :many
-SELECT id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command, display_name FROM workflow_labels WHERE workflow_id = ? ORDER BY sort_order ASC
+SELECT id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command, display_name, autonomy_mode, autonomy_ask_on, autonomy_hold_seconds, autonomy_max_cost_usd FROM workflow_labels WHERE workflow_id = ? ORDER BY sort_order ASC
 `
 
 func (q *Queries) ListWorkflowLabels(ctx context.Context, workflowID string) ([]WorkflowLabel, error) {
@@ -266,6 +270,10 @@ func (q *Queries) ListWorkflowLabels(ctx context.Context, workflowID string) ([]
 			&i.VerifyMode,
 			&i.VerifyCommand,
 			&i.DisplayName,
+			&i.AutonomyMode,
+			&i.AutonomyAskOn,
+			&i.AutonomyHoldSeconds,
+			&i.AutonomyMaxCostUsd,
 		); err != nil {
 			return nil, err
 		}

@@ -22,6 +22,8 @@ POST /api/v1/intake/{endpoint_id}  IntakeEndpointsHandler.Receive (outside Beare
   tasks/{id}/subtasks          SubtasksHandler (create_subtask MCP tool)
   tasks/{id}/review-comments/* ReviewCommentsHandler (inline diff review comments)
   tasks/{id}/review-brief      ReviewBriefHandler (deterministic risk flags + verification summary; internal/reviewbrief)
+  tasks/{id}/autonomy-decision AutonomyHandler (latest shadow autonomy decision for the current label)
+  tasks/{id}/always-ask        TasksHandler.SetAlwaysAsk (per-task autonomy override)
   templates/*                  TemplatesHandler
   lessons/*, repos/{id}/lessons LessonsHandler
   uploads/{task_id}/{filename} UploadsHandler (serve attachment images)

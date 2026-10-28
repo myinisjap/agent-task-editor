@@ -28,6 +28,7 @@ SQLite with WAL (Write-Ahead Logging) enabled for better concurrent read perform
 - `tasks.sql` — task CRUD + label moves + dispatch queries
 - `human_decisions.sql` — one row per waiting_human run; question written at escalation, reply on DispatchReply; read by startRun for the HUMAN DECISIONS prompt section; not pruned by log retention
 - `workflows.sql` — workflow, label, transition, history CRUD
+- `autonomy.sql` — per-label autonomy config write, `tasks.always_ask` write, `autonomy_decisions` insert/latest (shadow decisions; slice 1 of the autonomy dial)
 - `agents.sql` — agent config CRUD
 - `providers.sql` — provider config CRUD (provider/model/env, shared by agent configs and chat sessions)
 - `chat.sql` — chat session CRUD (interactive PTY terminal sessions)
@@ -88,7 +89,8 @@ tasks               — title, description, type, label, repo_id, workflow_id,
 task_git            — task_id, branch, worktree_path, base_ref, git_state, pr_url, pr_mergeable
 task_writeback      — task_id, writeback_in_progress_sent/_pr_commented/_closed
 tasks_full (view)   — tasks + task_git + task_writeback, the flat 37-column read model
-workflow_labels     — name, color, sort_order, agent_ignore, is_terminal, verify_mode/verify_command (per-label verify override)
+workflow_labels     — name, color, sort_order, agent_ignore, is_terminal, verify_mode/verify_command (per-label verify override); autonomy_mode ask|on_flags|auto, autonomy_ask_on (JSON), autonomy_hold_seconds, autonomy_max_cost_usd (written by SetWorkflowLabelAutonomy, not CreateWorkflowLabel)
+autonomy_decisions  — task_id, workflow_id, label, run_id, mode, decision approve|ask, reasons JSON [{code, detail}]; tasks.always_ask is a tasks column (in tasks_full)
 workflow_transitions — from_label, to_label, trigger_type (agent|human|both)
 agent_runs          — task_id, status, feedback, started_at, completed_at
 run_verifications   — run_id (PK), task_id, command, status pass|fail|timeout|error, exit_code, output tail (ADR 0038)
