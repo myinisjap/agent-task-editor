@@ -194,7 +194,7 @@ func TestE2E_CostBudget(t *testing.T) {
 		if esc.Label != "ready" {
 			t.Errorf("expected task to stay on 'ready', got %q", esc.Label)
 		}
-		if !h.pub.has("task.needs_human") {
+		if !h.pub.waitHas("task.needs_human") {
 			t.Error("expected task.needs_human event on budget exhaustion")
 		}
 		if len(fp.inputs) != 0 {
@@ -445,7 +445,7 @@ func TestE2E_CostBudget(t *testing.T) {
 		if esc.Label != "ready" {
 			t.Errorf("expected task to stay on 'ready', got %q", esc.Label)
 		}
-		if !h.pub.has("task.needs_human") {
+		if !h.pub.waitHas("task.needs_human") {
 			t.Error("expected task.needs_human event when a cost-unknown run blocks an active budget")
 		}
 		if len(fp.inputs) != 0 {
@@ -573,7 +573,7 @@ func TestE2E_MidRunCostKillSwitch_EscalatesAndStaysLocked(t *testing.T) {
 	if esc.Label != "ready" {
 		t.Errorf("expected task to stay on 'ready' while waiting_human, got %q", esc.Label)
 	}
-	if !h.pub.has("task.needs_human") {
+	if !h.pub.waitHas("task.needs_human") {
 		t.Error("expected task.needs_human event on mid-run cost budget exceeded")
 	}
 

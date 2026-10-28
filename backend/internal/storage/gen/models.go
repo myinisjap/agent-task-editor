@@ -115,6 +115,18 @@ type AgentRun struct {
 	ExperimentArm      *string    `json:"experiment_arm"`
 }
 
+type AutonomyDecision struct {
+	ID         string    `json:"id"`
+	TaskID     string    `json:"task_id"`
+	WorkflowID string    `json:"workflow_id"`
+	Label      string    `json:"label"`
+	RunID      *string   `json:"run_id"`
+	Mode       string    `json:"mode"`
+	Decision   string    `json:"decision"`
+	Reasons    string    `json:"reasons"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 type BackupSetting struct {
 	ID              int64     `json:"id"`
 	IntervalSeconds int64     `json:"interval_seconds"`
@@ -311,6 +323,7 @@ type Task struct {
 	CostWarned              int64      `json:"cost_warned"`
 	MatchedRuleID           *string    `json:"matched_rule_id"`
 	ConsecutiveFailureCount int64      `json:"consecutive_failure_count"`
+	AlwaysAsk               int64      `json:"always_ask"`
 }
 
 type TaskBase struct {
@@ -343,6 +356,7 @@ type TaskBase struct {
 	CostWarned              int64      `json:"cost_warned"`
 	MatchedRuleID           *string    `json:"matched_rule_id"`
 	ConsecutiveFailureCount int64      `json:"consecutive_failure_count"`
+	AlwaysAsk               int64      `json:"always_ask"`
 }
 
 type TaskDependency struct {
@@ -511,19 +525,23 @@ type Workflow struct {
 }
 
 type WorkflowLabel struct {
-	ID            string `json:"id"`
-	WorkflowID    string `json:"workflow_id"`
-	Name          string `json:"name"`
-	Color         string `json:"color"`
-	SortOrder     int64  `json:"sort_order"`
-	AgentIgnore   int64  `json:"agent_ignore"`
-	IsTerminal    int64  `json:"is_terminal"`
-	CreatePr      int64  `json:"create_pr"`
-	WipLimit      *int64 `json:"wip_limit"`
-	WipLimitHard  int64  `json:"wip_limit_hard"`
-	VerifyMode    string `json:"verify_mode"`
-	VerifyCommand string `json:"verify_command"`
-	DisplayName   string `json:"display_name"`
+	ID                  string   `json:"id"`
+	WorkflowID          string   `json:"workflow_id"`
+	Name                string   `json:"name"`
+	Color               string   `json:"color"`
+	SortOrder           int64    `json:"sort_order"`
+	AgentIgnore         int64    `json:"agent_ignore"`
+	IsTerminal          int64    `json:"is_terminal"`
+	CreatePr            int64    `json:"create_pr"`
+	WipLimit            *int64   `json:"wip_limit"`
+	WipLimitHard        int64    `json:"wip_limit_hard"`
+	VerifyMode          string   `json:"verify_mode"`
+	VerifyCommand       string   `json:"verify_command"`
+	DisplayName         string   `json:"display_name"`
+	AutonomyMode        string   `json:"autonomy_mode"`
+	AutonomyAskOn       string   `json:"autonomy_ask_on"`
+	AutonomyHoldSeconds int64    `json:"autonomy_hold_seconds"`
+	AutonomyMaxCostUsd  *float64 `json:"autonomy_max_cost_usd"`
 }
 
 type WorkflowTransition struct {

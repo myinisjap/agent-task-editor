@@ -497,7 +497,7 @@ func TestE2E_TransientRetryThenEscalate(t *testing.T) {
 	if esc.Label != "ready" {
 		t.Errorf("expected task to stay on 'ready' while waiting_human, got %q", esc.Label)
 	}
-	if !h.pub.has("task.needs_human") {
+	if !h.pub.waitHas("task.needs_human") {
 		t.Error("expected task.needs_human event on retry-budget exhaustion")
 	}
 }
@@ -531,7 +531,7 @@ func TestE2E_MaxTurnsExhaustion_EscalatesAndStaysLocked(t *testing.T) {
 	if esc.Label != "ready" {
 		t.Errorf("expected task to stay on 'ready' while waiting_human, got %q", esc.Label)
 	}
-	if !h.pub.has("task.needs_human") {
+	if !h.pub.waitHas("task.needs_human") {
 		t.Error("expected task.needs_human event on max-turns exhaustion")
 	}
 
@@ -622,7 +622,7 @@ func TestE2E_WaitingHumanStaysLocked(t *testing.T) {
 	for i := 0; i < 200 && !h.pub.has("task.needs_human"); i++ {
 		time.Sleep(10 * time.Millisecond) // event is published just after the run status is written
 	}
-	if !h.pub.has("task.needs_human") {
+	if !h.pub.waitHas("task.needs_human") {
 		t.Error("expected task.needs_human event")
 	}
 
@@ -1186,4 +1186,17 @@ func TestE2E_AuthFailurePausesProviderDispatch(t *testing.T) {
 		t.Fatal("ResumeProvider reported not paused")
 	}
 	h.pollTask(t, second, func(tk gen.Task) bool { return tk.ActiveAgentRunID != nil || tk.Label != "ready" }, "queued task dispatched after resume")
+}
+
+// waitHas polls for an event: the run row is persisted as waiting_human a
+// moment before task.needs_human is published, so an immediate has() can race.
+func (p *recordingPub) waitHas(name string) bool {
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if p.has(name) {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return p.has(name)
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -56,7 +57,7 @@ func NewWorkflowsHandler(q *gen.Queries, db *sql.DB) *WorkflowsHandler {
 
 type workflowResponse struct {
 	gen.Workflow
-	Labels      []gen.WorkflowLabel      `json:"labels"`
+	Labels      []workflowLabelResponse  `json:"labels"`
 	Transitions []gen.WorkflowTransition `json:"transitions"`
 }
 
@@ -69,7 +70,11 @@ func (h *WorkflowsHandler) buildResponse(r *http.Request, wf gen.Workflow) (work
 	if err != nil {
 		return workflowResponse{}, err
 	}
-	return workflowResponse{Workflow: wf, Labels: labels, Transitions: transitions}, nil
+	out := make([]workflowLabelResponse, len(labels))
+	for i, l := range labels {
+		out[i] = workflowLabelResponse{WorkflowLabel: l, Autonomy: autonomyJSON(l)}
+	}
+	return workflowResponse{Workflow: wf, Labels: out, Transitions: transitions}, nil
 }
 
 // List returns a page of workflows, newest first, each with its labels and
@@ -171,6 +176,13 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			// resolveLabelVerify.
 			VerifyMode    string `json:"verify_mode"`
 			VerifyCommand string `json:"verify_command"`
+			// Autonomy is the optional per-gate policy; null/absent = ask.
+			Autonomy *struct {
+				Mode        string   `json:"mode"`
+				AskOn       []string `json:"ask_on"`
+				HoldSeconds *int     `json:"hold_seconds"`
+				MaxCostUSD  *float64 `json:"max_cost_usd"`
+			} `json:"autonomy"`
 		} `json:"labels"`
 		Transitions []struct {
 			FromLabel     string  `json:"from_label"`
@@ -219,6 +231,16 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	verifyModes := make([]string, len(body.Labels))
 	verifyCmds := make([]string, len(body.Labels))
 	displayNames := make([]string, len(body.Labels))
+	autonomies := make([]autonomy.Config, len(body.Labels))
+	var gl []autoGateLabel
+	for _, l := range body.Labels {
+		gl = append(gl, autoGateLabel{l.Name, l.AgentIgnore, l.IsTerminal})
+	}
+	var gt []autoGateTransition
+	for _, t := range body.Transitions {
+		gt = append(gt, autoGateTransition{t.FromLabel, t.ToLabel, t.TriggerType})
+	}
+	gates := gateSet(gl, gt)
 	for i, l := range body.Labels {
 		dn, err := validateLabelDisplayName(l.Name, l.DisplayName)
 		if err != nil {
@@ -236,6 +258,19 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		verifyModes[i], verifyCmds[i] = mode, cmd
+		var in *autonomy.Config
+		if l.Autonomy != nil {
+			in = &autonomy.Config{Mode: autonomy.Mode(l.Autonomy.Mode), AskOn: l.Autonomy.AskOn, HoldSeconds: autonomy.DefaultHoldSeconds, MaxCostUSD: l.Autonomy.MaxCostUSD}
+			if l.Autonomy.HoldSeconds != nil {
+				in.HoldSeconds = *l.Autonomy.HoldSeconds
+			}
+		}
+		ac, err := resolveLabelAutonomy(l.Name, in, gates[l.Name])
+		if err != nil {
+			Err(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		autonomies[i] = ac
 	}
 
 	// Rename plus replace labels and transitions atomically inside a single
@@ -278,7 +313,7 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if l.WipLimitHard {
 			wipLimitHard = 1
 		}
-		if _, err := tq.CreateWorkflowLabel(r.Context(), gen.CreateWorkflowLabelParams{
+		created, err := tq.CreateWorkflowLabel(r.Context(), gen.CreateWorkflowLabelParams{
 			ID:            uuid.NewString(),
 			WorkflowID:    wfID,
 			Name:          l.Name,
@@ -291,7 +326,11 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			WipLimitHard:  wipLimitHard,
 			VerifyMode:    verifyModes[i],
 			VerifyCommand: verifyCmds[i],
-		}); err != nil {
+		})
+		if err == nil {
+			err = saveLabelAutonomy(r.Context(), tq, created.ID, autonomies[i])
+		}
+		if err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return
 		}

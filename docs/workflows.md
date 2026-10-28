@@ -179,6 +179,39 @@ For UI changes, the review brief also shows screenshots of the affected pages (`
 
 **v1 limits.** After-only: there is no base-branch "before" shot yet (the `variant` column leaves room for it). Dev servers that daemonize into a new session escape the process-group cleanup. See [runtime.md](runtime.md#preview-screenshots) for the browser setup.
 
+## Autonomy per gate
+
+A **gate** is a label that waits for a person: every transition out of it is human-triggered, it has at least one, and it is not `agent_ignore` or terminal. This is the same rule as the Inbox `human_gate` item. A gate can carry an optional `autonomy` block saying when a person need not be asked:
+
+```yaml
+- name: review
+  autonomy:
+    mode: on_flags        # ask | on_flags | auto
+    ask_on: [migration, auth_or_security, dependencies, tests_removed, ci_config]
+    hold: 10m
+    max_cost_usd: 5
+```
+
+| Mode | Meaning |
+|---|---|
+| `ask` | Default (the same as no block). Always wait for a person. |
+| `on_flags` | Approve when the [review brief](#review-brief) raises none of the `ask_on` flag codes. An empty `ask_on` blocks on no flag, only on the hard stops. |
+| `auto` | Approve whenever the hard stops below pass. Flags are ignored. |
+
+`ask_on` takes the review-brief flag codes (`migration`, `auth_or_security`, `dependencies`, `tests_removed`, `ci_config`, `large_change`, `outside_plan_scope`). `hold` is a duration (`90s`, `10m`, `1h`; default 10 minutes). It is stored but **not used yet**. `max_cost_usd` is optional.
+
+**Hard stops** (always ask, whatever the mode):
+- the latest run's verification is `fail`, `timeout` or `error` (no verify configured is not a stop);
+- the task has the per-task `always_ask` override (`PATCH /tasks/{id}/always-ask` with `{"always_ask": true}`);
+- `max_cost_usd` is set and the task's total cost is strictly above it;
+- for `on_flags`, the task has no diff against its base (for example a plan-review gate), because flags cannot be computed.
+
+**JSON.** The workflow REST API returns and accepts `autonomy` on each label: `null` for ask, otherwise `{mode, ask_on, hold_seconds, max_cost_usd}`. The YAML export only emits the block for non-ask labels, so the block round-trips unchanged through `get_workflow` / `update_workflow`.
+
+**Validation (400).** The mode must be one of the three (and is required inside a block); `ask_on` codes must be known flag codes; `hold` and `max_cost_usd` must not be negative; and a non-ask mode is only allowed on a gate (the error says so). Un-gating a label that has autonomy needs the block removed in the same save.
+
+**Shadow mode only.** This release never moves a task. When a task lands on a gate whose mode is not `ask`, the server evaluates the policy and records what it *would* have decided (`approve` or `ask`, with reasons) in `autonomy_decisions`. Read the latest for the task's current label with `GET /tasks/{id}/autonomy-decision` (404 when there is none). Recording is asynchronous and best effort: a failure is logged and can never block a transition. The decision uses the deterministic review brief only, never an LLM.
+
 ## Custom Workflows
 
 Create additional workflows via Pipeline → Workflow → New Workflow in the UI, or via the REST API:

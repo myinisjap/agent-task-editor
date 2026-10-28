@@ -42,7 +42,7 @@ SELECT * FROM workflow_labels WHERE workflow_id = ? ORDER BY sort_order ASC;
 -- name: CreateWorkflowLabel :one
 INSERT INTO workflow_labels (id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command, display_name)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command, display_name;
+RETURNING *;
 
 -- name: DeleteWorkflowLabels :exec
 DELETE FROM workflow_labels WHERE workflow_id = ?;

@@ -81,6 +81,7 @@ sql:
       - "internal/storage/migrations/079_agent_experiments.up.sql"
       - "internal/storage/migrations/080_label_display_name.up.sql"
       - "internal/storage/migrations/081_agent_logs_seq.up.sql"
+      - "internal/storage/migrations/082_autonomy.up.sql"
     gen:
       go:
         package: "gen"
