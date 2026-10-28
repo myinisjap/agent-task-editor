@@ -4,6 +4,7 @@ import { useNeedsMeStore } from '../stores/needsMe'
 import { useInboxStore } from '../stores/inbox'
 import { useHealthStore } from '../stores/health'
 import { entryKey, entryTaskId, type InboxEntry } from './inbox'
+import { showError, showToast, showUndoToast } from '../stores/toast'
 import type { InboxPreviewProps } from '../components/inbox/InboxPreview'
 
 /**
@@ -70,6 +71,63 @@ export function useInboxActions({ onSuccess }: { onSuccess?: (advance: string | 
   const resumeProvider = (e: InboxEntry, adv?: string) =>
     e.kind === 'provider' ? run(ek(e), () => resume(e.provider.provider), () => undefined, adv) : Promise.resolve(false)
 
+  // Hold: optimistic move into Decide. Passes the SAME key to onSuccess so the popup stays on
+  // the task (now in Decide) instead of advancing or showing All clear.
+  const hold = async (e: InboxEntry, _adv?: string): Promise<boolean> => {
+    if (e.kind !== 'needs_me' || e.item.reason !== 'auto_approving') return false
+    const key = ek(e)
+    const id = e.item.task_id
+    const title = e.item.task_title
+    setErrors((m) => ({ ...m, [key]: '' }))
+    setBusy((b) => ({ ...b, [key]: true }))
+    const revert = useNeedsMeStore.getState().markHeld(id)
+    try {
+      await api.autonomy.hold(id)
+      await refreshNeedsMe()
+      // There is no un-hold endpoint, so undoing a hold means letting the approval go through now.
+      // Do not defer the hold call instead: the due time could pass and auto-approve.
+      showUndoToast(`Held "${title}". It's in Decide now.`, () => api.tasks.approve(id).then(refreshAll))
+      onSuccess?.(key)
+      return true
+    } catch (err) {
+      revert()
+      const msg = err instanceof Error ? err.message : String(err)
+      setErrors((m) => ({ ...m, [key]: msg }))
+      showError(`Couldn't hold: ${msg}`)
+      void refreshNeedsMe()
+      return false
+    } finally {
+      setBusy((b) => ({ ...b, [key]: false }))
+    }
+  }
+
+  const undoApproval = async (e: InboxEntry, adv?: string): Promise<boolean> => {
+    if (e.kind !== 'policy_approval') return false
+    const key = ek(e)
+    const a = e.approval
+    setErrors((m) => ({ ...m, [key]: '' }))
+    setBusy((b) => ({ ...b, [key]: true }))
+    const revert = useNeedsMeStore.getState().markUndone(a.task_id)
+    try {
+      const resp = await api.autonomy.undo(a.task_id)
+      const fallback = `Moved "${a.task_title}" back to ${a.gate_label}`
+      showToast((resp.message || fallback) + (resp.pr_left_open ? '. The pull request stays open.' : ''))
+      await refreshAll()
+      onSuccess?.(adv)
+      return true
+    } catch (err) {
+      revert()
+      const msg = err instanceof Error ? err.message : String(err)
+      setErrors((m) => ({ ...m, [key]: msg }))
+      showError(`Couldn't undo: ${msg}`)
+      return false
+    } finally {
+      setBusy((b) => ({ ...b, [key]: false }))
+    }
+  }
+
+  const [undoOpen, setUndoOpen] = useState<Record<string, boolean>>({})
+
   const openNote = (taskId: string) => setNoteOpen((o) => ({ ...o, [taskId]: true }))
   const closeNote = (taskId: string) => setNoteOpen((o) => ({ ...o, [taskId]: false }))
   const isNoteOpen = (taskId: string) => !!noteOpen[taskId]
@@ -102,12 +160,20 @@ export function useInboxActions({ onSuccess }: { onSuccess?: (advance: string | 
       onApplySource: () => void applySource(e, advance),
       onDiscardSource: () => void discardSource(e, advance),
       onResume: () => void resumeProvider(e, advance),
+      onHold: () => void hold(e, advance),
+      onReviewNow: () => void hold(e, advance),
+      onUndo: () => void undoApproval(e, advance),
+      undoConfirmOpen: !!undoOpen[key],
+      setUndoConfirmOpen: (v) => setUndoOpen((o) => ({ ...o, [key]: v })),
     }
   }
 
   return {
     noteRef, replyRef, previewProps, isBusy,
-    approve, sendChanges, sendReply, retry, dismissEffects, retryEffects, applySource, discardSource, resumeProvider,
+    approve, sendChanges, sendReply, retry, dismissEffects, retryEffects, applySource, discardSource, resumeProvider, hold, undoApproval,
+    reviewNow: hold,
+    closeUndoConfirm: (e: InboxEntry) => setUndoOpen((o) => ({ ...o, [ek(e)]: false })),
+    isUndoConfirmOpen: (e: InboxEntry) => !!undoOpen[ek(e)],
     openNote, closeNote, isNoteOpen,
   }
 }

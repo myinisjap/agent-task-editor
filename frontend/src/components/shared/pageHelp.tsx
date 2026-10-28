@@ -116,7 +116,7 @@ export function HomeHelp() {
           the same count as the badge on Home in the navigation. Click a row to open it in the review
           popup: approve, request changes, reply, retry or fix without leaving Home. j/k or
           ↑/↓ move, a approves, r requests changes (or focuses the reply), ↵ opens the full task
-          page, Esc closes. Ages over 30 minutes turn amber. When something new arrives the panel is tinted and the page edge pulses pink (no pulse with reduced motion).
+          page, Esc closes. Below, Auto-approving rows count down to an automatic approval (h or Hold keeps it for you) and Approved for you today lists the last 24h of policy approvals with Undo; neither counts. Ages over 30 minutes turn amber. When something new arrives the panel is tinted and the page edge pulses pink (no pulse with reduced motion).
         </p>
       </section>
       <section className="flex flex-col gap-1.5">

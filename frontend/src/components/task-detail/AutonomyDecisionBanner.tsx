@@ -6,8 +6,8 @@ import { labelDisplayNameByName } from '../../lib/labelDisplay'
 import RiskFlagChips from '../shared/RiskFlagChips'
 import { Icon } from '../ui'
 
-// AutonomyDecisionBanner shows what the gate's autonomy dial would have done
-// (shadow mode). Renders nothing without a decision or in `ask` mode.
+// AutonomyDecisionBanner shows what the gate's autonomy dial would do
+// would do (or did). Renders nothing without a decision or in `ask` mode.
 export default function AutonomyDecisionBanner({
   taskId, refreshKey, labels, alwaysAsk, verification, compact = false,
 }: {
@@ -57,7 +57,6 @@ export default function AutonomyDecisionBanner({
           {model.stops.map((s) => <li key={s}>{s}</li>)}
         </ul>
       )}
-      <p className="text-[11px] text-fg-subtle">Shadow mode: nothing is approved automatically yet.</p>
     </div>
   )
 }

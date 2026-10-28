@@ -18,7 +18,7 @@ vi.mock('../api/client', async () => {
   return {
     ...actual,
     api: {
-      needsMe: { list: () => Promise.resolve([]) },
+      needsMe: { get: () => Promise.resolve({ items: [], approved_by_policy: [] }) },
       tasks: { list: () => Promise.resolve({ items: [], nextCursor: null }), reviewBrief: () => Promise.resolve({ human_gate: false }), previews: () => Promise.resolve({ capture: null }) },
       health: { providers: () => Promise.resolve({ checks: [], paused_providers: [] }) },
       workflows: { list: () => Promise.resolve([]) },

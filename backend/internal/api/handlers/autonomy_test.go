@@ -481,6 +481,9 @@ func TestNeedsMe_AutoApprovingAndPolicyApprovals(t *testing.T) {
 		Approved []struct {
 			TaskID   string `json:"task_id"`
 			Undoable bool   `json:"undoable"`
+			Changed  *struct {
+				Files int `json:"files"`
+			} `json:"changed"` // optional: only present when a brief cache is wired
 		} `json:"approved_by_policy"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {

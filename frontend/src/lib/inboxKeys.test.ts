@@ -13,6 +13,7 @@ describe('inboxKeyAction', () => {
     expect(inboxKeyAction(ev('ArrowUp'))).toBe('prev')
     expect(inboxKeyAction(ev('a'))).toBe('approve')
     expect(inboxKeyAction(ev('r'))).toBe('reject')
+    expect(inboxKeyAction(ev('h'))).toBe('hold')
     expect(inboxKeyAction(ev('Enter'))).toBe('open')
     expect(inboxKeyAction(ev('o'))).toBe('open')
     expect(inboxKeyAction(ev('Escape'))).toBe('escape')

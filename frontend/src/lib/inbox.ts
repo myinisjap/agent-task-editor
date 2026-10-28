@@ -1,4 +1,4 @@
-import type { NeedsMeItem, PausedProvider, Task, Workflow } from '../api/client'
+import type { NeedsMeItem, PausedProvider, PolicyApprovalItem, Task, Workflow } from '../api/client'
 import { escalationInfo } from './escalation'
 import { humanActionsFor } from './humanGate'
 import type { BadgeTone } from '../components/ui'
@@ -56,23 +56,39 @@ export function sourceEditTasks(tasks: Task[]): SourceEditTask[] {
  *    (auth, toolchain, budget, ...), PR conflicts, failed side effects and
  *    paused providers.
  */
-export type InboxSectionKey = 'decide' | 'answer' | 'fix'
+export type InboxSectionKey = 'decide' | 'auto_approving' | 'answer' | 'fix' | 'approved'
 
 export type InboxEntry =
   | { kind: 'needs_me'; item: NeedsMeItem }
+  | { kind: 'policy_approval'; approval: PolicyApprovalItem }
   | { kind: 'source_edit'; edit: SourceEditTask }
   | { kind: 'side_effect'; failed: FailedEffectTask }
   | { kind: 'provider'; provider: PausedProvider }
 
 export type InboxSections = Record<InboxSectionKey, InboxEntry[]>
 
-export const SECTION_ORDER: InboxSectionKey[] = ['decide', 'answer', 'fix']
+export const SECTION_ORDER: InboxSectionKey[] = ['decide', 'auto_approving', 'answer', 'fix', 'approved']
+
+/** Sections that count as "needs you". Auto-approving and approved rows are informational. */
+export const COUNTED_SECTIONS: InboxSectionKey[] = ['decide', 'answer', 'fix']
+
+export function isCountedSection(key: string): boolean {
+  return (COUNTED_SECTIONS as string[]).includes(key)
+}
+
+/** False for pending auto-approvals and policy approvals: nothing is waiting on the human. */
+export function isCountedEntry(e: InboxEntry): boolean {
+  if (e.kind === 'policy_approval') return false
+  return !(e.kind === 'needs_me' && e.item.reason === 'auto_approving')
+}
 
 /** Per-section display data. Adding a section means adding an entry here (and to SECTION_ORDER). */
 export const SECTION_META: Record<string, { title: string; subtitle: string; tone: BadgeTone }> = {
   decide: { title: 'Decide', subtitle: 'Approve or request changes', tone: 'accent' },
   answer: { title: 'Answer', subtitle: 'The agent asked something', tone: 'info' },
+  auto_approving: { title: 'Auto-approving', subtitle: 'Approves on its own unless you hold it', tone: 'success' },
   fix: { title: 'Fix setup', subtitle: 'Something needs fixing before work can continue', tone: 'warning' },
+  approved: { title: 'Approved for you today', subtitle: 'The autonomy policy approved these in the last 24h', tone: 'neutral' },
 }
 
 /** Opens the Needs-you review popup on the first entry. */
@@ -92,6 +108,7 @@ export function orderedSectionKeys(s: InboxSections): string[] {
 /** Which section a needs-me item belongs in. */
 export function sectionFor(item: NeedsMeItem): InboxSectionKey {
   if (item.reason === 'human_gate') return 'decide'
+  if (item.reason === 'auto_approving') return 'auto_approving'
   if (item.reason === 'pr_conflict') return 'fix'
   return escalationInfo(item.escalation_reason).action === 'reply' ? 'answer' : 'fix'
 }
@@ -99,6 +116,7 @@ export function sectionFor(item: NeedsMeItem): InboxSectionKey {
 export function entrySince(e: InboxEntry): string {
   switch (e.kind) {
     case 'needs_me': return e.item.since
+    case 'policy_approval': return e.approval.approved_at
     case 'source_edit': return e.edit.since
     case 'side_effect': return e.failed.since
     case 'provider': return e.provider.paused_at
@@ -111,21 +129,28 @@ export function buildInbox(
   failed: FailedEffectTask[],
   paused: PausedProvider[],
   sourceEdits: SourceEditTask[] = [],
+  autonomy: { autoApproving?: NeedsMeItem[]; approved?: PolicyApprovalItem[] } = {},
 ): InboxSections {
-  const s: InboxSections = { decide: [], answer: [], fix: [] }
-  for (const item of needsMe) {
-    // auto_approving tasks are not waiting on the user (a later slice renders them separately).
-    if (item.reason === 'auto_approving') continue
+  const s: InboxSections = { decide: [], auto_approving: [], answer: [], fix: [], approved: [] }
+  for (const item of [...needsMe, ...(autonomy.autoApproving ?? [])]) {
     s[sectionFor(item)].push({ kind: 'needs_me', item })
   }
+  for (const approval of autonomy.approved ?? []) s.approved.push({ kind: 'policy_approval', approval })
   for (const edit of sourceEdits) s.decide.push({ kind: 'source_edit', edit })
   for (const f of failed) s.fix.push({ kind: 'side_effect', failed: f })
   for (const provider of paused) s.fix.push({ kind: 'provider', provider })
   for (const k of SECTION_ORDER) s[k].sort((a, b) => entrySince(a).localeCompare(entrySince(b)))
+  // Pending: soonest approval first. Approved: newest first.
+  const due = (e: InboxEntry) => (e.kind === 'needs_me' ? e.item.due_at ?? '' : '')
+  s.auto_approving.sort((a, b) => due(a).localeCompare(due(b)))
+  s.approved.reverse()
   return s
 }
 
-/** The one count: nav badge, tab badge, Home and Inbox heading all use this. */
+/**
+ * The one count: nav badge, tab badge and Home all use this. Pending
+ * auto-approvals and approved items never count: nothing is waiting on the human.
+ */
 export function inboxCount(s: InboxSections): number {
   return s.decide.length + s.answer.length + s.fix.length
 }
@@ -143,6 +168,8 @@ export type ItemActions = {
 
 /** Which one-click actions an inbox item offers. */
 export function itemActions(item: NeedsMeItem, workflow: Workflow | undefined): ItemActions {
+  // Pending auto-approvals have their own Hold / Review now buttons.
+  if (item.reason === 'auto_approving') return { approve: false, requestChanges: false, retry: false, reply: false }
   if (item.reason === 'pr_conflict') return { approve: false, requestChanges: false, retry: false, reply: false }
   const { canApprove, canReject } = humanActionsFor(workflow, item.label)
   if (item.reason === 'human_gate') return { approve: canApprove, requestChanges: canReject, retry: false, reply: false }
@@ -157,6 +184,7 @@ export function itemActions(item: NeedsMeItem, workflow: Workflow | undefined): 
 export function entryKey(e: InboxEntry): string {
   switch (e.kind) {
     case 'needs_me': return e.item.task_id
+    case 'policy_approval': return `${e.approval.task_id}:approved`
     case 'source_edit': return `${e.edit.task.id}:source`
     case 'side_effect': return `${e.failed.task.id}:effects`
     case 'provider': return `provider:${e.provider.provider}`
@@ -166,6 +194,7 @@ export function entryKey(e: InboxEntry): string {
 export function entryTaskId(e: InboxEntry): string | undefined {
   switch (e.kind) {
     case 'needs_me': return e.item.task_id
+    case 'policy_approval': return e.approval.task_id
     case 'source_edit': return e.edit.task.id
     case 'side_effect': return e.failed.task.id
     case 'provider': return undefined

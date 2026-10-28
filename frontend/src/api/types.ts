@@ -6988,6 +6988,12 @@ export interface components {
             pr_url?: string;
             /** @description True when POST /tasks/{id}/autonomy/undo would currently be accepted (last gate exit by policy, not merged). */
             undoable: boolean;
+            /** @description Diff size when the branch diff could be computed. */
+            changed?: {
+                files: number;
+                additions: number;
+                deletions: number;
+            };
         };
         NeedsMeItem: {
             task_id: string;

@@ -258,6 +258,7 @@ When a gate reaches **N** distinct escaped approvals within **W** days it is low
 `GET /tasks/{id}/autonomy/suggestions` proposes rule conditions from the task: the deepest common directories of the changed files as `dir/**` (top 3 by file count), `*.ext` for specific kinds (`.sql`, `.proto`, `.yaml`, ...), the task type, and a size threshold rounded down from the changed lines (to one significant digit).
 
 Task Detail shows the decision as a banner under the review brief (inside the compact brief card on phones): green "This would auto-approve" or neutral "The gate would still ask you" with flag chips and hard stops; nothing shows in `ask` mode. Under **Details**, the "Always ask for this task" switch sets `always_ask` (with Undo).
+Home lists pending approvals under **Auto-approving** (countdown, Hold; the Undo toast after Hold approves the task immediately, since a hold can't be re-armed) and recent ones under **Approved for you today** (Undo with confirm). Neither counts toward the needs-you badge. Task Detail shows the decision as a banner under the review brief (inside the compact brief card on phones): green "This would auto-approve" or neutral "The gate would still ask you" with flag chips and hard stops; the review header shows the countdown and Hold while pending, and History shows "Approved by policy" with the reason. Under **Details**, the "Always ask for this task" switch sets `always_ask` (with Undo).
 
 ## Custom Workflows
 

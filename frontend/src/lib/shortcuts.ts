@@ -28,6 +28,7 @@ export const SHORTCUTS: Shortcut[] = [
 export const REVIEW_SHORTCUTS: Shortcut[] = [
   { id: 'inbox-move', keys: ['j', '/', 'k'], label: 'Move down / up (also ↓ / ↑)' },
   { id: 'inbox-approve', keys: ['a'], label: 'Approve' },
+  { id: 'inbox-hold', keys: ['h'], label: 'Hold a pending auto-approval' },
   { id: 'inbox-reject', keys: ['r'], label: 'Request changes (or reply)' },
   { id: 'inbox-open', keys: ['Enter'], label: 'Open full task page (also o)' },
   { id: 'inbox-esc', keys: ['Esc'], label: 'Close note, then the popup' },

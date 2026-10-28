@@ -1280,7 +1280,7 @@ oldest first (`since` ascending). Each task appears at most once with one
 primary `reason`; precedence is `waiting_human` > `pr_conflict` > `auto_approving` > `human_gate`.
 The response also carries `approved_by_policy`: policy approvals from the last 24h
 (`task_id, task_title, repo_id, workflow_id, label, gate_label, approved_at, note,
-decision_id, pr_url?, undoable`), latest per task, always an array.
+decision_id, pr_url?, undoable, changed?`; `changed` is the diff size `{files, additions, deletions}` when computable), latest per task, always an array.
 
 ```json
 { "items": [
