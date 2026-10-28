@@ -17,7 +17,7 @@ vi.mock('../api/ws', () => ({
 
 import { useRunSteps } from './useRunSteps'
 
-const bash = (command: string) => JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'x', name: 'Bash', input: { command } }] } })
+const bash = (command: string) => JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'x', name: 'Bash', input: { command } }] } })
 const entry = (type: string, content: string) => ({ id: '1', type, content, at: '2026-01-01T00:00:00Z' })
 const emit = (e: unknown) => act(() => handlers.forEach((h) => h(e)))
 
