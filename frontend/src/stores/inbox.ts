@@ -47,10 +47,15 @@ export const useInboxStore = create<InboxState>((set) => ({
 /** The inbox bucketed into Decide / Answer / Fix setup. Selectors stay primitive-stable; the object is memoised. */
 export function useInboxSections(): InboxSections {
   const needsMe = useNeedsMeStore((s) => s.items)
+  const autoApproving = useNeedsMeStore((s) => s.autoApproving)
+  const approved = useNeedsMeStore((s) => s.approvedByPolicy)
   const failed = useInboxStore((s) => s.failedEffects)
   const sourceEdits = useInboxStore((s) => s.sourceEdits)
   const paused = useHealthStore((s) => s.paused)
-  return useMemo(() => buildInbox(needsMe, failed, paused, sourceEdits), [needsMe, failed, paused, sourceEdits])
+  return useMemo(
+    () => buildInbox(needsMe, failed, paused, sourceEdits, { autoApproving, approved }),
+    [needsMe, failed, paused, sourceEdits, autoApproving, approved],
+  )
 }
 
 /** Total number of things waiting on the human: nav badge, tab badge, Home and Inbox heading. */

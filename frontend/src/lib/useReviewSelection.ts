@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { entryKey, entryTaskId, resolveSelection, type InboxEntry } from './inbox'
+import { entryKey, entryTaskId, isCountedEntry, resolveSelection, type InboxEntry } from './inbox'
 
 /**
  * URL-backed state of the Needs-you review popup.
@@ -52,7 +52,8 @@ export function useReviewSelection(flat: InboxEntry[], loaded: boolean) {
     }
     if (!loaded) return
     if (review && !param) {
-      if (flat.length > 0) setParams({ task: entryKey(flat[0]) }, { replace: true })
+      const first = flat.find(isCountedEntry)
+      if (first) setParams({ task: entryKey(first) }, { replace: true })
       else setParams((p) => { p.delete('review'); return p }, { replace: true })
       return
     }

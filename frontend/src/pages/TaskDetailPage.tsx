@@ -21,7 +21,8 @@ import HumanDecisionsList from '../components/task-detail/HumanDecisionsList'
 import RememberLessonModal from '../components/lessons/RememberLessonModal'
 import Toast from '../components/shared/Toast'
 import ConfirmDialog from '../components/shared/ConfirmDialog'
-import { showError, showUndoToast } from '../stores/toast'
+import { showError, showToast, showUndoToast } from '../stores/toast'
+import { useNeedsMeStore } from '../stores/needsMe'
 import { errMessage } from '../lib/errMessage'
 import { canHumanMove } from '../lib/humanMoves'
 import LabelHistoryList from '../components/task-detail/LabelHistoryList'
@@ -42,6 +43,7 @@ type Tab = 'overview' | 'logs' | 'diff'
 
 export default function TaskDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const autoPending = useNeedsMeStore((s) => (id ? s.autoApprovingByTask[id] : undefined))
   const navigate = useNavigate()
   const [task, setTask] = useState<Task | null>(null)
   const [runs, setRuns] = useState<AgentRun[]>([])
@@ -233,6 +235,9 @@ export default function TaskDetailPage() {
         setCostWarning(null)
         refreshTask()
         refreshLabelHistory()
+      } else if ((event.type === 'task.autonomy_approved' || event.type === 'task.autonomy_undone' || event.type === 'task.autonomy_held') && event.payload.task_id === id) {
+        refreshTask()
+        refreshLabelHistory()
       } else if (event.type === 'task.cost_warning' && event.payload.task_id === id) {
         setCostWarning({ spentUsd: event.payload.spent_usd, budgetUsd: event.payload.budget_usd })
       } else if (event.type === 'task.agent_started' && event.payload.task_id === id) {
@@ -408,6 +413,18 @@ export default function TaskDetailPage() {
       setActionError(e.message ?? String(e))
     } finally {
       setActionPending(false)
+    }
+  }
+
+  const handleHold = async () => {
+    if (!id) return
+    try {
+      await api.autonomy.hold(id)
+      showToast("Held. It's waiting for your review.")
+    } catch (e) {
+      showError(`Couldn't hold: ${errMessage(e)}`)
+    } finally {
+      void useNeedsMeStore.getState().refresh()
     }
   }
 
@@ -734,6 +751,8 @@ export default function TaskDetailPage() {
       verificationKey={verificationKey}
       briefKey={briefKey}
       labels={workflow?.labels ?? []}
+      autoApproving={autoPending?.due_at ? { dueAt: autoPending.due_at } : undefined}
+      onHold={handleHold}
       alwaysAsk={!!task.always_ask}
       mode={reviewMode}
       onBack={() => navigate('/board')}

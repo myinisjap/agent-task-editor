@@ -15,6 +15,8 @@ function formatTimestamp(iso: string): string {
 // matching the semantic colors used elsewhere for run status (agent = pink
 // for waiting-on-agent-like activity, human = emerald for a completed human
 // action, subtasks_complete = slate as a neutral system trigger).
+const isPolicy = (e: TaskLabelHistoryEntry) => e.actor_id === 'policy'
+
 function triggerBadgeClass(trigger: string): string {
   switch (trigger) {
     case 'agent':
@@ -77,20 +79,22 @@ export default function LabelHistoryList({
                 ) : null}
                 <span className="text-fg">{labelDisplayNameByName(entry.to_label, labels)}</span>
               </span>
-              <span className={`shrink-0 px-1.5 py-0.5 rounded text-[11px] ${triggerBadgeClass(entry.trigger)}`}>
-                {entry.trigger}
+              <span className={`shrink-0 px-1.5 py-0.5 rounded text-[11px] ${isPolicy(entry) ? 'bg-teal-900/60 text-teal-200' : triggerBadgeClass(entry.trigger)}`}>
+                {isPolicy(entry) ? 'Approved by policy' : entry.trigger}
               </span>
             </div>
             <div className="text-fg-subtle text-[11px] mt-0.5 flex items-center gap-1">
               <span>{formatTimestamp(entry.created_at)}</span>
               {entry.trigger === 'human' && (
-                <span>· by {entry.actor_id ? entry.actor_id : 'you'}</span>
+                <span>· {isPolicy(entry) ? 'by policy' : `by ${entry.actor_id ? entry.actor_id : 'you'}`}</span>
               )}
               {entry.trigger !== 'human' && entry.actor_id && (
                 <span className="font-mono">· {entry.actor_id.slice(0, 8)}</span>
               )}
             </div>
-            {entry.note && <NotePanel note={entry.note} />}
+            {entry.note && (isPolicy(entry)
+              ? <p data-testid="policy-note" className="ml-2 mt-0.5 text-[11px] text-fg-muted border-l border-border pl-2">{entry.note}</p>
+              : <NotePanel note={entry.note} />)}
             {onRemember && entry.trigger === 'human' && entry.actor_id !== 'policy' && entry.note && (
               <button
                 onClick={() => onRemember(entry.note ?? '')}

@@ -29,8 +29,8 @@ describe('entry helpers', () => {
   it('walks unknown sections and finds the oldest', () => {
     const s = { decide: [edit], answer: [], fix: [prov], extra: [needs] } as unknown as InboxSections
     expect(nonEmptySections(s).map(([k]) => k)).toEqual(['decide', 'fix', 'extra'])
-    expect(oldestSince(s)).toBe('2026-01-01T00:00:00Z')
-    expect(oldestSince({ decide: [], answer: [], fix: [] })).toBeUndefined()
+    expect(oldestSince(s)).toBe('2026-01-02T00:00:00Z') // unknown sections are not counted
+    expect(oldestSince({ decide: [], auto_approving: [], answer: [], fix: [], approved: [] })).toBeUndefined()
   })
 })
 

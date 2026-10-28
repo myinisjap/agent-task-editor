@@ -1,9 +1,9 @@
 // Pure helpers for the Home control room: inbox row text, compact ages and
 // the station list (with human-gate flags) behind the scene legend/strip.
-import type { Workflow } from '../api/client'
+import type { PolicyApprovalItem, Workflow } from '../api/client'
 import { bucketize } from '../components/taskBuckets'
 import { stationsFor } from '../components/factoryStations'
-import { entryKey, entrySince, orderedSectionKeys, reviewHref, SECTION_META, type InboxEntry, type InboxSections } from './inbox'
+import { entryKey, entrySince, isCountedSection, orderedSectionKeys, reviewHref, SECTION_META, type InboxEntry, type InboxSections } from './inbox'
 import { isHumanGateLabel } from './humanGate'
 import { labelDisplayName } from './labelDisplay'
 
@@ -11,6 +11,7 @@ import { labelDisplayName } from './labelDisplay'
 export function entryTitle(e: InboxEntry): string {
   switch (e.kind) {
     case 'needs_me': return e.item.task_title
+    case 'policy_approval': return e.approval.task_title
     case 'source_edit': return e.edit.task.title
     case 'side_effect': return e.failed.task.title
     case 'provider': return `${e.provider.provider} paused`
@@ -43,10 +44,15 @@ export function nonEmptySections(sections: InboxSections): [string, InboxEntry[]
     .filter(([, v]) => v.length > 0)
 }
 
-/** Oldest `since` (ISO) across all entries, or undefined when empty. */
+/** [sectionKey, entries] for the sections that count as "needs you" (not auto-approving / approved). */
+export function countedNonEmptySections(sections: InboxSections): [string, InboxEntry[]][] {
+  return nonEmptySections(sections).filter(([k]) => isCountedSection(k))
+}
+
+/** Oldest `since` (ISO) across counted entries, or undefined when empty. */
 export function oldestSince(sections: InboxSections): string | undefined {
   let oldest: string | undefined
-  for (const [, entries] of nonEmptySections(sections)) {
+  for (const [, entries] of countedNonEmptySections(sections)) {
     for (const e of entries) {
       const s = entrySince(e)
       if (s && (!oldest || s < oldest)) oldest = s
@@ -116,4 +122,17 @@ export function homeStations(workflow: Workflow, counts: Record<string, number>)
     count: s.count,
     isGate: bucketed ? s.key === 'waitingHuman' : isHumanGateLabel(workflow, idToName.get(s.key) ?? ''),
   }))
+}
+
+/** Confirm copy for undoing a policy approval; shared by the Home panel and the popup. */
+export function undoConfirmText(a: PolicyApprovalItem, labels: { gate: string; current: string }): string {
+  return `Move "${a.task_title}" back to ${labels.gate}? It leaves ${labels.current} and waits for your review. The policy won't re-approve it.`
+}
+
+export const PR_STAYS_OPEN_TEXT = 'A pull request was already opened; it stays open.'
+
+/** "+a −d · n files" diff size, or undefined when unknown. */
+export function formatChanged(c: { files: number; additions: number; deletions: number } | undefined): string | undefined {
+  if (!c) return undefined
+  return `+${c.additions} −${c.deletions} · ${c.files} ${c.files === 1 ? 'file' : 'files'}`
 }
