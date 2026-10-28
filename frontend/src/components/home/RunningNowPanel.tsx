@@ -3,6 +3,7 @@ import type { Dashboard, Task, Workflow } from '../../api/client'
 import { useNow } from '../../lib/useNow'
 import { formatElapsed } from '../../lib/homeInbox'
 import { Card } from '../ui'
+import type { RunStep } from '../../lib/useRunSteps'
 
 const MAX_FREE_ROWS = 12
 
@@ -13,9 +14,11 @@ type Props = {
   repoConcurrency: Dashboard['repo_concurrency']
   workflow?: Workflow
   tasks?: Pick<Task, 'id' | 'label'>[]
+  /** Latest tool call per run_id. */
+  steps?: Record<string, RunStep>
 }
 
-export default function RunningNowPanel({ agents, maxWorkers, repoConcurrency, workflow, tasks }: Props) {
+export default function RunningNowPanel({ agents, maxWorkers, repoConcurrency, workflow, tasks, steps }: Props) {
   const now = useNow(1000)
   const colorFor = (taskId: string): string | undefined => {
     const label = tasks?.find((t) => t.id === taskId)?.label
@@ -29,12 +32,20 @@ export default function RunningNowPanel({ agents, maxWorkers, repoConcurrency, w
       <ul className="flex flex-col gap-1.5 min-w-0">
         {agents.map((a) => {
           const color = colorFor(a.task_id)
+          const step = steps?.[a.run_id]
           return (
-            <li key={a.run_id} data-testid="running-row" className="flex items-center gap-2 min-w-0 rounded-md border border-border px-2 py-1.5">
+            <li key={a.run_id} data-testid="running-row" className="min-w-0 rounded-md border border-border px-2 py-1.5">
+              <div className="flex items-center gap-2 min-w-0">
               <span aria-hidden className={`inline-block w-2.5 h-2.5 rounded-full shrink-0 ${color ? '' : 'bg-fg-subtle'}`} style={color ? { backgroundColor: color } : undefined} />
               <Link to={`/tasks/${a.task_id}`} className="flex-1 min-w-0 truncate text-sm text-fg hover:underline">{a.task_title}</Link>
               <span className="shrink-0 max-w-[30%] truncate text-xs text-fg-muted">{a.agent_name}</span>
               <span className="shrink-0 font-mono text-xs text-fg">{formatElapsed(now - new Date(a.started_at).getTime())}</span>
+              </div>
+              {step && (
+                <div data-testid="run-step" title={`${step.tool}  ${step.summary}`} className="mt-1 min-w-0 truncate font-mono text-xs text-fg-muted">
+                  <span className="text-fg">{step.tool}</span><span className="whitespace-pre">{"  "}</span>{step.summary}
+                </div>
+              )}
             </li>
           )
         })}

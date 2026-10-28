@@ -151,3 +151,16 @@ test('root URL redirects to the app under /tasks/', async ({ page }) => {
       .or(page.getByRole('button', { name: 'About the board' })),
   ).toBeVisible()
 })
+
+test('Home fits a 1080p viewport without page scroll when the scene is expanded', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await page.addInitScript(() => {
+    localStorage.setItem('board.onboarding.dismissed', 'true')
+    localStorage.setItem('home.scene.expanded.wide', '1')
+  })
+  await page.goto('')
+  await expect(page.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
+  await page.waitForTimeout(500)
+  const overflow = await page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight)
+  expect(overflow).toBeLessThanOrEqual(0)
+})
