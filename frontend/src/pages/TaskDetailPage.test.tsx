@@ -26,6 +26,8 @@ vi.mock('../api/client', async () => {
         diff: vi.fn().mockResolvedValue({ branch: 'main', diff: '' }),
         verifications: vi.fn().mockResolvedValue([]),
         reviewBrief: vi.fn().mockResolvedValue({ human_gate: false }),
+        autonomyDecision: vi.fn().mockRejectedValue(new Error('404')),
+        setAlwaysAsk: vi.fn(),
         runLogs: vi.fn().mockResolvedValue({ items: [], hasMore: false, prevCursor: null }),
         approve: vi.fn(),
         reject: vi.fn(),

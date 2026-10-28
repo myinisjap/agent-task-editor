@@ -20,6 +20,7 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Autonomy decisions on Task Detail.** On a human gate with a non-`ask` autonomy mode, the review layout shows what the gate would have done (desktop rail under the brief, tablet stacked, phone inside the compact brief card): a green "This would auto-approve" with reasons, or "The gate would still ask you" with flag chips and hard stops in plain words. An "Always ask for this task" switch under Details sets `always_ask`, with Undo. Shadow mode: nothing is approved automatically yet.
 - **Autonomy per gate (shadow mode).** Workflow human-gate labels accept an optional `autonomy:` block (`ask` | `on_flags` | `auto`, `ask_on` flag codes, `hold`, `max_cost_usd`). Tasks have an `always_ask` override (`PATCH /tasks/{id}/always-ask`). The server records what it would have decided on each gate landing (`GET /tasks/{id}/autonomy-decision`), but nothing is approved automatically yet.
 - **Dashboard "today" stats.** `GET /api/v1/dashboard` now returns `today` with `done_count` (distinct non-archived tasks that reached a done label since local midnight), `verify_total` / `verify_passed` (verification results since midnight) and `runs_started`. These are for the upcoming control-room home page.
 - **Chat terminal copies on select.** Selecting text in the chat terminal now copies it to the clipboard (hold Shift/Option while dragging if the CLI has mouse reporting on).

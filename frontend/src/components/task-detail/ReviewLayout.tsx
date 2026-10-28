@@ -1,9 +1,10 @@
 import { MessageSquare } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
-import type { AgentConfig, AgentRun, ProviderConfig, Task, TaskLabelHistoryEntry } from '../../api/client'
+import type { AgentConfig, AgentRun, ProviderConfig, Task, TaskLabelHistoryEntry, WorkflowLabel } from '../../api/client'
 import type { DiffComment } from '../../lib/diffComments'
 import HelpButton from '../shared/HelpButton'
+import AutonomyDecisionBanner from './AutonomyDecisionBanner'
 import DiffReviewPane from './DiffReviewPane'
 import ReviewBriefCard from './ReviewBriefCard'
 import RunHistoryList from './RunHistoryList'
@@ -23,7 +24,7 @@ export default function ReviewLayout({
   isRunning, canRerun, onStop, onRerun, canApprove, canReject, approveLabel, onApprove,
   rejectNote, setRejectNote, onReject, openCommentsCount, actionError, actionPending,
   diffComments, onAddComment, onRemoveComment, onReopenComment, onCreatePR, creatingPR,
-  verificationKey, briefKey, mode, onBack, onHelp, details, labelHistory, variant = 'desktop',
+  verificationKey, briefKey, mode, onBack, onHelp, details, labelHistory, variant = 'desktop', labels, alwaysAsk,
 }: {
   task: Task
   repoName?: string
@@ -60,10 +61,25 @@ export default function ReviewLayout({
   details: ReactNode
   labelHistory?: TaskLabelHistoryEntry[]
   variant?: 'desktop' | 'tablet' | 'phone'
+  labels?: WorkflowLabel[]
+  alwaysAsk?: boolean
 }) {
   const defaultTab: MainTab = mode === 'plan' ? 'plan' : 'diff'
   const [tab, setTab] = useState<MainTab>(defaultTab)
   const [showRejectForm, setShowRejectForm] = useState(false)
+  const [briefVerification, setBriefVerification] = useState<string | null>(null)
+  const onBriefLoaded = (b: { verification?: { status: string } | null } | null) =>
+    setBriefVerification(b?.verification?.status ?? null)
+  const banner = (compact = false) => (
+    <AutonomyDecisionBanner
+      taskId={task.id}
+      refreshKey={briefKey}
+      labels={labels}
+      alwaysAsk={!!alwaysAsk}
+      verification={briefVerification}
+      compact={compact}
+    />
+  )
 
   useEffect(() => { setTab(defaultTab) }, [defaultTab])
   // A successful decision moves the task; collapse the form.
@@ -187,7 +203,8 @@ export default function ReviewLayout({
 
   const rail = (
     <>
-      <ReviewBriefCard taskId={task.id} refreshKey={briefKey} hidePreview={mode === 'diff'} />
+      <ReviewBriefCard taskId={task.id} refreshKey={briefKey} hidePreview={mode === 'diff'} onLoaded={onBriefLoaded} />
+      {banner()}
       <VerificationPanel taskId={task.id} refreshKey={verificationKey} />
       {runsList}
     </>
@@ -309,7 +326,7 @@ export default function ReviewLayout({
       {header}
       <div className="flex-1 min-h-0 overflow-y-auto">
         <div className="p-3">
-          <ReviewBriefCard taskId={task.id} refreshKey={briefKey} compact />
+          <ReviewBriefCard taskId={task.id} refreshKey={briefKey} compact onLoaded={onBriefLoaded} footer={banner(true)} />
         </div>
         {mainTabs}
       </div>
