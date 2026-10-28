@@ -25,7 +25,7 @@ src/
 ├── components/
 │   ├── DependenciesPanel.tsx  Task dependency list + add/remove UI
 │   ├── SubtasksPanel.tsx      Subtask checklist + add/remove UI
-│   ├── board/        AgentGroupColumn, AgentLogEntry, GitStateBadge, NewTaskModal, TaskBoard, TaskCard, TaskColumn
+│   ├── board/        AgentGroupColumn, AgentLogEntry, BoardFilterSheet, GitStateBadge, NewTaskModal, TaskBoard, TaskCard, TaskColumn
 │   ├── chat/          TerminalKeyBar (mobile Esc/Tab/arrow/Ctrl row for the chat terminal)
 │   ├── diff/          FileDiffViewer (syntax-highlighted git diff + inline review comments)
 │   ├── inbox/         DecisionContext (Decide row summary), InboxPreview (desktop right-pane preview)

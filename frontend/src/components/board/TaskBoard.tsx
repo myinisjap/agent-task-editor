@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import Icon from '../ui/Icon'
 import { labelDisplayName } from '../../lib/labelDisplay'
 import { useState, useEffect, useMemo } from 'react'
@@ -48,56 +48,19 @@ const EMPTY_TASKS: Task[] = []
 // every parent render, causing it to unmount/remount and destroy child state.
 function MobileColumnNav({
   currentIndex,
-  total,
-  label,
-  onPrev,
-  onNext,
-  onDotClick,
+  onSelect,
   chips,
+  footer,
 }: {
   currentIndex: number
-  total: number
-  label: string
-  onPrev: () => void
-  onNext: () => void
-  onDotClick: (i: number) => void
+  onSelect: (i: number) => void
   chips: ColumnChip[]
+  footer?: ReactNode
 }) {
   return (
-    <div className="mb-3">
-      <ColumnChips chips={chips} currentIndex={currentIndex} onSelect={onDotClick} />
-      <div className="flex items-center justify-between mb-2">
-        <button
-          disabled={currentIndex === 0}
-          onClick={onPrev}
-          aria-label="Previous column"
-          className="px-3 py-1.5 text-sm rounded bg-surface-sunken text-fg-muted disabled:opacity-30 active:bg-border"
-        >
-          <Icon icon={ChevronLeft} size="md" />
-        </button>
-        <span className="text-sm font-semibold text-fg">
-          {label} ({currentIndex + 1}/{total})
-        </span>
-        <button
-          disabled={currentIndex === total - 1}
-          onClick={onNext}
-          aria-label="Next column"
-          className="px-3 py-1.5 text-sm rounded bg-surface-sunken text-fg-muted disabled:opacity-30 active:bg-border"
-        >
-          <Icon icon={ChevronRight} size="md" />
-        </button>
-      </div>
-      <div className="flex justify-center gap-1.5">
-        {Array.from({ length: total }).map((_, i) => (
-          <button
-            key={i}
-            onClick={() => onDotClick(i)}
-            className={`w-2 h-2 rounded-full transition-colors ${
-              i === currentIndex ? 'bg-indigo-400' : 'bg-slate-600'
-            }`}
-          />
-        ))}
-      </div>
+    <div className="mb-2">
+      <ColumnChips chips={chips} currentIndex={currentIndex} onSelect={onSelect} />
+      {footer}
     </div>
   )
 }
@@ -117,6 +80,8 @@ type Props = {
   workflowId?: string
   groupByRepo?: boolean
   repos?: { id: string; name: string }[]
+  /** Small content rendered under the mobile column chips (e.g. filtered cost). */
+  mobileNavFooter?: ReactNode
 }
 
 function TaskBoardInner({
@@ -135,6 +100,7 @@ function TaskBoardInner({
   workflowId,
   groupByRepo = false,
   repos = [],
+  mobileNavFooter,
 }: Props & { onMoveError: (message: string) => void }) {
   const upsert = useTasksStore((s) => s.upsert)
   const isMobile = useIsMobile()
@@ -499,24 +465,17 @@ function TaskBoardInner({
   if (condensed && transitions.length > 0) {
     if (isMobile && groups.length > 0) {
       const currentGroup = groups[clampedCondensed]
-      const currentLabel =
-        currentGroup.kind === 'single'
-          ? currentGroup.label.name
-          : 'Agent'
-
       return (
         <DndContext sensors={sensors} onDragStart={handleDragStart} onDragCancel={handleDragCancel} onDragEnd={handleDragEnd}>
           <div className="flex flex-col h-full">
             <MobileColumnNav
               currentIndex={clampedCondensed}
-              total={groups.length}
-              label={currentLabel}
-              onPrev={() => selectColumn(clampedCondensed - 1)}
-              onNext={() => selectColumn(clampedCondensed + 1)}
-              onDotClick={selectColumn}
+              onSelect={selectColumn}
               chips={chips}
+              footer={mobileNavFooter}
             />
             <div
+              data-testid="mobile-column-pane"
               className="flex-1 min-h-0 overflow-y-auto"
               style={{ touchAction: 'pan-y' }}
               onTouchStart={condensedSwipe.onTouchStart}
@@ -570,14 +529,12 @@ function TaskBoardInner({
         <div className="flex flex-col h-full">
           <MobileColumnNav
             currentIndex={clampedNormal}
-            total={sortedLabels.length}
-            label={currentLabel.name}
-            onPrev={() => selectColumn(clampedNormal - 1)}
-            onNext={() => selectColumn(clampedNormal + 1)}
-            onDotClick={selectColumn}
+            onSelect={selectColumn}
             chips={chips}
+            footer={mobileNavFooter}
           />
           <div
+            data-testid="mobile-column-pane"
             className="flex-1 min-h-0 overflow-y-auto"
             style={{ touchAction: 'pan-y' }}
             onTouchStart={normalSwipe.onTouchStart}

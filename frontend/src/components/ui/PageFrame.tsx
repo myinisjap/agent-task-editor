@@ -26,10 +26,10 @@ export default function PageFrame({ title, titleAdornment, help, actions, tabs, 
   return (
     <div className={cx('p-4 md:p-6 mx-auto w-full', fill && 'h-full min-h-0 flex flex-col', WIDTH[width])} data-testid={testId}>
       <div className={cx('flex flex-wrap items-center gap-2', headerClassName ?? 'mb-6', fill && 'shrink-0')}>
-        <h1 className="text-xl font-semibold text-fg">{title}</h1>
+        <h1 className="min-w-0 text-xl font-semibold text-fg">{title}</h1>
         {titleAdornment}
         {help && <HelpButton onClick={help.onClick} title={help.title} />}
-        {actions && <div className="ml-auto flex gap-2">{actions}</div>}
+        {actions && <div className="ml-auto flex gap-2 min-w-0">{actions}</div>}
       </div>
       {description && <p className="text-sm text-fg-muted -mt-4 mb-6">{description}</p>}
       {tabs && tabs.length > 0 && (
