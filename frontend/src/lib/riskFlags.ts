@@ -20,3 +20,14 @@ export function riskFlagLabel(code: string): string {
 export function riskFlagClass(code: string): string {
   return RED.has(code) ? 'bg-red-900/60 text-red-200' : 'bg-amber-900/60 text-amber-200'
 }
+
+/** Every flag code, in the backend's order (reviewbrief/flags.go). */
+export const RISK_FLAG_CODES: RiskFlagCode[] = [
+  'migration',
+  'auth_or_security',
+  'dependencies',
+  'tests_removed',
+  'ci_config',
+  'large_change',
+  'outside_plan_scope',
+]

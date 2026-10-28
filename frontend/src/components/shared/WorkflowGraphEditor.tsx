@@ -1,5 +1,7 @@
 import { labelDisplayName, humanizeLabelName } from '../../lib/labelDisplay'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
+import AutonomyDialChip from './AutonomyDialChip'
 import {
   DEFAULT_LABEL_COLOR,
   TRANSITION_KINDS,
@@ -52,6 +54,9 @@ function LabelForm({ draft, label, onChange, onSelectLabel, taskCount, locked, p
   const [error, setError] = useState<string | null>(null)
   const patch = (p: Partial<Omit<DraftLabel, 'name'>>) => onChange(updateLabel(draft, label.name, p))
   const outgoing = draft.transitions.some((t) => t.from_label === label.name)
+  // Twin of lib/autonomyDial#isAutonomyGate on a draft: every exit human, not terminal, not agent_ignore.
+  const exits = draft.transitions.filter((t) => t.from_label === label.name)
+  const gateNow = !label.is_terminal && !label.agent_ignore && exits.length > 0 && exits.every((t) => t.trigger_type === 'human')
   const touching = transitionsTouching(draft, label.name)
 
   const rename = () => {
@@ -105,6 +110,18 @@ function LabelForm({ draft, label, onChange, onSelectLabel, taskCount, locked, p
           onChange={(e) => onChange(setGate(draft, label.name, e.target.checked))} />
         Human approval gate on outgoing transitions
       </label>
+      {!isGated(draft, label.name) && outgoing && label.autonomy && label.autonomy.mode !== 'ask' && (
+        <p className="text-xs text-amber-300">Autonomy will be reset to Always ask</p>
+      )}
+      {gateNow && (
+        <p className="text-xs text-slate-400 flex flex-wrap items-center gap-1.5">
+          Autonomy: <AutonomyDialChip mode={label.autonomy?.mode ?? 'ask'} size="xs" />
+          <Link to={`/pipeline/overview?gate=${encodeURIComponent(label.name)}`} className="text-indigo-300 hover:underline">
+            Change on the gate panel
+          </Link>
+          <span>(after you save or discard)</span>
+        </p>
+      )}
       <label className="flex items-center gap-2 text-sm text-slate-200">
         <input type="checkbox" checked={label.is_terminal} onChange={(e) => patch({ is_terminal: e.target.checked })} />
         Terminal (done)

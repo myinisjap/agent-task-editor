@@ -30,6 +30,7 @@ src/
 │   ├── diff/          FileDiffViewer (syntax-highlighted git diff + inline review comments)
 │   ├── inbox/         DecisionContext (Decide row summary), InboxPreview (desktop right-pane preview)
 │   ├── lessons/       LessonForm, LessonsPanel (repo/global lessons), RememberLessonModal
+│   ├── pipeline/      GateDialPanel, GateDialSheet, GateBacktestCard, GateAskRules, GateHistory (autonomy dial UI on the Pipeline)
 │   ├── ui/            Button, Badge, Card, Field, PageFrame, Icon + design tokens (see ui/README.md)
 │   ├── skills/        SkillPicker (chip multi-select for agent/repo skills)
 │   └── shared/        ApiTokenGate, GitHubAuthWarning, NavSidebar, Toast (message, variant, optional Undo action), ToastHost (renders the global toast store), ConfirmDialog (in-page confirm built on ModalShell; optional typed confirmation), CommandPalette, CommandHost, ShortcutSheet (Cmd/Ctrl+K palette, global shortcuts host, shortcut sheet), WorkflowFlowchart
@@ -53,6 +54,7 @@ src/
 │   ├── notifications.ts Browser-notification opt-in + permission state (persisted; default off)
 │   └── workflow.ts   Workflow + label state
 ├── lib/
+│   ├── autonomyDial.ts      Autonomy dial helpers (gate rule, backtest verdicts, save body)
 │   ├── parseDiff.ts         Git unified diff parser
 │   ├── parseAgentLog.ts     Parses raw agent log content (plain text or JSON) into a structured summary/detail view
 │   ├── parseWorkflowYaml.ts Hand-rolled parser for the workflow YAML schema (labels/transitions)

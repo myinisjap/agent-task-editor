@@ -26,6 +26,19 @@ The **Pipeline** page (`/pipeline`, Overview tab) draws the selected workflow as
 
 Click a node to open the assign panel: tick or untick an agent config to add or remove that label from its `labels` (the same update the Agents tab performs). Use **Edit workflow** (see below) or the Workflow tab to change the labels and transitions themselves. With several workflows, a selector above the graph switches between them.
 
+**Autonomy dial.** Autonomy gates (see [Autonomy per gate](#autonomy-per-gate)) show a dial chip (**Always ask**, **Ask on flags**, **Auto**) instead of "Human gate"; labels that are only `agent_ignore` keep "Human gate". Click a gate to open the gate panel under the graph:
+
+- **Gate mode** segmented control and, for Ask on flags, the seven flag checkboxes ("Ask when the brief flags", disabled unless the mode is Ask on flags).
+- **Guardrails**: fixed chips "Verify must pass" and "Breaker stops", a **Hold** select (No hold / 10 min / 1 h) and an optional **Max cost (USD)**.
+- **Warnings** when Auto sits on a gate whose success target opens a PR ("PRs will open without anyone reading the diff"), and when repos using this workflow have no verify command.
+- **Backtest** for the last 30 days, recomputed (debounced) as you change settings: would skip / would ask / rejections missed, a strip with one cell per pass (asks, auto-approved, rejected-caught, rejected-slipped) with a legend, and a one-line verdict.
+- **Ask rules** for the gate (including all-gates rules) with who added them, the source task, hit count, an **Unused** chip when there was no hit in the last 60 days, and Delete.
+- **Escapes and history**: recent mode changes including automatic step-downs ("2 escapes in 14 days. Moved from Auto to Ask on flags") with a **Change back** button.
+
+Save rewrites the workflow through the YAML update (`PUT /workflows/{id}/yaml`) after re-reading the workflow, so everything else (including `create_pr` and per-transition agents) is preserved. "No diff yet" is a heuristic: when every agent stage upstream of the gate is named like a plan stage (or there is none), tasks have no code changes there, so only Always ask / Auto are offered and a note says Ask on flags would always ask. A saved Ask on flags value is never changed silently.
+
+On phones the page lists the gates under the graph (dial chip per gate); tapping one opens a bottom sheet with the segmented control, a one-line backtest summary, "Flags that ask: n of 7 · Edit" and Save. `/pipeline/overview?gate=<label>` opens a gate directly.
+
 ## Editing the workflow graph
 
 The Pipeline Overview graph has an **Edit workflow** button. Edits are staged locally (an "Unsaved changes" indicator shows, with **Save** and **Discard** buttons) and nothing is written until you save. The YAML editor on the Workflow tab stays available as the Advanced view; both write the same model.
@@ -35,7 +48,7 @@ Supported edits:
 - **Add a label** (name and color) from the side panel; **rename** or **delete** the selected label. Renaming rewrites its transitions; deleting also removes the transitions touching it. Labels that currently have tasks on them cannot be renamed or deleted (tasks reference labels by name).
 - **Connect two labels**: drag from a stage's right dot to another stage's left dot (bottom to top on phones) (creates an agent-on-success transition), or use the **Connect labels** form (from, to, type) for keyboard use. Each transition in the **Transitions** list has a type selector (agent on success, agent on failure, agent either outcome, human, agent or human) and a delete button.
 - **Per-label settings** (select a stage): whether agents work it (`agent_ignore`), **terminal**, **open a PR on entry** (`create_pr`, at most one label), **WIP limit** (and hard limit), and **verify mode** (inherit / custom with a command / disabled).
-- **Human approval gate**: the "Human approval gate" checkbox makes every non-failure transition out of the label human-triggered (and turns them back into agent-on-success when unticked).
+- **Human approval gate**: the checkbox shows the gate's autonomy mode read-only with a link to the Pipeline gate panel; unticking it on a label with autonomy resets autonomy to Always ask. The checkbox makes every non-failure transition out of the label human-triggered (and turns them back into agent-on-success when unticked).
 
 Validation mirrors the server: unique non-empty names, hex colors, positive WIP limits, one `create_pr` label, a command for custom verify, transitions that reference existing labels, and no transitions out of terminal labels. Errors block Save; unreachable labels only warn. Server errors show inline.
 
@@ -182,6 +195,8 @@ For UI changes, the review brief also shows screenshots of the affected pages (`
 ## Autonomy per gate
 
 A **gate** is a label that waits for a person: every transition out of it is human-triggered, it has at least one, and it is not `agent_ignore` or terminal. This is the same rule as the Inbox `human_gate` item. A gate can carry an optional `autonomy` block saying when a person need not be asked:
+
+The Pipeline overview has a panel for editing this per gate; see [Pipeline overview](#pipeline-overview).
 
 ```yaml
 - name: review
