@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"time"
 )
 
 const createAutonomyDecision = `-- name: CreateAutonomyDecision :exec
@@ -39,6 +40,26 @@ func (q *Queries) CreateAutonomyDecision(ctx context.Context, arg CreateAutonomy
 	return err
 }
 
+const getLastRunBefore = `-- name: GetLastRunBefore :one
+SELECT id FROM agent_runs
+WHERE task_id = ?1 AND created_at <= CAST(?2 AS TEXT)
+ORDER BY created_at DESC, rowid DESC
+LIMIT 1
+`
+
+type GetLastRunBeforeParams struct {
+	TaskID string `json:"task_id"`
+	Until  string `json:"until"`
+}
+
+// Most recent run of a task created at or before the cutoff.
+func (q *Queries) GetLastRunBefore(ctx context.Context, arg GetLastRunBeforeParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, getLastRunBefore, arg.TaskID, arg.Until)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getLatestAutonomyDecision = `-- name: GetLatestAutonomyDecision :one
 SELECT id, task_id, workflow_id, label, run_id, mode, decision, reasons, created_at FROM autonomy_decisions
 WHERE task_id = ? AND label = ?
@@ -66,6 +87,72 @@ func (q *Queries) GetLatestAutonomyDecision(ctx context.Context, arg GetLatestAu
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const listGateExits = `-- name: ListGateExits :many
+SELECT h.id AS history_id, h.task_id AS task_id, h.to_label AS to_label,
+       h.created_at AS created_at, t.title AS title
+FROM task_label_history h
+JOIN tasks t ON t.id = h.task_id
+WHERE t.workflow_id = ?1
+  AND h.from_label = ?2
+  AND h.trigger = 'human'
+  AND (h.note IS NULL OR h.note NOT LIKE 'Forced move%')
+  AND h.created_at >= CAST(?3 AS TEXT)
+ORDER BY h.created_at DESC, h.rowid DESC
+LIMIT ?4
+`
+
+type ListGateExitsParams struct {
+	WorkflowID string  `json:"workflow_id"`
+	Label      *string `json:"label"`
+	Since      string  `json:"since"`
+	MaxRows    int64   `json:"max_rows"`
+}
+
+type ListGateExitsRow struct {
+	HistoryID string    `json:"history_id"`
+	TaskID    string    `json:"task_id"`
+	ToLabel   string    `json:"to_label"`
+	CreatedAt time.Time `json:"created_at"`
+	Title     string    `json:"title"`
+}
+
+// Human-triggered, non-forced exits from a gate label for tasks of one
+// workflow since a cutoff (canonical UTC 'YYYY-MM-DD HH:MM:SS'). Newest
+// first so LIMIT keeps the most recent passes. Read-only.
+func (q *Queries) ListGateExits(ctx context.Context, arg ListGateExitsParams) ([]ListGateExitsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listGateExits,
+		arg.WorkflowID,
+		arg.Label,
+		arg.Since,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListGateExitsRow
+	for rows.Next() {
+		var i ListGateExitsRow
+		if err := rows.Scan(
+			&i.HistoryID,
+			&i.TaskID,
+			&i.ToLabel,
+			&i.CreatedAt,
+			&i.Title,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const setTaskAlwaysAsk = `-- name: SetTaskAlwaysAsk :execrows
@@ -108,4 +195,23 @@ func (q *Queries) SetWorkflowLabelAutonomy(ctx context.Context, arg SetWorkflowL
 		arg.ID,
 	)
 	return err
+}
+
+const sumTaskCostBefore = `-- name: SumTaskCostBefore :one
+SELECT CAST(COALESCE(SUM(cost_usd),0) AS REAL) AS cost_usd
+FROM agent_runs
+WHERE task_id = ?1 AND created_at <= CAST(?2 AS TEXT)
+`
+
+type SumTaskCostBeforeParams struct {
+	TaskID string `json:"task_id"`
+	Until  string `json:"until"`
+}
+
+// Cost of every run of a task created at or before the cutoff.
+func (q *Queries) SumTaskCostBefore(ctx context.Context, arg SumTaskCostBeforeParams) (float64, error) {
+	row := q.db.QueryRowContext(ctx, sumTaskCostBefore, arg.TaskID, arg.Until)
+	var cost_usd float64
+	err := row.Scan(&cost_usd)
+	return cost_usd, err
 }
