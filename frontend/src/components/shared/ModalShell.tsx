@@ -58,6 +58,9 @@ export default function ModalShell({
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      // Nested modals: only the topmost one (last in document order) reacts.
+      const open = document.querySelectorAll('[role="dialog"][aria-modal="true"]')
+      if (open.length > 1 && open[open.length - 1] !== dialogRef.current) return
       if (e.key === 'Escape') {
         if (closeOnEscape) onClose()
         return

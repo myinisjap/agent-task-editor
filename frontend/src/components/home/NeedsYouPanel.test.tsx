@@ -70,6 +70,15 @@ describe('NeedsYouPanel autonomy groups', () => {
     expect(screen.queryByTestId('policy-approval-row')).toBeNull()
   })
 
+  it('Should have asked button calls the handler with the entry', async () => {
+    const onSha = vi.fn()
+    const sections = buildInbox([], [], [], [], { approved: [approval()] })
+    render(<NeedsYouPanel sections={sections} onSelect={vi.fn()} workflows={[wf]} onShouldHaveAsked={onSha} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Should have asked about Approved one' }))
+    expect(onSha).toHaveBeenCalledTimes(1)
+    expect(onSha.mock.calls[0][0].approval.task_id).toBe('a1')
+  })
+
   it('undo shows an inline confirm naming the gate, with the PR note', async () => {
     const onUndo = vi.fn()
     const sections = buildInbox([], [], [], [], { approved: [approval({ pr_url: 'https://example.test/pr/1' })] })

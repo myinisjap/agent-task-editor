@@ -56,10 +56,12 @@ export default function LabelHistoryList({
   history,
   labels,
   onRemember,
+  onShouldHaveAsked,
 }: {
   history: TaskLabelHistoryEntry[]
   labels?: WorkflowLabel[]
   onRemember?: (text: string) => void
+  onShouldHaveAsked?: () => void
 }) {
   if (history.length === 0) return null
 
@@ -95,6 +97,15 @@ export default function LabelHistoryList({
             {entry.note && (isPolicy(entry)
               ? <p data-testid="policy-note" className="ml-2 mt-0.5 text-[11px] text-fg-muted border-l border-border pl-2">{entry.note}</p>
               : <NotePanel note={entry.note} />)}
+            {onShouldHaveAsked && isPolicy(entry) && (
+              <button
+                type="button"
+                onClick={onShouldHaveAsked}
+                className="ml-2 mt-0.5 text-[11px] text-accent-fg hover:underline"
+              >
+                Should have asked
+              </button>
+            )}
             {onRemember && entry.trigger === 'human' && entry.actor_id !== 'policy' && entry.note && (
               <button
                 onClick={() => onRemember(entry.note ?? '')}

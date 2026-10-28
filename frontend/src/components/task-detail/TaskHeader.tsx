@@ -1,4 +1,4 @@
-import { Ban, Copy, Pause, Pencil, Play, RefreshCw, TriangleAlert } from 'lucide-react'
+import { Ban, Copy, MessageSquareWarning, Pause, Pencil, Play, RefreshCw, TriangleAlert } from 'lucide-react'
 import { labelDisplayName, labelDisplayNameByName } from '../../lib/labelDisplay'
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -59,6 +59,7 @@ export default function TaskHeader({
   transitions,
   onMoveLabel,
   onDuplicate,
+  onShouldHaveAsked,
 }: {
   task: Task
   repos: Repo[]
@@ -94,6 +95,8 @@ export default function TaskHeader({
   onMoveLabel: (toLabel: string) => void
   /** When set, renders a "Duplicate" button that opens a pre-filled New Task modal for this task. */
   onDuplicate?: () => void
+  /** When set (the last gate exit was by policy), renders a "Should have asked" button. */
+  onShouldHaveAsked?: () => void
 }) {
   // Cumulative cost across every run this task has had (all statuses,
   // matching how the dispatcher's cost-budget guard counts spend; see
@@ -201,6 +204,15 @@ export default function TaskHeader({
               title="Duplicate task — opens a pre-filled New Task form"
             >
               <Icon icon={Copy} size="sm" />Duplicate
+            </button>
+          )}
+          {onShouldHaveAsked && (
+            <button
+              onClick={onShouldHaveAsked}
+              className="inline-flex items-center gap-1 text-xs text-accent-fg"
+              title="The policy approved this task but a person should have been asked"
+            >
+              <Icon icon={MessageSquareWarning} size="sm" />Should have asked
             </button>
           )}
           <button

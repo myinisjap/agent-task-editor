@@ -19,10 +19,11 @@ type Props = {
   onHold?: (entry: InboxEntry) => void
   /** Undo a policy approval (after the inline confirm). */
   onUndo?: (entry: InboxEntry) => void
+  onShouldHaveAsked?: (entry: InboxEntry) => void
   isBusy?: (entry: InboxEntry) => boolean
 }
 
-export default function NeedsYouPanel({ sections, onSelect, limit, highlight, workflows = [], onHold, onUndo, isBusy }: Props) {
+export default function NeedsYouPanel({ sections, onSelect, limit, highlight, workflows = [], onHold, onUndo, onShouldHaveAsked, isBusy }: Props) {
   const [approvedOpen, setApprovedOpen] = useState<boolean | undefined>(undefined)
   const [confirmKey, setConfirmKey] = useState<string | null>(null)
   const count = inboxCount(sections)
@@ -125,6 +126,7 @@ export default function NeedsYouPanel({ sections, onSelect, limit, highlight, wo
                 onSelect={(el) => onSelect(e, el)}
                 onToggleConfirm={() => setConfirmKey(confirmKey === entryKey(e) ? null : entryKey(e))}
                 onConfirmUndo={() => { setConfirmKey(null); onUndo?.(e) }}
+                onShouldHaveAsked={onShouldHaveAsked ? () => onShouldHaveAsked(e) : undefined}
               />
             ))}
           </ul>

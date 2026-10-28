@@ -126,6 +126,7 @@ export function useInboxActions({ onSuccess }: { onSuccess?: (advance: string | 
     }
   }
 
+  const [shouldAskKey, setShouldAskKey] = useState<string | null>(null)
   const [undoOpen, setUndoOpen] = useState<Record<string, boolean>>({})
 
   const openNote = (taskId: string) => setNoteOpen((o) => ({ ...o, [taskId]: true }))
@@ -163,6 +164,7 @@ export function useInboxActions({ onSuccess }: { onSuccess?: (advance: string | 
       onHold: () => void hold(e, advance),
       onReviewNow: () => void hold(e, advance),
       onUndo: () => void undoApproval(e, advance),
+      onShouldHaveAsked: () => setShouldAskKey(key),
       undoConfirmOpen: !!undoOpen[key],
       setUndoConfirmOpen: (v) => setUndoOpen((o) => ({ ...o, [key]: v })),
     }
@@ -175,5 +177,8 @@ export function useInboxActions({ onSuccess }: { onSuccess?: (advance: string | 
     closeUndoConfirm: (e: InboxEntry) => setUndoOpen((o) => ({ ...o, [ek(e)]: false })),
     isUndoConfirmOpen: (e: InboxEntry) => !!undoOpen[ek(e)],
     openNote, closeNote, isNoteOpen,
+    shouldAskKey,
+    openShouldHaveAsked: (e: InboxEntry) => setShouldAskKey(ek(e)),
+    closeShouldHaveAsked: () => setShouldAskKey(null),
   }
 }
