@@ -75,6 +75,38 @@ components:
         preview_count:
           type: integer
           description: Images in the latest preview capture. human_gate items only, when the review brief could be built; omitted when 0.
+    LabelAutonomy:
+      type: object
+      properties:
+        mode: { type: string, enum: [ask, on_flags, auto] }
+        ask_on:
+          type: array
+          items: { $ref: "#/components/schemas/RiskFlagCode" }
+        hold_seconds: { type: integer, minimum: 0, description: "Stored but not used yet." }
+        max_cost_usd: { type: number, nullable: true, description: "Hard stop when the task's total cost exceeds this; null = no cap." }
+      required: [mode, ask_on, hold_seconds]
+    AutonomyReason:
+      type: object
+      properties:
+        code: { type: string, description: "mode_ask, always_ask, verify_failed, cost_exceeded, no_diff, flag_raised, auto_policy or no_blocking_flags." }
+        detail: { type: string }
+      required: [code, detail]
+    AutonomyDecision:
+      type: object
+      description: A shadow decision recorded when a task landed on a gate. Nothing is acted on.
+      properties:
+        id: { type: string }
+        task_id: { type: string }
+        workflow_id: { type: string }
+        label: { type: string }
+        run_id: { type: string, nullable: true }
+        mode: { type: string, enum: [ask, on_flags, auto] }
+        decision: { type: string, enum: [approve, ask] }
+        reasons:
+          type: array
+          items: { $ref: "#/components/schemas/AutonomyReason" }
+        created_at: { type: string, format: date-time }
+      required: [id, task_id, workflow_id, label, mode, decision, reasons, created_at]
     RiskFlagCode:
       type: string
       enum: [migration, auth_or_security, dependencies, tests_removed, ci_config, large_change, outside_plan_scope]
@@ -493,6 +525,7 @@ components:
             gate). Null when none is pending. Apply or discard it via
             /tasks/{id}/source-update. Populated on GET /tasks and
             GET /tasks/{id} and the source-update responses.
+        always_ask:  { type: boolean, description: "Per-task override: when true the autonomy policy always asks a human at gates (a hard stop). Set via PATCH /tasks/{id}/always-ask." }
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
       required: [id, title, description, type, label, repo_id, workflow_id, created_at, updated_at]
@@ -947,6 +980,19 @@ components:
             YAML (verify_mode / verify_command) or the labels array of PUT
             /workflows/{id}.
         verify_command: { type: string, description: "The label's own command; only meaningful (and required) when verify_mode is custom, else empty." }
+        autonomy:
+          allOf:
+            - $ref: "#/components/schemas/LabelAutonomy"
+          nullable: true
+          description: >
+            Per-gate autonomy policy; null when the mode is ask (the default).
+            Only human-gate labels may have a non-ask mode (every transition out
+            of it human-triggered, at least one, not agent_ignore or terminal).
+            Written via the labels array of PUT /workflows/{id} or the YAML
+            autonomy block (mode, ask_on, hold such as 10m, max_cost_usd).
+            This release only records shadow decisions; nothing is approved
+            automatically. Invalid mode, unknown ask_on code, autonomy on a
+            non-gate label, a missing mode or a negative hold/cost give 400.
       required: [id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit_hard, verify_mode, verify_command]
 
     WorkflowTransition:
@@ -2969,6 +3015,50 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Task" }
 
+  /tasks/{id}/always-ask:
+    patch:
+      summary: Set a task's always_ask override
+      description: >
+        When true the autonomy policy never auto-approves this task at a gate.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [always_ask]
+              properties:
+                always_ask: { type: boolean }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+        "404": { description: Task not found }
+
+  /tasks/{id}/autonomy-decision:
+    get:
+      summary: Latest shadow autonomy decision for the task's current label
+      description: >
+        Recorded when the task landed on a gate whose autonomy mode is not
+        ask. Shadow only: this release never moves a task.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutonomyDecision" }
+        "404": { description: Task not found, or no decision for its current label }
+
   /tasks/{id}/dependencies:
     get:
       summary: List a task's dependency edges
@@ -4329,6 +4419,8 @@ paths:
         produced by GET /workflows/{id}/export.yaml (name, description,
         labels, transitions). Fails if a workflow with the same name already
         exists.
+        Labels may carry an optional autonomy block (mode, ask_on, hold,
+        max_cost_usd); see WorkflowLabel.autonomy.
       requestBody:
         required: true
         content:
@@ -4339,7 +4431,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Workflow" }
-        "400": { description: Invalid YAML, missing name, duplicate name, or invalid label color }
+        "400": { description: Invalid YAML, missing name, duplicate name, or invalid label color or autonomy block }
 
   /workflows/{id}:
     parameters:
@@ -4361,7 +4453,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Workflow" }
-        "400": { description: Duplicate workflow name or invalid label color }
+        "400": { description: Duplicate workflow name or invalid label color or autonomy block or autonomy block }
     delete:
       summary: Delete a workflow
       responses:
@@ -4374,7 +4466,8 @@ paths:
         Returns the workflow's name, description, labels, and transitions as
         a portable YAML document (Content-Disposition: attachment), suitable
         for re-importing via POST /workflows/import or PUT
-        /workflows/{id}/yaml.
+        /workflows/{id}/yaml. Labels with a non-ask autonomy policy include an
+        autonomy block (mode, ask_on, hold, max_cost_usd).
       parameters:
         - name: id
           in: path
@@ -4410,7 +4503,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Workflow" }
-        "400": { description: Invalid YAML, missing name, duplicate name, or invalid label color }
+        "400": { description: Invalid YAML, missing name, duplicate name, or invalid label color or autonomy block }
         "404": { description: Workflow not found }
 
   /agents:

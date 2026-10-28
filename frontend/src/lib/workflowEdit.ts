@@ -6,6 +6,9 @@
 // verify_* together (see serializeDraft).
 
 import type { Workflow } from '../api/client'
+import type { components } from '../api/types'
+
+export type LabelAutonomy = components['schemas']['LabelAutonomy']
 
 export type VerifyMode = 'inherit' | 'custom' | 'disabled'
 export type TriggerType = 'agent' | 'human' | 'both'
@@ -24,6 +27,8 @@ export type DraftLabel = {
   wip_limit_hard: boolean
   verify_mode: VerifyMode
   verify_command: string
+  /** Per-gate autonomy policy; null = ask. Carried through so graph saves do not drop it. */
+  autonomy: LabelAutonomy | null
 }
 
 export type DraftTransition = {
@@ -76,6 +81,7 @@ export function draftFromWorkflow(wf: Workflow): WorkflowDraft {
       wip_limit_hard: Boolean(l.wip_limit_hard),
       verify_mode: (l.verify_mode ?? 'inherit') as VerifyMode,
       verify_command: l.verify_command ?? '',
+      autonomy: l.autonomy ?? null,
     })),
     transitions: (wf.transitions ?? []).map((t) => ({
       from_label: t.from_label,
@@ -110,6 +116,7 @@ export function draftToWorkflow(draft: WorkflowDraft, base: Workflow): Workflow 
       wip_limit_hard: l.wip_limit_hard ? 1 : 0,
       verify_mode: l.verify_mode,
       verify_command: l.verify_command,
+      autonomy: l.autonomy,
     })),
     transitions: draft.transitions.map((t, i) => ({
       id: `draft-t-${i}`,
@@ -139,6 +146,7 @@ export function newLabel(name: string, color: string = DEFAULT_LABEL_COLOR): Dra
     wip_limit_hard: false,
     verify_mode: 'inherit',
     verify_command: '',
+    autonomy: null,
   }
 }
 
@@ -359,6 +367,15 @@ export function serializeDraft(draft: WorkflowDraft): string {
       wip_limit_hard: l.wip_limit !== null && l.wip_limit_hard ? true : undefined,
       verify_mode: l.verify_mode === 'inherit' ? undefined : l.verify_mode,
       verify_command: l.verify_mode === 'custom' ? l.verify_command.trim() : undefined,
+      autonomy:
+        l.autonomy && l.autonomy.mode !== 'ask'
+          ? {
+              mode: l.autonomy.mode,
+              ask_on: l.autonomy.ask_on,
+              hold: `${l.autonomy.hold_seconds}s`,
+              max_cost_usd: l.autonomy.max_cost_usd ?? undefined,
+            }
+          : undefined,
     })),
     transitions: draft.transitions.map((t) => ({
       from: t.from_label,

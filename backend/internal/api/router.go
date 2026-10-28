@@ -229,6 +229,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Post("/tasks/{id}/rerun", tasksH.Rerun)
 			r.Get("/tasks/{id}/diff", tasksH.Diff)
 			r.Get("/tasks/{id}/review-brief", handlers.NewReviewBriefHandler(q, briefCache).Get)
+			r.Get("/tasks/{id}/autonomy-decision", handlers.NewAutonomyHandler(q).GetDecision)
 			r.Get("/tasks/{id}/pr-url", tasksH.PRURL)
 			r.Post("/tasks/{id}/pr", tasksH.CreatePR)
 			r.Post("/tasks/{id}/side-effects/retry", tasksH.RetrySideEffects)
@@ -238,6 +239,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Get("/tasks/{id}/github-status", tasksH.GitHubStatus)
 			r.Patch("/tasks/{id}/git-state", tasksH.UpdateGitState)
 			r.Patch("/tasks/{id}/pause", tasksH.SetPaused)
+			r.Patch("/tasks/{id}/always-ask", tasksH.SetAlwaysAsk)
 			r.Patch("/tasks/{id}/archive", tasksH.SetArchived)
 
 			// Peer task dependencies (dispatch gate)

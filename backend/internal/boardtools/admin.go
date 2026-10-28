@@ -35,6 +35,11 @@ labels:            # columns, left to right by sort_order
     sort_order: 2
     create_pr: true      # entering it pushes the branch and opens a PR (at most one label)
     wip_limit: 5         # optional; wip_limit_hard: true also stops dispatch into it when full
+    autonomy:            # optional, human-gate labels only (all exits human-triggered); absent = ask
+      mode: on_flags     # ask | on_flags | auto
+      ask_on: [migration, auth_or_security, dependencies, tests_removed, ci_config]
+      hold: 10m
+      max_cost_usd: 5
   - name: done
     color: "#10B981"
     sort_order: 3

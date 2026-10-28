@@ -20,6 +20,7 @@ type taskResponse struct {
 	Attachments json.RawMessage `json:"attachments"`
 	Paused      bool            `json:"paused"`
 	Archived    bool            `json:"archived"`
+	AlwaysAsk   bool            `json:"always_ask"`
 	// Derived dependency counts (Mechanism 1). BlockedByCount is the number of
 	// this task's blockers whose edges are still unsatisfied; BlockingCount is
 	// the number of tasks that depend on it. Both are computed at read time.
@@ -162,7 +163,7 @@ func toTaskResponse(t gen.Task) taskResponse {
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		raw = json.RawMessage("[]")
 	}
-	return taskResponse{Task: t, Attachments: raw, Paused: t.Paused != 0, Archived: t.Archived != 0, SideEffects: []sideEffectResponse{}, FileScope: []string{}}
+	return taskResponse{Task: t, Attachments: raw, Paused: t.Paused != 0, Archived: t.Archived != 0, AlwaysAsk: t.AlwaysAsk != 0, SideEffects: []sideEffectResponse{}, FileScope: []string{}}
 }
 
 // toTaskResponses converts a slice of gen.Task values.
