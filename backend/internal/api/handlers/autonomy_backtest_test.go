@@ -245,7 +245,7 @@ func TestBacktest_ExtraRules(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
+		defer func() { _ = rows.Close() }()
 		for rows.Next() {
 			var id string
 			_ = rows.Scan(&id)
