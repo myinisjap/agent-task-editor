@@ -85,8 +85,8 @@ func (e *btEnv) exec(t *testing.T, q string, args ...any) {
 
 type btResp struct {
 	Total, Evaluated, Unknown, WouldSkip, WouldAsk, Rejected, Escaped int
-	Truncated                                                          bool
-	Passes                                                             []struct {
+	Truncated                                                         bool
+	Passes                                                            []struct {
 		TaskID    string   `json:"task_id"`
 		Title     string   `json:"title"`
 		Outcome   string   `json:"outcome"`
