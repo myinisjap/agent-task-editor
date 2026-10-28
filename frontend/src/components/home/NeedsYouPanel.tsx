@@ -8,9 +8,11 @@ type Props = {
   onSelect: (entry: InboxEntry, el?: HTMLElement) => void
   /** Show only the first N rows plus a "Review all" link (phone). */
   limit?: number
+  /** Tint the panel (a new item needs you). Stays under reduced motion. */
+  highlight?: boolean
 }
 
-export default function NeedsYouPanel({ sections, onSelect, limit }: Props) {
+export default function NeedsYouPanel({ sections, onSelect, limit, highlight }: Props) {
   const count = inboxCount(sections)
   const groups = nonEmptySections(sections)
   const rows = groups.flatMap(([key, entries]) => entries.map((e) => ({ key, e })))
@@ -18,12 +20,12 @@ export default function NeedsYouPanel({ sections, onSelect, limit }: Props) {
   const oldest = oldestSince(sections)
   const now = Date.now()
   return (
-    <Card as="section" padding="md" aria-label="Needs you" data-testid="needs-you-panel" className="flex flex-col gap-3">
+    <Card as="section" padding="md" aria-label="Needs you" data-testid="needs-you-panel" data-flash={highlight ? "true" : undefined} className={cx("flex flex-col gap-3 transition-colors", highlight && "ring-2 ring-gate bg-gate-soft/40")}>
       <div className="flex items-baseline gap-3 min-w-0">
         <h2 className="text-xs font-medium text-fg-subtle uppercase tracking-wide">Needs you</h2>
       </div>
       <div className="flex items-baseline gap-3 min-w-0">
-        <span data-testid="needs-you-count" className="text-4xl font-semibold text-fg font-mono">{count}</span>
+        <span data-testid="needs-you-count" className="text-6xl xl:text-7xl leading-none tabular-nums font-semibold text-fg font-mono">{count}</span>
         <div className="min-w-0 text-xs text-fg-muted">
           {count > 0 ? (
             <>
@@ -38,7 +40,7 @@ export default function NeedsYouPanel({ sections, onSelect, limit }: Props) {
         </div>
       </div>
       {shown.length > 0 && (
-        <ul className={cx('flex flex-col gap-1 min-w-0', !limit && 'max-h-72 overflow-y-auto')}>
+        <ul className={cx('flex flex-col gap-1 min-w-0', !limit && 'max-h-[30vh] overflow-y-auto')}>
           {shown.map(({ key, e }) => {
             const since = entrySince(e)
             return (

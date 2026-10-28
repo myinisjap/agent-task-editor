@@ -3,10 +3,16 @@ import { PageFrame } from '../components/ui'
 import { useDashboard } from '../lib/useDashboard'
 import { useNeedsMeStore } from '../stores/needsMe'
 import { useInboxStore, useInboxSections } from '../stores/inbox'
+import { inboxCount } from '../lib/inbox'
+import { useNeedsYouFlash } from '../lib/useNeedsYouFlash'
+import { useWakeLock } from '../lib/useWakeLock'
+import { useHomeTicker } from '../lib/useHomeTicker'
+import { useRunSteps } from '../lib/useRunSteps'
+import RecentTicker from '../components/home/RecentTicker'
 import { useHealthStore } from '../stores/health'
 import { useWorkflowStore } from '../stores/workflow'
 import { useTasksStore } from '../stores/tasks'
-import { useIsPhone } from '../lib/useMediaQuery'
+import { useIsPhone, useMediaQuery } from '../lib/useMediaQuery'
 import { entryKey, flattenInbox, type InboxEntry } from '../lib/inbox'
 import { useReviewSelection } from '../lib/useReviewSelection'
 import HelpModal from '../components/shared/HelpModal'
@@ -37,6 +43,18 @@ export default function HomePage() {
   const tasks = useTasksStore((s) => s.tasks)
   const isPhone = useIsPhone()
   const [showHelp, setShowHelp] = useState(false)
+  const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
+  const { flashing, flashKey } = useNeedsYouFlash(inboxCount(sections), needsMeLoaded && effectsLoaded && healthLoaded)
+  useWakeLock()
+  const needsItems = useNeedsMeStore((s) => s.items)
+  const ticker = useHomeTicker({
+    labels: workflow?.labels,
+    titleFor: (id) =>
+      tasks.find((t) => t.id === id)?.title ??
+      dash?.active_agents.find((a) => a.task_id === id)?.task_title ??
+      needsItems.find((n) => n.task_id === id)?.task_title,
+  })
+  const steps = useRunSteps(dash?.active_agents ?? [])
 
   // Make sure every input to the shared count is fresh (the nav syncs also keep them live).
   useEffect(() => {
@@ -79,7 +97,7 @@ export default function HomePage() {
   const budget = dash?.global_cost_budget
 
   const scene = workflow && counts ? <SceneBand workflow={workflow} labelCounts={counts} /> : null
-  const needsYou = <NeedsYouPanel sections={sections} onSelect={onSelect} limit={isPhone ? 2 : undefined} />
+  const needsYou = <NeedsYouPanel sections={sections} onSelect={onSelect} highlight={flashing} limit={isPhone ? 2 : undefined} />
   const running = dash ? (
     <RunningNowPanel
       agents={dash.active_agents}
@@ -87,12 +105,15 @@ export default function HomePage() {
       repoConcurrency={dash.repo_concurrency}
       workflow={workflow}
       tasks={tasks}
+      steps={steps}
     />
   ) : null
   const today = dash ? <TodayPanel dash={dash} /> : null
 
   return (
     <PageFrame
+      width="wide"
+      headerClassName="mb-3"
       title="Home"
       testId="home-page"
       help={{ onClick: () => setShowHelp(true), title: 'About this page' }}
@@ -113,6 +134,9 @@ export default function HomePage() {
         </HelpModal>
       )}
 
+      {flashing && !reduceMotion && (
+        <div key={flashKey} aria-hidden data-testid="needs-you-flash" className="home-needs-flash pointer-events-none fixed inset-0 z-40" />
+      )}
       {isOpen && (
         <ReviewPopup flat={flat} selectedKey={selectedKey} onMove={move} onClose={close} workflows={workflows} />
       )}
@@ -125,16 +149,18 @@ export default function HomePage() {
           {running}
           {scene}
           {today}
+          <RecentTicker items={ticker} latestOnly />
         </div>
       ) : (
-        <>
+        <div className="flex flex-col gap-4 min-h-0 min-w-0">
           {scene}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 min-w-0">
             {needsYou}
             {running}
             {today}
           </div>
-        </>
+          <RecentTicker items={ticker} />
+        </div>
       )}
     </PageFrame>
   )

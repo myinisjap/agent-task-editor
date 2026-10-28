@@ -147,3 +147,41 @@ describe('scene collapse', () => {
     expect(localStorage.getItem('home.scene.expanded.compact')).toBe('1')
   })
 })
+
+describe('HomePage live layer', () => {
+  it('shows done today and verify pass rate', () => {
+    dashValue = { ...dashValue, today: { done_count: 3, verify_total: 4, verify_passed: 3, runs_started: 5 } }
+    renderPage()
+    expect(screen.getByTestId('today-done').textContent).toBe('3')
+    expect(screen.getByText('done today')).toBeTruthy()
+    expect(screen.getByTestId('today-verify').textContent).toBe('75%')
+  })
+
+  it('shows an en dash with no verifications or no today block', () => {
+    dashValue = { ...dashValue, today: { done_count: 0, verify_total: 0, verify_passed: 0, runs_started: 0 } }
+    const { unmount } = renderPage()
+    expect(screen.getByTestId('today-verify').textContent).toBe('–')
+    unmount()
+    dashValue = { ...dashValue, today: undefined }
+    renderPage()
+    expect(screen.getByTestId('today-verify').textContent).toBe('–')
+  })
+
+  it('renders the empty ticker and tolerates a rejecting wake lock', () => {
+    vi.stubGlobal('navigator', { ...navigator, wakeLock: { request: () => Promise.reject(new Error('no')) } })
+    renderPage()
+    expect(screen.getByTestId('recent-ticker').textContent).toContain('No activity yet')
+  })
+})
+
+describe('RecentTicker', () => {
+  const items = [3, 2, 1].map((n) => ({ id: String(n), text: `event ${n}`, at: n * 1000 }))
+  it('renders up to 3 items, or only the latest', async () => {
+    const { default: RecentTicker } = await import('../components/home/RecentTicker')
+    const { unmount } = render(<RecentTicker items={items} />)
+    expect(screen.getAllByTestId('ticker-item')).toHaveLength(3)
+    unmount()
+    render(<RecentTicker items={items} latestOnly />)
+    expect(screen.getAllByTestId('ticker-item')).toHaveLength(1)
+  })
+})

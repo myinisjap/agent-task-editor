@@ -376,3 +376,19 @@ body {
 .input::placeholder {
   color: var(--color-slate-500);
 }
+
+/* Home live layer */
+@keyframes home-needs-flash {
+  0%, 100% { box-shadow: inset 0 0 0 0 transparent; }
+  50% { box-shadow: inset 0 0 48px 12px var(--color-gate); }
+}
+.home-needs-flash { animation: home-needs-flash 1.2s ease-in-out 3; }
+@keyframes home-ticker-new {
+  from { background-color: var(--color-gate-soft); }
+  to { background-color: transparent; }
+}
+.home-ticker-new { animation: home-ticker-new 1.5s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .home-needs-flash { display: none; }
+  .home-ticker-new { animation: none; }
+}
