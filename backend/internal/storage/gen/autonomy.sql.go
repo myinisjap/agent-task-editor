@@ -7,22 +7,46 @@ package gen
 
 import (
 	"context"
+	"time"
 )
 
+const claimAutonomyApproval = `-- name: ClaimAutonomyApproval :execrows
+UPDATE autonomy_decisions
+SET outcome = 'approved', outcome_at = ?1, outcome_actor = 'policy'
+WHERE id = ?2 AND outcome = 'pending'
+`
+
+type ClaimAutonomyApprovalParams struct {
+	OutcomeAt *time.Time `json:"outcome_at"`
+	ID        string     `json:"id"`
+}
+
+func (q *Queries) ClaimAutonomyApproval(ctx context.Context, arg ClaimAutonomyApprovalParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, claimAutonomyApproval, arg.OutcomeAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const createAutonomyDecision = `-- name: CreateAutonomyDecision :exec
-INSERT INTO autonomy_decisions (id, task_id, workflow_id, label, run_id, mode, decision, reasons)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO autonomy_decisions (id, task_id, workflow_id, label, run_id, mode, decision, reasons, outcome, hold_seconds, due_at, note)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type CreateAutonomyDecisionParams struct {
-	ID         string  `json:"id"`
-	TaskID     string  `json:"task_id"`
-	WorkflowID string  `json:"workflow_id"`
-	Label      string  `json:"label"`
-	RunID      *string `json:"run_id"`
-	Mode       string  `json:"mode"`
-	Decision   string  `json:"decision"`
-	Reasons    string  `json:"reasons"`
+	ID          string     `json:"id"`
+	TaskID      string     `json:"task_id"`
+	WorkflowID  string     `json:"workflow_id"`
+	Label       string     `json:"label"`
+	RunID       *string    `json:"run_id"`
+	Mode        string     `json:"mode"`
+	Decision    string     `json:"decision"`
+	Reasons     string     `json:"reasons"`
+	Outcome     *string    `json:"outcome"`
+	HoldSeconds *int64     `json:"hold_seconds"`
+	DueAt       *time.Time `json:"due_at"`
+	Note        *string    `json:"note"`
 }
 
 func (q *Queries) CreateAutonomyDecision(ctx context.Context, arg CreateAutonomyDecisionParams) error {
@@ -35,12 +59,97 @@ func (q *Queries) CreateAutonomyDecision(ctx context.Context, arg CreateAutonomy
 		arg.Mode,
 		arg.Decision,
 		arg.Reasons,
+		arg.Outcome,
+		arg.HoldSeconds,
+		arg.DueAt,
+		arg.Note,
 	)
 	return err
 }
 
+const createAutonomyEscape = `-- name: CreateAutonomyEscape :exec
+INSERT INTO autonomy_escapes (id, task_id, workflow_id, label, source)
+VALUES (?, ?, ?, ?, ?)
+`
+
+type CreateAutonomyEscapeParams struct {
+	ID         string `json:"id"`
+	TaskID     string `json:"task_id"`
+	WorkflowID string `json:"workflow_id"`
+	Label      string `json:"label"`
+	Source     string `json:"source"`
+}
+
+func (q *Queries) CreateAutonomyEscape(ctx context.Context, arg CreateAutonomyEscapeParams) error {
+	_, err := q.db.ExecContext(ctx, createAutonomyEscape,
+		arg.ID,
+		arg.TaskID,
+		arg.WorkflowID,
+		arg.Label,
+		arg.Source,
+	)
+	return err
+}
+
+const getAutonomyDecision = `-- name: GetAutonomyDecision :one
+SELECT id, task_id, workflow_id, label, run_id, mode, decision, reasons, created_at, outcome, hold_seconds, due_at, note, outcome_at, outcome_actor FROM autonomy_decisions WHERE id = ?
+`
+
+func (q *Queries) GetAutonomyDecision(ctx context.Context, id string) (AutonomyDecision, error) {
+	row := q.db.QueryRowContext(ctx, getAutonomyDecision, id)
+	var i AutonomyDecision
+	err := row.Scan(
+		&i.ID,
+		&i.TaskID,
+		&i.WorkflowID,
+		&i.Label,
+		&i.RunID,
+		&i.Mode,
+		&i.Decision,
+		&i.Reasons,
+		&i.CreatedAt,
+		&i.Outcome,
+		&i.HoldSeconds,
+		&i.DueAt,
+		&i.Note,
+		&i.OutcomeAt,
+		&i.OutcomeActor,
+	)
+	return i, err
+}
+
+const getLatestApprovedAutonomyDecision = `-- name: GetLatestApprovedAutonomyDecision :one
+SELECT id, task_id, workflow_id, label, run_id, mode, decision, reasons, created_at, outcome, hold_seconds, due_at, note, outcome_at, outcome_actor FROM autonomy_decisions
+WHERE task_id = ? AND outcome = 'approved'
+ORDER BY outcome_at DESC, rowid DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLatestApprovedAutonomyDecision(ctx context.Context, taskID string) (AutonomyDecision, error) {
+	row := q.db.QueryRowContext(ctx, getLatestApprovedAutonomyDecision, taskID)
+	var i AutonomyDecision
+	err := row.Scan(
+		&i.ID,
+		&i.TaskID,
+		&i.WorkflowID,
+		&i.Label,
+		&i.RunID,
+		&i.Mode,
+		&i.Decision,
+		&i.Reasons,
+		&i.CreatedAt,
+		&i.Outcome,
+		&i.HoldSeconds,
+		&i.DueAt,
+		&i.Note,
+		&i.OutcomeAt,
+		&i.OutcomeActor,
+	)
+	return i, err
+}
+
 const getLatestAutonomyDecision = `-- name: GetLatestAutonomyDecision :one
-SELECT id, task_id, workflow_id, label, run_id, mode, decision, reasons, created_at FROM autonomy_decisions
+SELECT id, task_id, workflow_id, label, run_id, mode, decision, reasons, created_at, outcome, hold_seconds, due_at, note, outcome_at, outcome_actor FROM autonomy_decisions
 WHERE task_id = ? AND label = ?
 ORDER BY created_at DESC, rowid DESC
 LIMIT 1
@@ -64,8 +173,234 @@ func (q *Queries) GetLatestAutonomyDecision(ctx context.Context, arg GetLatestAu
 		&i.Decision,
 		&i.Reasons,
 		&i.CreatedAt,
+		&i.Outcome,
+		&i.HoldSeconds,
+		&i.DueAt,
+		&i.Note,
+		&i.OutcomeAt,
+		&i.OutcomeActor,
 	)
 	return i, err
+}
+
+const holdPendingAutonomy = `-- name: HoldPendingAutonomy :execrows
+UPDATE autonomy_decisions
+SET outcome = 'held', outcome_at = ?1, outcome_actor = ?2
+WHERE task_id = ?3 AND label = ?4 AND outcome = 'pending'
+`
+
+type HoldPendingAutonomyParams struct {
+	OutcomeAt    *time.Time `json:"outcome_at"`
+	OutcomeActor *string    `json:"outcome_actor"`
+	TaskID       string     `json:"task_id"`
+	Label        string     `json:"label"`
+}
+
+func (q *Queries) HoldPendingAutonomy(ctx context.Context, arg HoldPendingAutonomyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, holdPendingAutonomy,
+		arg.OutcomeAt,
+		arg.OutcomeActor,
+		arg.TaskID,
+		arg.Label,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const listAutonomyEscapesForTask = `-- name: ListAutonomyEscapesForTask :many
+SELECT id, task_id, workflow_id, label, source, created_at FROM autonomy_escapes WHERE task_id = ? ORDER BY created_at, rowid
+`
+
+func (q *Queries) ListAutonomyEscapesForTask(ctx context.Context, taskID string) ([]AutonomyEscape, error) {
+	rows, err := q.db.QueryContext(ctx, listAutonomyEscapesForTask, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AutonomyEscape
+	for rows.Next() {
+		var i AutonomyEscape
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.WorkflowID,
+			&i.Label,
+			&i.Source,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDueAutonomyApprovals = `-- name: ListDueAutonomyApprovals :many
+SELECT id, task_id, workflow_id, label, run_id, mode, decision, reasons, created_at, outcome, hold_seconds, due_at, note, outcome_at, outcome_actor FROM autonomy_decisions
+WHERE outcome = 'pending' AND due_at <= ?1
+ORDER BY due_at, rowid
+`
+
+func (q *Queries) ListDueAutonomyApprovals(ctx context.Context, dueAt *time.Time) ([]AutonomyDecision, error) {
+	rows, err := q.db.QueryContext(ctx, listDueAutonomyApprovals, dueAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AutonomyDecision
+	for rows.Next() {
+		var i AutonomyDecision
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.WorkflowID,
+			&i.Label,
+			&i.RunID,
+			&i.Mode,
+			&i.Decision,
+			&i.Reasons,
+			&i.CreatedAt,
+			&i.Outcome,
+			&i.HoldSeconds,
+			&i.DueAt,
+			&i.Note,
+			&i.OutcomeAt,
+			&i.OutcomeActor,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPendingAutonomyApprovals = `-- name: ListPendingAutonomyApprovals :many
+SELECT d.id, d.task_id, d.workflow_id, d.label, d.run_id, d.mode, d.decision, d.reasons, d.created_at, d.outcome, d.hold_seconds, d.due_at, d.note, d.outcome_at, d.outcome_actor FROM autonomy_decisions d
+JOIN tasks t ON t.id = d.task_id AND t.label = d.label
+WHERE d.outcome = 'pending' AND t.archived = 0
+`
+
+func (q *Queries) ListPendingAutonomyApprovals(ctx context.Context) ([]AutonomyDecision, error) {
+	rows, err := q.db.QueryContext(ctx, listPendingAutonomyApprovals)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AutonomyDecision
+	for rows.Next() {
+		var i AutonomyDecision
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.WorkflowID,
+			&i.Label,
+			&i.RunID,
+			&i.Mode,
+			&i.Decision,
+			&i.Reasons,
+			&i.CreatedAt,
+			&i.Outcome,
+			&i.HoldSeconds,
+			&i.DueAt,
+			&i.Note,
+			&i.OutcomeAt,
+			&i.OutcomeActor,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRecentPolicyApprovals = `-- name: ListRecentPolicyApprovals :many
+SELECT id, task_id, workflow_id, label, run_id, mode, decision, reasons, created_at, outcome, hold_seconds, due_at, note, outcome_at, outcome_actor FROM autonomy_decisions
+WHERE outcome = 'approved' AND outcome_at >= ?1
+ORDER BY outcome_at DESC, rowid DESC
+`
+
+func (q *Queries) ListRecentPolicyApprovals(ctx context.Context, outcomeAt *time.Time) ([]AutonomyDecision, error) {
+	rows, err := q.db.QueryContext(ctx, listRecentPolicyApprovals, outcomeAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AutonomyDecision
+	for rows.Next() {
+		var i AutonomyDecision
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.WorkflowID,
+			&i.Label,
+			&i.RunID,
+			&i.Mode,
+			&i.Decision,
+			&i.Reasons,
+			&i.CreatedAt,
+			&i.Outcome,
+			&i.HoldSeconds,
+			&i.DueAt,
+			&i.Note,
+			&i.OutcomeAt,
+			&i.OutcomeActor,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setAutonomyOutcome = `-- name: SetAutonomyOutcome :exec
+UPDATE autonomy_decisions
+SET outcome = ?1, note = COALESCE(?2, note), outcome_at = ?3, outcome_actor = ?4
+WHERE id = ?5
+`
+
+type SetAutonomyOutcomeParams struct {
+	Outcome      *string    `json:"outcome"`
+	Note         *string    `json:"note"`
+	OutcomeAt    *time.Time `json:"outcome_at"`
+	OutcomeActor *string    `json:"outcome_actor"`
+	ID           string     `json:"id"`
+}
+
+func (q *Queries) SetAutonomyOutcome(ctx context.Context, arg SetAutonomyOutcomeParams) error {
+	_, err := q.db.ExecContext(ctx, setAutonomyOutcome,
+		arg.Outcome,
+		arg.Note,
+		arg.OutcomeAt,
+		arg.OutcomeActor,
+		arg.ID,
+	)
+	return err
 }
 
 const setTaskAlwaysAsk = `-- name: SetTaskAlwaysAsk :execrows
@@ -107,5 +442,22 @@ func (q *Queries) SetWorkflowLabelAutonomy(ctx context.Context, arg SetWorkflowL
 		arg.AutonomyMaxCostUsd,
 		arg.ID,
 	)
+	return err
+}
+
+const supersedePendingAutonomy = `-- name: SupersedePendingAutonomy :exec
+UPDATE autonomy_decisions
+SET outcome = 'superseded', outcome_at = ?1
+WHERE task_id = ?2 AND label <> ?3 AND outcome = 'pending'
+`
+
+type SupersedePendingAutonomyParams struct {
+	OutcomeAt *time.Time `json:"outcome_at"`
+	TaskID    string     `json:"task_id"`
+	Label     string     `json:"label"`
+}
+
+func (q *Queries) SupersedePendingAutonomy(ctx context.Context, arg SupersedePendingAutonomyParams) error {
+	_, err := q.db.ExecContext(ctx, supersedePendingAutonomy, arg.OutcomeAt, arg.TaskID, arg.Label)
 	return err
 }

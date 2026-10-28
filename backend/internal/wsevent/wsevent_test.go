@@ -125,6 +125,11 @@ func TestPayloadsMatchOpenAPI(t *testing.T) {
 		{TypeRepoCloneFailed, RepoClone{RepoID: "r", CloneStatus: "error", CloneError: "e"}, RepoClone{}},
 		{TypeAgentLog, AgentLog{RunID: "r", TaskID: "t", Entry: entry}, AgentLog{}},
 		{TypeAgentLogReplay, AgentLogReplay{RunID: "r", TaskID: "t", HasMore: true, Entries: []AgentLogEntry{entry}}, AgentLogReplay{Entries: []AgentLogEntry{}}},
+		{TypeTaskAutonomyPending, TaskAutonomyPending{TaskID: "t", Label: "l", DecisionID: "d", DueAt: "x", HoldSeconds: 1}, TaskAutonomyPending{}},
+		{TypeTaskAutonomyHeld, TaskAutonomyHeld{TaskID: "t", Label: "l", DecisionID: "d", Actor: "a"}, TaskAutonomyHeld{}},
+		{TypeTaskAutonomyApproved, TaskAutonomyApproved{TaskID: "t", DecisionID: "d", From: "a", To: "b", Note: "n"}, TaskAutonomyApproved{}},
+		{TypeTaskAutonomyUndone, TaskAutonomyUndone{TaskID: "t", Label: "l", From: "f", PRURL: "u"}, TaskAutonomyUndone{}},
+		{TypeTaskAutonomyAsked, TaskAutonomyAsked{TaskID: "t", Label: "l", DecisionID: "d", Reason: "policy", Reasons: []string{"r"}}, TaskAutonomyAsked{Reasons: []string{}}},
 		{TypeResync, Resync{}, Resync{}},
 	}
 

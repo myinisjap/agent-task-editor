@@ -10,11 +10,32 @@ components:
   schemas:
     NeedsMeResponse:
       type: object
-      required: [items]
+      required: [items, approved_by_policy]
       properties:
         items:
           type: array
           items: { $ref: "#/components/schemas/NeedsMeItem" }
+        approved_by_policy:
+          type: array
+          description: Tasks the autonomy policy approved in the last 24 hours (newest first), for the Inbox "Approved for you" section. Always present.
+          items: { $ref: "#/components/schemas/PolicyApprovalItem" }
+    PolicyApprovalItem:
+      type: object
+      required: [task_id, task_title, repo_id, workflow_id, label, gate_label, approved_at, note, decision_id, undoable]
+      properties:
+        task_id: { type: string }
+        task_title: { type: string }
+        repo_id: { type: string }
+        workflow_id: { type: string }
+        label: { type: string, description: "The task's current label." }
+        gate_label: { type: string, description: The gate the policy approved the task off. }
+        approved_at: { type: string, format: date-time }
+        note: { type: string, description: "The Auto-approved label-history note." }
+        decision_id: { type: string }
+        pr_url: { type: string, description: "Set when a pull request was already opened." }
+        undoable:
+          type: boolean
+          description: True when POST /tasks/{id}/autonomy/undo would currently be accepted (last gate exit by policy, not merged).
     NeedsMeItem:
       type: object
       required: [task_id, task_title, repo_id, workflow_id, label, reason, since]
@@ -26,10 +47,17 @@ components:
         label: { type: string }
         reason:
           type: string
-          enum: [waiting_human, pr_conflict, human_gate]
+          enum: [waiting_human, pr_conflict, human_gate, auto_approving]
         message:
           type: string
           description: Waiting run feedback or notes text, when present.
+        due_at:
+          type: string
+          format: date-time
+          description: When the pending auto-approval fires. auto_approving items only.
+        decision_id:
+          type: string
+          description: The pending autonomy decision. auto_approving items only.
         run_id:
           type: string
           description: Set when reason is waiting_human.
@@ -48,15 +76,15 @@ components:
           type: array
           items: { $ref: "#/components/schemas/RiskFlagCode" }
           description: >-
-            Review-brief flag codes; present only for human_gate items whose
+            Review-brief flag codes; present only for human_gate and auto_approving items whose
             branch diff could be computed and raised at least one flag.
         summary:
           type: string
-          description: One-line agent summary from the review brief. human_gate items only, when the brief could be built and an agent summary exists.
+          description: One-line agent summary from the review brief. human_gate and auto_approving items only, when the brief could be built and an agent summary exists.
         changed:
           type: object
           required: [files, additions, deletions]
-          description: Diff size. human_gate items only, when the branch diff could be computed.
+          description: Diff size. human_gate and auto_approving items only, when the branch diff could be computed.
           properties:
             files: { type: integer }
             additions: { type: integer }
@@ -64,17 +92,17 @@ components:
         cost_usd:
           type: number
           format: double
-          description: Cost so far across the task's runs. human_gate items only, when the review brief could be built.
+          description: Cost so far across the task's runs. human_gate and auto_approving items only, when the review brief could be built.
         cost_unknown:
           type: boolean
-          description: True when some run had unknown cost. human_gate items only, when the review brief could be built.
+          description: True when some run had unknown cost. human_gate and auto_approving items only, when the review brief could be built.
         verification:
           type: string
           enum: [pass, fail, timeout, error, not_run]
-          description: Latest verify result. human_gate items only, when the review brief could be built.
+          description: Latest verify result. human_gate and auto_approving items only, when the review brief could be built.
         preview_count:
           type: integer
-          description: Images in the latest preview capture. human_gate items only, when the review brief could be built; omitted when 0.
+          description: Images in the latest preview capture. human_gate and auto_approving items only, when the review brief could be built; omitted when 0.
     LabelAutonomy:
       type: object
       properties:
@@ -82,18 +110,21 @@ components:
         ask_on:
           type: array
           items: { $ref: "#/components/schemas/RiskFlagCode" }
-        hold_seconds: { type: integer, minimum: 0, description: "Stored but not used yet." }
+        hold_seconds: { type: integer, minimum: 0, description: "Hold window before an auto-approval fires; a person can Hold it meanwhile. 0 approves immediately." }
         max_cost_usd: { type: number, nullable: true, description: "Hard stop when the task's total cost exceeds this; null = no cap." }
       required: [mode, ask_on, hold_seconds]
     AutonomyReason:
       type: object
       properties:
-        code: { type: string, description: "mode_ask, always_ask, verify_failed, cost_exceeded, no_diff, flag_raised, auto_policy or no_blocking_flags." }
+        code: { type: string, description: "mode_ask, always_ask, verify_failed, cost_exceeded, no_diff, flag_raised, undone, auto_policy or no_blocking_flags." }
         detail: { type: string }
       required: [code, detail]
     AutonomyDecision:
       type: object
-      description: A shadow decision recorded when a task landed on a gate. Nothing is acted on.
+      description: >-
+        A decision recorded when a task landed on a gate. An approve decision
+        carries an outcome (pending until its hold window ends); ask decisions
+        have no outcome.
       properties:
         id: { type: string }
         task_id: { type: string }
@@ -106,7 +137,23 @@ components:
           type: array
           items: { $ref: "#/components/schemas/AutonomyReason" }
         created_at: { type: string, format: date-time }
+        outcome:
+          type: string
+          nullable: true
+          enum: [pending, approved, held, superseded, skipped, failed, undone, null]
+        hold_seconds: { type: integer, nullable: true }
+        due_at: { type: string, format: date-time, nullable: true }
+        note: { type: string, nullable: true, description: "The Auto-approved note, or skip/failure detail." }
+        outcome_at: { type: string, format: date-time, nullable: true }
+        outcome_actor: { type: string, nullable: true }
       required: [id, task_id, workflow_id, label, mode, decision, reasons, created_at]
+    AutonomyUndoResponse:
+      type: object
+      required: [task, pr_left_open, message]
+      properties:
+        task: { $ref: "#/components/schemas/Task" }
+        pr_left_open: { type: boolean, description: "True when a pull request had already been opened; undo leaves it as is." }
+        message: { type: string }
     RiskFlagCode:
       type: string
       enum: [migration, auth_or_security, dependencies, tests_removed, ci_config, large_change, outside_plan_scope]
@@ -2314,6 +2361,11 @@ components:
         - $ref: "#/components/schemas/WsRepoCloneFailedEvent"
         - $ref: "#/components/schemas/WsAgentLogEvent"
         - $ref: "#/components/schemas/WsAgentLogReplayEvent"
+        - $ref: "#/components/schemas/WsTaskAutonomyPendingEvent"
+        - $ref: "#/components/schemas/WsTaskAutonomyHeldEvent"
+        - $ref: "#/components/schemas/WsTaskAutonomyApprovedEvent"
+        - $ref: "#/components/schemas/WsTaskAutonomyUndoneEvent"
+        - $ref: "#/components/schemas/WsTaskAutonomyAskedEvent"
         - $ref: "#/components/schemas/WsResyncEvent"
       discriminator:
         propertyName: type
@@ -2342,6 +2394,11 @@ components:
           repo.clone_failed: "#/components/schemas/WsRepoCloneFailedEvent"
           agent.log: "#/components/schemas/WsAgentLogEvent"
           agent.log_replay: "#/components/schemas/WsAgentLogReplayEvent"
+          task.autonomy_pending: "#/components/schemas/WsTaskAutonomyPendingEvent"
+          task.autonomy_held: "#/components/schemas/WsTaskAutonomyHeldEvent"
+          task.autonomy_approved: "#/components/schemas/WsTaskAutonomyApprovedEvent"
+          task.autonomy_undone: "#/components/schemas/WsTaskAutonomyUndoneEvent"
+          task.autonomy_asked: "#/components/schemas/WsTaskAutonomyAskedEvent"
           resync: "#/components/schemas/WsResyncEvent"
 
     WsTaskLabelChangedEvent:
@@ -2441,6 +2498,92 @@ components:
           description: Same code as AgentRun.escalation_reason.
         message: { type: string }
       required: [task_id, run_id, reason, message]
+
+    WsTaskAutonomyPendingEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.autonomy_pending] }
+        payload: { $ref: "#/components/schemas/WsTaskAutonomyPendingPayload" }
+      required: [type, payload]
+    WsTaskAutonomyPendingPayload:
+      type: object
+      description: The autonomy policy scheduled an auto-approval that fires at due_at unless held.
+      properties:
+        task_id: { type: string }
+        label: { type: string }
+        decision_id: { type: string }
+        due_at: { type: string, format: date-time }
+        hold_seconds: { type: integer }
+      required: [task_id, label, decision_id, due_at, hold_seconds]
+
+    WsTaskAutonomyHeldEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.autonomy_held] }
+        payload: { $ref: "#/components/schemas/WsTaskAutonomyHeldPayload" }
+      required: [type, payload]
+    WsTaskAutonomyHeldPayload:
+      type: object
+      description: A person held a pending auto-approval; the task is a normal review now.
+      properties:
+        task_id: { type: string }
+        label: { type: string }
+        decision_id: { type: string }
+        actor: { type: string }
+      required: [task_id, label, decision_id, actor]
+
+    WsTaskAutonomyApprovedEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.autonomy_approved] }
+        payload: { $ref: "#/components/schemas/WsTaskAutonomyApprovedPayload" }
+      required: [type, payload]
+    WsTaskAutonomyApprovedPayload:
+      type: object
+      description: The policy approved the task (task.label_changed is published too).
+      properties:
+        task_id: { type: string }
+        decision_id: { type: string }
+        from: { type: string }
+        to: { type: string }
+        note: { type: string }
+      required: [task_id, decision_id, from, to, note]
+
+    WsTaskAutonomyUndoneEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.autonomy_undone] }
+        payload: { $ref: "#/components/schemas/WsTaskAutonomyUndonePayload" }
+      required: [type, payload]
+    WsTaskAutonomyUndonePayload:
+      type: object
+      description: A person undid an auto-approval; the task is back on its gate.
+      properties:
+        task_id: { type: string }
+        label: { type: string, description: The gate the task returned to. }
+        from: { type: string, description: The label the task was moved back from. }
+        pr_url: { type: string, description: Present when a pull request had already been opened. }
+      required: [task_id, label, from]
+
+    WsTaskAutonomyAskedEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.autonomy_asked] }
+        payload: { $ref: "#/components/schemas/WsTaskAutonomyAskedPayload" }
+      required: [type, payload]
+    WsTaskAutonomyAskedPayload:
+      type: object
+      description: The policy handed a task to a person at a non-ask gate.
+      properties:
+        task_id: { type: string }
+        label: { type: string }
+        decision_id: { type: string, description: Omitted when no decision row exists (evaluation_error). }
+        reason: { type: string, enum: [policy, skipped, failed, evaluation_error] }
+        reasons:
+          type: array
+          items: { type: string }
+          description: Reason codes of the ask decision (policy only).
+      required: [task_id, label, reason, reasons]
 
     WsTaskCostWarningEvent:
       type: object
@@ -3043,10 +3186,11 @@ paths:
 
   /tasks/{id}/autonomy-decision:
     get:
-      summary: Latest shadow autonomy decision for the task's current label
+      summary: Latest autonomy decision for the task's current label
       description: >
         Recorded when the task landed on a gate whose autonomy mode is not
-        ask. Shadow only: this release never moves a task.
+        ask. An approve decision is acted on after its hold window; see
+        outcome.
       parameters:
         - name: id
           in: path
@@ -3058,6 +3202,49 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AutonomyDecision" }
         "404": { description: Task not found, or no decision for its current label }
+
+  /tasks/{id}/autonomy/hold:
+    post:
+      summary: Hold a pending auto-approval
+      description: >
+        Cancels the task's pending auto-approval (decision outcome becomes
+        held); the task becomes a normal review. Publishes task.autonomy_held.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The held decision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutonomyDecision" }
+        "404": { description: Task not found }
+        "409": { description: No pending auto-approval for this task }
+
+  /tasks/{id}/autonomy/undo:
+    post:
+      summary: Undo an auto-approval
+      description: >
+        Only for a task whose last gate exit was made by the policy actor and
+        that is not terminal-merged. Moves the task back to that gate (label
+        history note "Undo auto-approval"), records an autonomy_escapes row
+        (source undo) and publishes task.autonomy_undone. A pull request that
+        was already opened is left as is. The task is then re-evaluated with a
+        hard stop (reason undone), so a person decides.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutonomyUndoResponse" }
+        "404": { description: Task not found }
+        "409": { description: Last gate exit was not by the policy, task already merged or archived, or a run is live }
 
   /tasks/{id}/dependencies:
     get:
@@ -5031,12 +5218,15 @@ paths:
       description: >
         The single server-side definition of "needs me". Each task appears at
         most once with one primary reason; precedence is waiting_human >
-        pr_conflict > human_gate. waiting_human: the task's active run is
+        pr_conflict > auto_approving > human_gate. waiting_human: the task's active run is
         waiting for input (run_id and message set). pr_conflict: the task has
         an open PR marked as conflicting. human_gate: the task sits on a
         non-terminal, non-agent_ignore label with no agent-triggerable
         outbound transition and at least one human transition, with no live
-        run. Archived and (for pr_conflict/human_gate) paused tasks are
+        run. auto_approving: a human_gate task with a pending autonomy
+        auto-approval (due_at set); it is never also reported as human_gate.
+        The separate approved_by_policy list holds tasks the policy approved
+        in the last 24 hours. Archived and (for pr_conflict/human_gate) paused tasks are
         excluded.
       responses:
         "200":

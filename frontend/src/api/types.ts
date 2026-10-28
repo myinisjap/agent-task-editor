@@ -503,8 +503,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Latest shadow autonomy decision for the task's current label
-         * @description Recorded when the task landed on a gate whose autonomy mode is not ask. Shadow only: this release never moves a task.
+         * Latest autonomy decision for the task's current label
+         * @description Recorded when the task landed on a gate whose autonomy mode is not ask. An approve decision is acted on after its hold window; see outcome.
          */
         get: {
             parameters: {
@@ -536,6 +536,115 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/autonomy/hold": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hold a pending auto-approval
+         * @description Cancels the task's pending auto-approval (decision outcome becomes held); the task becomes a normal review. Publishes task.autonomy_held.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The held decision */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutonomyDecision"];
+                    };
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No pending auto-approval for this task */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/autonomy/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo an auto-approval
+         * @description Only for a task whose last gate exit was made by the policy actor and that is not terminal-merged. Moves the task back to that gate (label history note "Undo auto-approval"), records an autonomy_escapes row (source undo) and publishes task.autonomy_undone. A pull request that was already opened is left as is. The task is then re-evaluated with a hard stop (reason undone), so a person decides.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutonomyUndoResponse"];
+                    };
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Last gate exit was not by the policy */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -4857,7 +4966,7 @@ export interface paths {
         };
         /**
          * Tasks that need a human, oldest first
-         * @description The single server-side definition of "needs me". Each task appears at most once with one primary reason; precedence is waiting_human > pr_conflict > human_gate. waiting_human: the task's active run is waiting for input (run_id and message set). pr_conflict: the task has an open PR marked as conflicting. human_gate: the task sits on a non-terminal, non-agent_ignore label with no agent-triggerable outbound transition and at least one human transition, with no live run. Archived and (for pr_conflict/human_gate) paused tasks are excluded.
+         * @description The single server-side definition of "needs me". Each task appears at most once with one primary reason; precedence is waiting_human > pr_conflict > auto_approving > human_gate. waiting_human: the task's active run is waiting for input (run_id and message set). pr_conflict: the task has an open PR marked as conflicting. human_gate: the task sits on a non-terminal, non-agent_ignore label with no agent-triggerable outbound transition and at least one human transition, with no live run. auto_approving: a human_gate task with a pending autonomy auto-approval (due_at set); it is never also reported as human_gate. The separate approved_by_policy list holds tasks the policy approved in the last 24 hours. Archived and (for pr_conflict/human_gate) paused tasks are excluded.
          */
         get: {
             parameters: {
@@ -6398,6 +6507,27 @@ export interface components {
     schemas: {
         NeedsMeResponse: {
             items: components["schemas"]["NeedsMeItem"][];
+            /** @description Tasks the autonomy policy approved in the last 24 hours (newest first), for the Inbox "Approved for you" section. Always present. */
+            approved_by_policy: components["schemas"]["PolicyApprovalItem"][];
+        };
+        PolicyApprovalItem: {
+            task_id: string;
+            task_title: string;
+            repo_id: string;
+            workflow_id: string;
+            /** @description The task's current label. */
+            label: string;
+            /** @description The gate the policy approved the task off. */
+            gate_label: string;
+            /** Format: date-time */
+            approved_at: string;
+            /** @description The Auto-approved label-history note. */
+            note: string;
+            decision_id: string;
+            /** @description Set when a pull request was already opened. */
+            pr_url?: string;
+            /** @description True when POST /tasks/{id}/autonomy/undo would currently be accepted (last gate exit by policy, not merged). */
+            undoable: boolean;
         };
         NeedsMeItem: {
             task_id: string;
@@ -6406,9 +6536,16 @@ export interface components {
             workflow_id: string;
             label: string;
             /** @enum {string} */
-            reason: "waiting_human" | "pr_conflict" | "human_gate";
+            reason: "waiting_human" | "pr_conflict" | "human_gate" | "auto_approving";
             /** @description Waiting run feedback or notes text, when present. */
             message?: string;
+            /**
+             * Format: date-time
+             * @description When the pending auto-approval fires. auto_approving items only.
+             */
+            due_at?: string;
+            /** @description The pending autonomy decision. auto_approving items only. */
+            decision_id?: string;
             /** @description Set when reason is waiting_human. */
             run_id?: string;
             /**
@@ -6421,11 +6558,11 @@ export interface components {
              * @description When the task started needing a human; the list is sorted by this ascending.
              */
             since: string;
-            /** @description Review-brief flag codes; present only for human_gate items whose branch diff could be computed and raised at least one flag. */
+            /** @description Review-brief flag codes; present only for human_gate and auto_approving items whose branch diff could be computed and raised at least one flag. */
             risk_flags?: components["schemas"]["RiskFlagCode"][];
-            /** @description One-line agent summary from the review brief. human_gate items only, when the brief could be built and an agent summary exists. */
+            /** @description One-line agent summary from the review brief. human_gate and auto_approving items only, when the brief could be built and an agent summary exists. */
             summary?: string;
-            /** @description Diff size. human_gate items only, when the branch diff could be computed. */
+            /** @description Diff size. human_gate and auto_approving items only, when the branch diff could be computed. */
             changed?: {
                 files: number;
                 additions: number;
@@ -6433,34 +6570,34 @@ export interface components {
             };
             /**
              * Format: double
-             * @description Cost so far across the task's runs. human_gate items only, when the review brief could be built.
+             * @description Cost so far across the task's runs. human_gate and auto_approving items only, when the review brief could be built.
              */
             cost_usd?: number;
-            /** @description True when some run had unknown cost. human_gate items only, when the review brief could be built. */
+            /** @description True when some run had unknown cost. human_gate and auto_approving items only, when the review brief could be built. */
             cost_unknown?: boolean;
             /**
-             * @description Latest verify result. human_gate items only, when the review brief could be built.
+             * @description Latest verify result. human_gate and auto_approving items only, when the review brief could be built.
              * @enum {string}
              */
             verification?: "pass" | "fail" | "timeout" | "error" | "not_run";
-            /** @description Images in the latest preview capture. human_gate items only, when the review brief could be built; omitted when 0. */
+            /** @description Images in the latest preview capture. human_gate and auto_approving items only, when the review brief could be built; omitted when 0. */
             preview_count?: number;
         };
         LabelAutonomy: {
             /** @enum {string} */
             mode: "ask" | "on_flags" | "auto";
             ask_on: components["schemas"]["RiskFlagCode"][];
-            /** @description Stored but not used yet. */
+            /** @description Hold window before an auto-approval fires; a person can Hold it meanwhile. 0 approves immediately. */
             hold_seconds: number;
             /** @description Hard stop when the task's total cost exceeds this; null = no cap. */
             max_cost_usd?: number | null;
         };
         AutonomyReason: {
-            /** @description mode_ask, always_ask, verify_failed, cost_exceeded, no_diff, flag_raised, auto_policy or no_blocking_flags. */
+            /** @description mode_ask, always_ask, verify_failed, cost_exceeded, no_diff, flag_raised, undone, auto_policy or no_blocking_flags. */
             code: string;
             detail: string;
         };
-        /** @description A shadow decision recorded when a task landed on a gate. Nothing is acted on. */
+        /** @description A decision recorded when a task landed on a gate. An approve decision carries an outcome (pending until its hold window ends); ask decisions have no outcome. */
         AutonomyDecision: {
             id: string;
             task_id: string;
@@ -6474,6 +6611,22 @@ export interface components {
             reasons: components["schemas"]["AutonomyReason"][];
             /** Format: date-time */
             created_at: string;
+            /** @enum {string|null} */
+            outcome?: "pending" | "approved" | "held" | "superseded" | "skipped" | "failed" | "undone" | null;
+            hold_seconds?: number | null;
+            /** Format: date-time */
+            due_at?: string | null;
+            /** @description The Auto-approved note, or skip/failure detail. */
+            note?: string | null;
+            /** Format: date-time */
+            outcome_at?: string | null;
+            outcome_actor?: string | null;
+        };
+        AutonomyUndoResponse: {
+            task: components["schemas"]["Task"];
+            /** @description True when a pull request had already been opened; undo leaves it as is. */
+            pr_left_open: boolean;
+            message: string;
         };
         /**
          * @description Deterministic, advisory risk flag computed from the task's branch diff. migration - a migrations/ path, a .sql file named like schema, or DDL (CREATE/ALTER/DROP TABLE|INDEX|VIEW|TRIGGER) in a .sql file. auth_or_security - path contains auth, oauth, token, secret, middleware, crypto, password, credential, jwt, csrf, cors, permission, security or session, or a .env* file. dependencies - manifests/lockfiles (go.mod, package.json, requirements*.txt, Cargo.*, ...) or a Dockerfile FROM change. tests_removed - a test file deleted, net test functions removed, or skip/only markers added. ci_config - .github/workflows, .gitea/workflows or .gitlab-ci.yml. large_change - more than 800 changed lines (lockfiles/generated excluded) or more than 25 files. outside_plan_scope - the plan in agent_notes lists files and the diff touches others (skipped when the plan has no file list).
@@ -7797,7 +7950,7 @@ export interface components {
             error: string;
         };
         /** @description Envelope of every message the server pushes on the /ws socket (and the locally synthesised `resync` after a reconnect). Discriminated by `type`. */
-        WsEvent: components["schemas"]["WsTaskLabelChangedEvent"] | components["schemas"]["WsTaskUpdatedEvent"] | components["schemas"]["WsTaskSideEffectEvent"] | components["schemas"]["WsTaskAgentStartedEvent"] | components["schemas"]["WsTaskAgentDoneEvent"] | components["schemas"]["WsTaskNeedsHumanEvent"] | components["schemas"]["WsTaskCostWarningEvent"] | components["schemas"]["WsSystemCostBudgetTrippedEvent"] | components["schemas"]["WsTaskReviewCommentsChangedEvent"] | components["schemas"]["WsTaskVerificationEvent"] | components["schemas"]["WsTaskPreviewEvent"] | components["schemas"]["WsTaskRateLimitedEvent"] | components["schemas"]["WsProviderPauseChangedEvent"] | components["schemas"]["WsTaskGitStateChangedEvent"] | components["schemas"]["WsTaskPrMergeableChangedEvent"] | components["schemas"]["WsTaskReviewCommentAddedEvent"] | components["schemas"]["WsTaskSubtaskConflictEvent"] | components["schemas"]["WsTaskSourceCommentAddedEvent"] | components["schemas"]["WsTaskCreatedEvent"] | components["schemas"]["WsTaskCreatedBulkEvent"] | components["schemas"]["WsRepoCloneDoneEvent"] | components["schemas"]["WsRepoCloneFailedEvent"] | components["schemas"]["WsAgentLogEvent"] | components["schemas"]["WsAgentLogReplayEvent"] | components["schemas"]["WsResyncEvent"];
+        WsEvent: components["schemas"]["WsTaskLabelChangedEvent"] | components["schemas"]["WsTaskUpdatedEvent"] | components["schemas"]["WsTaskSideEffectEvent"] | components["schemas"]["WsTaskAgentStartedEvent"] | components["schemas"]["WsTaskAgentDoneEvent"] | components["schemas"]["WsTaskNeedsHumanEvent"] | components["schemas"]["WsTaskCostWarningEvent"] | components["schemas"]["WsSystemCostBudgetTrippedEvent"] | components["schemas"]["WsTaskReviewCommentsChangedEvent"] | components["schemas"]["WsTaskVerificationEvent"] | components["schemas"]["WsTaskPreviewEvent"] | components["schemas"]["WsTaskRateLimitedEvent"] | components["schemas"]["WsProviderPauseChangedEvent"] | components["schemas"]["WsTaskGitStateChangedEvent"] | components["schemas"]["WsTaskPrMergeableChangedEvent"] | components["schemas"]["WsTaskReviewCommentAddedEvent"] | components["schemas"]["WsTaskSubtaskConflictEvent"] | components["schemas"]["WsTaskSourceCommentAddedEvent"] | components["schemas"]["WsTaskCreatedEvent"] | components["schemas"]["WsTaskCreatedBulkEvent"] | components["schemas"]["WsRepoCloneDoneEvent"] | components["schemas"]["WsRepoCloneFailedEvent"] | components["schemas"]["WsAgentLogEvent"] | components["schemas"]["WsAgentLogReplayEvent"] | components["schemas"]["WsTaskAutonomyPendingEvent"] | components["schemas"]["WsTaskAutonomyHeldEvent"] | components["schemas"]["WsTaskAutonomyApprovedEvent"] | components["schemas"]["WsTaskAutonomyUndoneEvent"] | components["schemas"]["WsTaskAutonomyAskedEvent"] | components["schemas"]["WsResyncEvent"];
         WsTaskLabelChangedEvent: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -7894,6 +8047,91 @@ export interface components {
              */
             reason: "agent_question" | "auth_required" | "repeated_failure" | "rework_loop" | "cost_budget" | "cost_unknown" | "provider_missing" | "runtime_prep" | "max_turns" | "transient_exhausted" | "no_outcome" | "rejected_transition" | "verify_error";
             message: string;
+        };
+        WsTaskAutonomyPendingEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.autonomy_pending";
+            payload: components["schemas"]["WsTaskAutonomyPendingPayload"];
+        };
+        /** @description The autonomy policy scheduled an auto-approval that fires at due_at unless held. */
+        WsTaskAutonomyPendingPayload: {
+            task_id: string;
+            label: string;
+            decision_id: string;
+            /** Format: date-time */
+            due_at: string;
+            hold_seconds: number;
+        };
+        WsTaskAutonomyHeldEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.autonomy_held";
+            payload: components["schemas"]["WsTaskAutonomyHeldPayload"];
+        };
+        /** @description A person held a pending auto-approval; the task is a normal review now. */
+        WsTaskAutonomyHeldPayload: {
+            task_id: string;
+            label: string;
+            decision_id: string;
+            actor: string;
+        };
+        WsTaskAutonomyApprovedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.autonomy_approved";
+            payload: components["schemas"]["WsTaskAutonomyApprovedPayload"];
+        };
+        /** @description The policy approved the task (task.label_changed is published too). */
+        WsTaskAutonomyApprovedPayload: {
+            task_id: string;
+            decision_id: string;
+            from: string;
+            to: string;
+            note: string;
+        };
+        WsTaskAutonomyUndoneEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.autonomy_undone";
+            payload: components["schemas"]["WsTaskAutonomyUndonePayload"];
+        };
+        /** @description A person undid an auto-approval; the task is back on its gate. */
+        WsTaskAutonomyUndonePayload: {
+            task_id: string;
+            /** @description The gate the task returned to. */
+            label: string;
+            /** @description The label the task was moved back from. */
+            from: string;
+            /** @description Present when a pull request had already been opened. */
+            pr_url?: string;
+        };
+        WsTaskAutonomyAskedEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.autonomy_asked";
+            payload: components["schemas"]["WsTaskAutonomyAskedPayload"];
+        };
+        /** @description The policy handed a task to a person at a non-ask gate. */
+        WsTaskAutonomyAskedPayload: {
+            task_id: string;
+            label: string;
+            /** @description Omitted when no decision row exists (evaluation_error). */
+            decision_id?: string;
+            /** @enum {string} */
+            reason: "policy" | "skipped" | "failed" | "evaluation_error";
+            /** @description Reason codes of the ask decision (policy only). */
+            reasons: string[];
         };
         WsTaskCostWarningEvent: {
             /**

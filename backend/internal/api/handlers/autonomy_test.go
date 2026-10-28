@@ -7,9 +7,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
+	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
+	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
 
 func newAutonomyTask(t *testing.T) (http.Handler, *gen.Queries, gen.Task) {
@@ -257,3 +262,236 @@ func TestWorkflowAutonomy_JSONErrors(t *testing.T) {
 		t.Fatalf("null: %d %s", w.Code, w.Body)
 	}
 }
+
+type recordingPub struct{ events []string }
+
+func (p *recordingPub) Publish(t string, _ any) { p.events = append(p.events, t) }
+
+type autonomyEnv struct {
+	r      http.Handler
+	q      *gen.Queries
+	pub    *recordingPub
+	engine *workflow.Engine
+	wfID   string
+	repoID string
+	db     *storage.DB
+}
+
+func newAutonomyEnv(t *testing.T) *autonomyEnv {
+	t.Helper()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	pub := &recordingPub{}
+	engine := workflow.New(db.SQL(), pub)
+	wfs, _ := q.ListWorkflows(context.Background())
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(context.Background(), gen.CreateRepoParams{ID: repoID, Name: "r", Path: t.TempDir(), WorkflowID: &wfs[0].ID}); err != nil {
+		t.Fatal(err)
+	}
+	h := handlers.NewTasksHandler(q, engine, t.TempDir(), &fakeCanceller{found: map[string]bool{}}, nil, nil)
+	h.SetAutonomyPublisher(pub)
+	r := chi.NewRouter()
+	r.Post("/tasks/{id}/autonomy/hold", h.HoldAutonomy)
+	r.Post("/tasks/{id}/autonomy/undo", h.UndoAutonomy)
+	return &autonomyEnv{r: r, q: q, pub: pub, engine: engine, wfID: wfs[0].ID, repoID: repoID, db: db}
+}
+
+func (e *autonomyEnv) post(path string) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	e.r.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, nil))
+	return w
+}
+
+func (e *autonomyEnv) task(t *testing.T, label string) gen.Task {
+	t.Helper()
+	task, err := e.q.CreateTask(context.Background(), gen.CreateTaskParams{ID: uuid.NewString(), Title: "t", WorkflowID: e.wfID, RepoID: e.repoID, Label: label})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return task
+}
+
+func (e *autonomyEnv) pending(t *testing.T, task gen.Task) string {
+	t.Helper()
+	out, hold, due, note := "pending", int64(600), time.Now().Add(time.Hour).UTC(), "Auto-approved: x"
+	id := uuid.NewString()
+	if err := e.q.CreateAutonomyDecision(context.Background(), gen.CreateAutonomyDecisionParams{
+		ID: id, TaskID: task.ID, WorkflowID: task.WorkflowID, Label: task.Label, Mode: "auto", Decision: "approve",
+		Reasons: "[]", Outcome: &out, HoldSeconds: &hold, DueAt: &due, Note: &note,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestHoldAutonomy(t *testing.T) {
+	e := newAutonomyEnv(t)
+	if w := e.post("/tasks/nope/autonomy/hold"); w.Code != http.StatusNotFound {
+		t.Fatalf("unknown: %d", w.Code)
+	}
+	task := e.task(t, "review")
+	if w := e.post("/tasks/" + task.ID + "/autonomy/hold"); w.Code != http.StatusConflict {
+		t.Fatalf("nothing pending: %d", w.Code)
+	}
+	id := e.pending(t, task)
+	w := e.post("/tasks/" + task.ID + "/autonomy/hold")
+	if w.Code != http.StatusOK {
+		t.Fatalf("hold: %d %s", w.Code, w.Body)
+	}
+	d, _ := e.q.GetAutonomyDecision(context.Background(), id)
+	if d.Outcome == nil || *d.Outcome != "held" {
+		t.Fatalf("outcome = %v", d.Outcome)
+	}
+	found := false
+	for _, ev := range e.pub.events {
+		if ev == "task.autonomy_held" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no held event: %v", e.pub.events)
+	}
+	if w := e.post("/tasks/" + task.ID + "/autonomy/hold"); w.Code != http.StatusConflict {
+		t.Fatalf("second hold: %d", w.Code)
+	}
+}
+
+func TestUndoAutonomy(t *testing.T) {
+	e := newAutonomyEnv(t)
+	ctx := context.Background()
+	task := e.task(t, "review")
+	id := e.pending(t, task)
+	// Approve as the policy would.
+	if _, err := e.q.ClaimAutonomyApproval(ctx, gen.ClaimAutonomyApprovalParams{ID: id}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.engine.Approve(ctx, task.ID, workflow.ApproveOptions{Actor: "policy", Note: "Auto-approved: x", ExpectedFrom: "review"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.SQL().Exec("INSERT INTO task_git (task_id, pr_url) VALUES (?, 'https://example.test/pr/1') ON CONFLICT(task_id) DO UPDATE SET pr_url = excluded.pr_url", task.ID); err != nil {
+		t.Fatal(err)
+	}
+	w := e.post("/tasks/" + task.ID + "/autonomy/undo")
+	if w.Code != http.StatusOK {
+		t.Fatalf("undo: %d %s", w.Code, w.Body)
+	}
+	var body struct {
+		PRLeftOpen bool   `json:"pr_left_open"`
+		Message    string `json:"message"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if !body.PRLeftOpen || !strings.Contains(body.Message, "https://example.test/pr/1") {
+		t.Fatalf("body = %+v", body)
+	}
+	after, _ := e.q.GetTask(ctx, task.ID)
+	if after.Label != "review" {
+		t.Fatalf("label = %s", after.Label)
+	}
+	hist, _ := e.q.ListTaskLabelHistory(ctx, task.ID)
+	last := hist[len(hist)-1]
+	if last.Note == nil || *last.Note != "Undo auto-approval" || last.ToLabel != "review" {
+		t.Fatalf("history = %+v", last)
+	}
+	esc, _ := e.q.ListAutonomyEscapesForTask(ctx, task.ID)
+	if len(esc) != 1 || esc[0].Source != "undo" || esc[0].Label != "review" {
+		t.Fatalf("escapes = %+v", esc)
+	}
+	d, _ := e.q.GetAutonomyDecision(ctx, id)
+	if d.Outcome == nil || *d.Outcome != "undone" {
+		t.Fatalf("outcome = %v", d.Outcome)
+	}
+	// Now on the gate: the last gate exit is still policy's, but already there.
+	if w := e.post("/tasks/" + task.ID + "/autonomy/undo"); w.Code != http.StatusConflict {
+		t.Fatalf("repeat undo: %d", w.Code)
+	}
+}
+
+func TestUndoAutonomy_Refusals(t *testing.T) {
+	e := newAutonomyEnv(t)
+	ctx := context.Background()
+	if w := e.post("/tasks/nope/autonomy/undo"); w.Code != http.StatusNotFound {
+		t.Fatalf("unknown: %d", w.Code)
+	}
+	// Last gate exit by a human.
+	human := e.task(t, "review")
+	if _, err := e.engine.Approve(ctx, human.ID, workflow.ApproveOptions{Actor: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	if w := e.post("/tasks/" + human.ID + "/autonomy/undo"); w.Code != http.StatusConflict {
+		t.Fatalf("human exit: %d", w.Code)
+	}
+	// Policy exit, then a live run.
+	live := e.task(t, "review")
+	if _, err := e.engine.Approve(ctx, live.ID, workflow.ApproveOptions{Actor: "policy"}); err != nil {
+		t.Fatal(err)
+	}
+	run, err := e.q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: uuid.NewString(), TaskID: live.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{CurrentAgentRunID: &run.ID, ActiveAgentRunID: &run.ID, ID: live.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if w := e.post("/tasks/" + live.ID + "/autonomy/undo"); w.Code != http.StatusConflict {
+		t.Fatalf("live run: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestUndoAutonomy_TerminalMerged(t *testing.T) {
+	e := newAutonomyEnv(t)
+	ctx := context.Background()
+	task := e.task(t, "review")
+	target, err := e.engine.Approve(ctx, task.ID, workflow.ApproveOptions{Actor: "policy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Drive the task to a terminal label marked merged.
+	if _, err := e.db.SQL().Exec("UPDATE workflow_labels SET is_terminal = 1 WHERE workflow_id = ? AND name = ?", e.wfID, target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.db.SQL().Exec("INSERT INTO task_git (task_id, git_state) VALUES (?, 'pr_merged') ON CONFLICT(task_id) DO UPDATE SET git_state = excluded.git_state", task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if w := e.post("/tasks/" + task.ID + "/autonomy/undo"); w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "merged") {
+		t.Fatalf("merged: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestNeedsMe_AutoApprovingAndPolicyApprovals(t *testing.T) {
+	e := newAutonomyEnv(t)
+	ctx := context.Background()
+	pend := e.task(t, "review")
+	e.pending(t, pend)
+	done := e.task(t, "review")
+	id := e.pending(t, done)
+	if _, err := e.q.ClaimAutonomyApproval(ctx, gen.ClaimAutonomyApprovalParams{OutcomeAt: ptrTime(time.Now().UTC()), ID: id}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.engine.Approve(ctx, done.ID, workflow.ApproveOptions{Actor: "policy", Note: "n"}); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	handlers.NewNeedsMeHandler(e.q).List(w, httptest.NewRequest(http.MethodGet, "/needs-me", nil))
+	var body struct {
+		Items []struct {
+			TaskID string  `json:"task_id"`
+			Reason string  `json:"reason"`
+			DueAt  *string `json:"due_at"`
+		} `json:"items"`
+		Approved []struct {
+			TaskID   string `json:"task_id"`
+			Undoable bool   `json:"undoable"`
+		} `json:"approved_by_policy"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Items) != 1 || body.Items[0].TaskID != pend.ID || body.Items[0].Reason != "auto_approving" || body.Items[0].DueAt == nil {
+		t.Fatalf("items = %+v", body.Items)
+	}
+	if len(body.Approved) != 1 || body.Approved[0].TaskID != done.ID || !body.Approved[0].Undoable {
+		t.Fatalf("approved = %+v", body.Approved)
+	}
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }

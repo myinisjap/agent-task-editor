@@ -78,6 +78,9 @@ type RouterDeps struct {
 	BlockReasons       handlers.BlockReasonResolver
 	// Terminal backs the chat terminal WebSocket; nil makes it return 503.
 	Terminal handlers.Terminal
+	// EventPublisher is the full fan-out (hub + notifier + policy), used for
+	// autonomy hold/undo events. Optional.
+	EventPublisher handlers.TaskEventPublisher
 }
 
 // NewRouter builds and returns the application router.
@@ -93,6 +96,9 @@ func NewRouter(deps RouterDeps) http.Handler {
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, deps.Canceller, deps.ReplyDispatcher, deps.BlockReasons)
 	tasksH.SetPublisher(hub)
+	if deps.EventPublisher != nil {
+		tasksH.SetAutonomyPublisher(deps.EventPublisher)
+	}
 	depsH := handlers.NewDependenciesHandler(q, db.SQL(), hub)
 	subtasksH := handlers.NewSubtasksHandler(q, db.SQL(), hub)
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
@@ -230,6 +236,8 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Get("/tasks/{id}/diff", tasksH.Diff)
 			r.Get("/tasks/{id}/review-brief", handlers.NewReviewBriefHandler(q, briefCache).Get)
 			r.Get("/tasks/{id}/autonomy-decision", handlers.NewAutonomyHandler(q).GetDecision)
+			r.Post("/tasks/{id}/autonomy/hold", tasksH.HoldAutonomy)
+			r.Post("/tasks/{id}/autonomy/undo", tasksH.UndoAutonomy)
 			r.Get("/tasks/{id}/pr-url", tasksH.PRURL)
 			r.Post("/tasks/{id}/pr", tasksH.CreatePR)
 			r.Post("/tasks/{id}/side-effects/retry", tasksH.RetrySideEffects)

@@ -91,7 +91,11 @@ export function buildInbox(
   sourceEdits: SourceEditTask[] = [],
 ): InboxSections {
   const s: InboxSections = { decide: [], answer: [], fix: [] }
-  for (const item of needsMe) s[sectionFor(item)].push({ kind: 'needs_me', item })
+  for (const item of needsMe) {
+    // auto_approving tasks are not waiting on the user (a later slice renders them separately).
+    if (item.reason === 'auto_approving') continue
+    s[sectionFor(item)].push({ kind: 'needs_me', item })
+  }
   for (const edit of sourceEdits) s.decide.push({ kind: 'source_edit', edit })
   for (const f of failed) s.fix.push({ kind: 'side_effect', failed: f })
   for (const provider of paused) s.fix.push({ kind: 'provider', provider })

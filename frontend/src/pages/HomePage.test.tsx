@@ -71,7 +71,7 @@ describe('HomePage', () => {
 
   it('renders unknown reasons with a tag and marks old entries as stale', () => {
     useNeedsMeStore.setState({
-      items: [{ task_id: 'z', task_title: 'Auto', repo_id: 'r', workflow_id: 'w', label: 'l', reason: 'auto_approving', since: new Date(Date.now() - 3 * 3600_000).toISOString() }],
+      items: [{ task_id: 'z', task_title: 'Auto', repo_id: 'r', workflow_id: 'w', label: 'l', reason: 'future_reason', since: new Date(Date.now() - 3 * 3600_000).toISOString() }],
     } as never)
     renderPage()
     const row = screen.getByRole('button', { name: /Auto/ })

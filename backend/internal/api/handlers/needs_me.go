@@ -6,6 +6,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/reviewbrief"
 	"net/http"
+	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/needsme"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -17,7 +18,7 @@ type NeedsMeHandler struct {
 	cache *reviewbrief.Cache
 }
 
-// SetBriefCache enables decision context (risk flags, summary, diff size, cost, verify result, preview count) on human_gate items. Nil-safe.
+// SetBriefCache enables decision context (risk flags, summary, diff size, cost, verify result, preview count) on human_gate and auto_approving items. Nil-safe.
 func (h *NeedsMeHandler) SetBriefCache(c *reviewbrief.Cache) {
 	if h != nil {
 		h.cache = c
@@ -51,6 +52,23 @@ type needsMeItem struct {
 	CostUnknown  bool            `json:"cost_unknown,omitempty"`
 	Verification *string         `json:"verification,omitempty"`
 	PreviewCount int             `json:"preview_count,omitempty"`
+	// DueAt and DecisionID are set for auto_approving items.
+	DueAt      *string `json:"due_at,omitempty"`
+	DecisionID string  `json:"decision_id,omitempty"`
+}
+
+type policyApprovalItem struct {
+	TaskID     string `json:"task_id"`
+	TaskTitle  string `json:"task_title"`
+	RepoID     string `json:"repo_id"`
+	WorkflowID string `json:"workflow_id"`
+	Label      string `json:"label"`
+	GateLabel  string `json:"gate_label"`
+	ApprovedAt string `json:"approved_at"`
+	Note       string `json:"note"`
+	DecisionID string `json:"decision_id"`
+	PRURL      string `json:"pr_url,omitempty"`
+	Undoable   bool   `json:"undoable"`
 }
 
 type needsMeChanged struct {
@@ -84,7 +102,14 @@ func (h *NeedsMeHandler) List(w http.ResponseWriter, r *http.Request) {
 			er := it.EscalationReason
 			v.EscalationReason = &er
 		}
-		if h.cache != nil && it.Reason == needsme.ReasonHumanGate {
+		if it.Reason == needsme.ReasonAutoApproving {
+			v.DecisionID = it.DecisionID
+			if it.DueAt != nil {
+				d := it.DueAt.UTC().Format("2006-01-02T15:04:05Z")
+				v.DueAt = &d
+			}
+		}
+		if h.cache != nil && (it.Reason == needsme.ReasonHumanGate || it.Reason == needsme.ReasonAutoApproving) {
 			if d, ok := h.decisionContext(r, it.TaskID); ok {
 				v.RiskFlags = d.RiskFlags
 				if d.Summary != "" {
@@ -99,7 +124,20 @@ func (h *NeedsMeHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, v)
 	}
-	JSON(w, http.StatusOK, map[string]any{"items": out})
+	recent, err := needsme.RecentPolicyApprovals(r.Context(), h.q, time.Now().UTC())
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	approved := make([]policyApprovalItem, 0, len(recent))
+	for _, it := range recent {
+		approved = append(approved, policyApprovalItem{
+			TaskID: it.TaskID, TaskTitle: it.TaskTitle, RepoID: it.RepoID, WorkflowID: it.WorkflowID,
+			Label: it.Label, GateLabel: it.GateLabel, ApprovedAt: it.ApprovedAt.UTC().Format("2006-01-02T15:04:05Z"),
+			Note: it.Note, DecisionID: it.DecisionID, PRURL: it.PRURL, Undoable: it.Undoable,
+		})
+	}
+	JSON(w, http.StatusOK, map[string]any{"items": out, "approved_by_policy": approved})
 }
 
 // decisionCtx is the review-brief-derived context for one human_gate item.

@@ -17,7 +17,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
-	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/shadow"
+	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/policy"
 	"github.com/myinisjap/agent-task-editor/backend/internal/backup"
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
@@ -173,13 +173,15 @@ func main() {
 	// WS-specific handlers still take the concrete *ws.Hub directly (ticket
 	// issuing/consuming, per-client broadcast), so hub itself is passed
 	// there unchanged.
-	// Shadow autonomy recorder: a second async subscriber that records what the
-	// per-gate autonomy policy would decide on gate landing. Never transitions.
-	shadowRec := shadow.New(termQ)
-	pub := notify.FanOut(hub, notifier, shadowRec)
+	// Autonomy policy: an async subscriber that evaluates the per-gate policy on
+	// gate landing and acts on approve decisions (hold window, then the shared approve path as actor "policy").
+	policyRec := policy.New(termQ)
+	pub := notify.FanOut(hub, notifier, policyRec)
 
 	// Shared workflow engine with the fan-out publisher
 	engine := workflow.New(db.SQL(), pub)
+	policyRec.SetApprover(engine)
+	policyRec.SetPublisher(pub)
 
 	// Subtask coordinator: owns child→parent branch merge-back and parent
 	// auto-advance (Mechanism 2). Git identity is filled in once resolved below.
@@ -393,6 +395,7 @@ func main() {
 
 	listenAddr := fmt.Sprintf(":%s", cfg.Port)
 	router := api.NewRouter(api.RouterDeps{
+		EventPublisher:      pub,
 		DB:                  db,
 		Engine:              engine,
 		Hub:                 hub,
@@ -588,7 +591,7 @@ func main() {
 	// No-op immediately when NOTIFY_WEBHOOK_URL is unset — notifier.Run
 	// returns as soon as it observes the disabled Notifier.
 	go notifier.Run(ctx)
-	go shadowRec.Run(ctx)
+	go policyRec.Run(ctx)
 	if cfg.ChatIdleTimeout > 0 {
 		go terminal.ReapLoop(ctx)
 	}

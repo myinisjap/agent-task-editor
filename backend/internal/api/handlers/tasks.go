@@ -94,6 +94,9 @@ type TasksHandler struct {
 	blockReasons BlockReasonResolver
 	wb           *writeback.Writeback
 	pub          TaskEventPublisher
+	// apub receives autonomy hold/undo events (main passes the fan-out so the
+	// notifier sees task.autonomy_held). Falls back to pub.
+	apub TaskEventPublisher
 }
 
 func NewTasksHandler(q *gen.Queries, engine *workflow.Engine, uploadDir string, canceller RunCanceller, dispatcher ReplyDispatcher, blockReasons BlockReasonResolver) *TasksHandler {
@@ -102,6 +105,9 @@ func NewTasksHandler(q *gen.Queries, engine *workflow.Engine, uploadDir string, 
 
 // SetPublisher sets the WebSocket publisher used to emit task.updated events
 // from handlers that change a task outside the workflow engine. Nil-safe.
+// SetAutonomyPublisher sets the publisher for autonomy hold/undo events.
+func (h *TasksHandler) SetAutonomyPublisher(pub TaskEventPublisher) { h.apub = pub }
+
 func (h *TasksHandler) SetPublisher(pub TaskEventPublisher) {
 	h.pub = pub
 }
@@ -627,17 +633,14 @@ func (h *TasksHandler) MoveLabel(w http.ResponseWriter, r *http.Request) {
 // intentionally excluded: it is the parked state a run sits in specifically
 // awaiting this kind of human action (approve/reject/move/reply all
 // legitimately operate on a waiting_human run).
-var runLiveStatuses = map[string]bool{
-	"pending": true,
-	"running": true,
-}
+var runLiveStatuses = workflow.RunLiveStatuses
 
 // errRunLive is the error a human-triggered transition (MoveLabel, Approve,
 // Reject, and the bulk "move" action) fails with when the task's active
 // agent run is still live (see runLiveStatuses). The single-task endpoints
 // render this as a 409 with the same text; the bulk endpoint records it as a
 // per-task failure in bulkResult.
-var errRunLive = errors.New("a run is currently active on this task; cancel the run before moving its label")
+var errRunLive = workflow.ErrRunLive
 
 // errRunLiveDelete is the 409 Delete returns while the task's active run is
 // still live (same definition of "live" as errRunLive).
@@ -686,23 +689,25 @@ func (h *TasksHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	_ = decode(r, &body) // optional body
 
 	taskID := chi.URLParam(r, "id")
-	task, err := h.q.GetTask(r.Context(), taskID)
-	if err != nil {
+	// Approve follows the "success" human transition defined for the current
+	// label. The shared path lives in the engine so the autonomy policy
+	// approves identically.
+	_, err := h.engine.Approve(r.Context(), taskID, workflow.ApproveOptions{
+		Actor: middleware.ActorFromContext(r.Context()),
+		Note:  body.Note,
+	})
+	switch {
+	case err == nil:
+	case errors.Is(err, workflow.ErrTaskNotFound):
 		Err(w, http.StatusNotFound, "task not found")
 		return
-	}
-
-	// Approve follows the "success" human transition defined for the current label.
-	target, err := h.humanPathTarget(r.Context(), task, "success")
-	if err != nil {
+	case errors.Is(err, workflow.ErrNoHumanPath):
 		Err(w, http.StatusBadRequest, err.Error())
 		return
-	}
-	if h.rejectTransitionWhileRunLive(r.Context(), w, task) {
+	case errors.Is(err, workflow.ErrRunLive):
+		Err(w, http.StatusConflict, errRunLive.Error())
 		return
-	}
-
-	if err := h.engine.Transition(r.Context(), taskID, target, workflow.TriggerHuman, middleware.ActorFromContext(r.Context()), body.Note); err != nil {
+	default:
 		handleTransitionError(w, err)
 		return
 	}
@@ -721,12 +726,7 @@ func (h *TasksHandler) humanPathTarget(ctx context.Context, task gen.Task, path 
 	if err != nil {
 		return "", fmt.Errorf("failed to load workflow transitions")
 	}
-	for _, t := range transitions {
-		if t.FromLabel == task.Label && t.TriggerType == "human" && t.Path != nil && *t.Path == path {
-			return t.ToLabel, nil
-		}
-	}
-	return "", fmt.Errorf("no %q human transition defined from %q", path, task.Label)
+	return workflow.HumanPathTarget(transitions, task.Label, path)
 }
 
 func (h *TasksHandler) Reject(w http.ResponseWriter, r *http.Request) {

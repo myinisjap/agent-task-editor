@@ -198,7 +198,7 @@ A **gate** is a label that waits for a person: every transition out of it is hum
 | `on_flags` | Approve when the [review brief](#review-brief) raises none of the `ask_on` flag codes. An empty `ask_on` blocks on no flag, only on the hard stops. |
 | `auto` | Approve whenever the hard stops below pass. Flags are ignored. |
 
-`ask_on` takes the review-brief flag codes (`migration`, `auth_or_security`, `dependencies`, `tests_removed`, `ci_config`, `large_change`, `outside_plan_scope`). `hold` is a duration (`90s`, `10m`, `1h`; default 10 minutes). It is stored but **not used yet**. `max_cost_usd` is optional.
+`ask_on` takes the review-brief flag codes (`migration`, `auth_or_security`, `dependencies`, `tests_removed`, `ci_config`, `large_change`, `outside_plan_scope`). `hold` is a duration (`90s`, `10m`, `1h`; default 10 minutes). While an approve decision waits out this window the task shows as auto-approving and can be held. `max_cost_usd` is optional.
 
 **Hard stops** (always ask, whatever the mode):
 - the latest run's verification is `fail`, `timeout` or `error` (no verify configured is not a stop);
@@ -210,7 +210,15 @@ A **gate** is a label that waits for a person: every transition out of it is hum
 
 **Validation (400).** The mode must be one of the three (and is required inside a block); `ask_on` codes must be known flag codes; `hold` and `max_cost_usd` must not be negative; and a non-ask mode is only allowed on a gate (the error says so). Un-gating a label that has autonomy needs the block removed in the same save.
 
-**Shadow mode only.** This release never moves a task. When a task lands on a gate whose mode is not `ask`, the server evaluates the policy and records what it *would* have decided (`approve` or `ask`, with reasons) in `autonomy_decisions`. Read the latest for the task's current label with `GET /tasks/{id}/autonomy-decision` (404 when there is none). Recording is asynchronous and best effort: a failure is logged and can never block a transition. The decision uses the deterministic review brief only, never an LLM.
+**Acting on decisions.** When a task lands on a gate whose mode is not `ask`, the server evaluates the policy (deterministic review brief only, never an LLM) and records the decision (`approve` or `ask`, with reasons) in `autonomy_decisions`. Read the latest for the task's current label with `GET /tasks/{id}/autonomy-decision` (404 when there is none). Recording is asynchronous and best effort: a failure is logged and can never block a transition.
+
+An `approve` decision takes effect after the label's `hold` window (default 10m; `0` approves immediately). Until then the decision row is `pending` with a `due_at`, and the task shows as `auto_approving` in `GET /needs-me` (never also as `human_gate`). A single background loop (`internal/autonomy/policy`, sweeping every 10s and once at startup, so pending approvals survive a restart) approves due rows only if the task is still on that gate label, is not paused, has no live run and no `waiting_human` run, and the row was not held. Otherwise the row is `superseded` (task moved) or `skipped` (paused / live run) and the task is a normal review.
+
+The approval goes through the same code as `POST /tasks/{id}/approve` (`workflow.Engine.Approve`), so `create_pr` targets, side effects, WebSocket events and label history behave identically. The trigger is `human` and the recorded actor is `policy` (that name is reserved: `API_TOKENS` entries called `policy` are ignored). The label-history note reads like `Auto-approved: gate set to Ask on flags; no flags; verify passed; held 10m`.
+
+**Hold** (`POST /tasks/{id}/autonomy/hold`) cancels a pending auto-approval; the decision row becomes `held` and the task is a normal review (and sends the usual notification). **Undo** (`POST /tasks/{id}/autonomy/undo`) works only when the task's last gate exit was by `policy`, the task is not terminal-merged and has no live run. It moves the task back to that gate (label history actor = the caller, note `Undo auto-approval`) and records a row in `autonomy_escapes` (source `undo`). If a pull request was already opened it is left as is and the response says so. When the task lands on the gate again the `undone` hard stop forces `ask`, so it is not re-approved automatically.
+
+**Notifications.** The outbound webhook no longer fires for a `label_changed` into a non-`ask` gate. It fires (as `human_gate`) when the policy hands the task to a person (`task.autonomy_asked`) or a pending approval is held (`task.autonomy_held`). Known limitation: the frontend's browser notifications still fire on a human-gate `label_changed`.
 
 ## Custom Workflows
 

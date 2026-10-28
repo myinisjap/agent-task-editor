@@ -39,6 +39,11 @@ const (
 	TypeRepoCloneFailed          = "repo.clone_failed"
 	TypeAgentLog                 = "agent.log"
 	TypeAgentLogReplay           = "agent.log_replay"
+	TypeTaskAutonomyPending      = "task.autonomy_pending"
+	TypeTaskAutonomyHeld         = "task.autonomy_held"
+	TypeTaskAutonomyApproved     = "task.autonomy_approved"
+	TypeTaskAutonomyUndone       = "task.autonomy_undone"
+	TypeTaskAutonomyAsked        = "task.autonomy_asked"
 	TypeResync                   = "resync"
 )
 
@@ -247,3 +252,59 @@ type TaskPreview struct {
 	CaptureID string `json:"capture_id"`
 	Status    string `json:"status"`
 }
+
+// TaskAutonomyPending is the payload of task.autonomy_pending: the policy
+// scheduled an auto-approval that fires at DueAt unless a person holds it.
+type TaskAutonomyPending struct {
+	TaskID      string `json:"task_id"`
+	Label       string `json:"label"`
+	DecisionID  string `json:"decision_id"`
+	DueAt       string `json:"due_at"` // RFC3339, UTC
+	HoldSeconds int    `json:"hold_seconds"`
+}
+
+// TaskAutonomyHeld is the payload of task.autonomy_held: a person cancelled a
+// pending auto-approval; the task is now a normal review.
+type TaskAutonomyHeld struct {
+	TaskID     string `json:"task_id"`
+	Label      string `json:"label"`
+	DecisionID string `json:"decision_id"`
+	Actor      string `json:"actor"`
+}
+
+// TaskAutonomyApproved is the payload of task.autonomy_approved: the policy
+// approved the task (the usual task.label_changed is published as well).
+type TaskAutonomyApproved struct {
+	TaskID     string `json:"task_id"`
+	DecisionID string `json:"decision_id"`
+	From       string `json:"from"`
+	To         string `json:"to"`
+	Note       string `json:"note"`
+}
+
+// TaskAutonomyUndone is the payload of task.autonomy_undone: a person undid an
+// auto-approval and the task is back on its gate.
+type TaskAutonomyUndone struct {
+	TaskID string `json:"task_id"`
+	Label  string `json:"label"`
+	From   string `json:"from"`
+	PRURL  string `json:"pr_url,omitempty"`
+}
+
+// TaskAutonomyAsked is the payload of task.autonomy_asked: the policy handed a
+// task to a person (policy decision, skipped, failed or evaluation_error).
+type TaskAutonomyAsked struct {
+	TaskID     string   `json:"task_id"`
+	Label      string   `json:"label"`
+	DecisionID string   `json:"decision_id,omitempty"`
+	Reason     string   `json:"reason"`
+	Reasons    []string `json:"reasons"`
+}
+
+// Reason values of TaskAutonomyAsked.
+const (
+	AskedPolicy          = "policy"
+	AskedSkipped         = "skipped"
+	AskedFailed          = "failed"
+	AskedEvaluationError = "evaluation_error"
+)
