@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"gopkg.in/yaml.v3"
 )
@@ -32,6 +33,8 @@ type yamlLabel struct {
 	// VerifyMode is inherit (omitted) | custom | disabled; see resolveLabelVerify.
 	VerifyMode    string `yaml:"verify_mode,omitempty"`
 	VerifyCommand string `yaml:"verify_command,omitempty"`
+	// Autonomy is the optional per-gate autonomy policy (absent = ask).
+	Autonomy *yamlAutonomy `yaml:"autonomy,omitempty"`
 }
 
 type yamlTransition struct {
@@ -60,6 +63,7 @@ func (wf yamlWorkflow) validate() error {
 			return fmt.Errorf("label %q: wip_limit must be a positive integer if set", l.Name)
 		}
 	}
+	gates := wf.gateSet()
 	for _, l := range wf.Labels {
 		if _, err := validateLabelDisplayName(l.Name, l.DisplayName); err != nil {
 			return err
@@ -68,6 +72,9 @@ func (wf yamlWorkflow) validate() error {
 			return err
 		}
 		if _, _, err := resolveLabelVerify(l.Name, l.VerifyMode, l.VerifyCommand); err != nil {
+			return err
+		}
+		if _, err := resolveYAMLAutonomy(l, gates[l.Name]); err != nil {
 			return err
 		}
 	}
@@ -112,6 +119,9 @@ func (h *WorkflowsHandler) ExportWorkflowYAML(w http.ResponseWriter, r *http.Req
 		}
 		if l.VerifyMode != "" && l.VerifyMode != verifyModeInherit {
 			yl.VerifyMode, yl.VerifyCommand = l.VerifyMode, l.VerifyCommand
+		}
+		if a := autonomyJSON(l); a != nil {
+			yl.Autonomy = &yamlAutonomy{Mode: a.Mode, AskOn: a.AskOn, Hold: autonomy.FormatHold(int(a.HoldSeconds)), MaxCostUSD: a.MaxCostUSD}
 		}
 		out.Labels = append(out.Labels, yl)
 	}
@@ -182,6 +192,7 @@ func (h *WorkflowsHandler) UpdateWorkflowYAML(w http.ResponseWriter, r *http.Req
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	gates := in.gateSet()
 	for _, l := range in.Labels {
 		agentIgnore := int64(0)
 		if l.AgentIgnore {
@@ -209,7 +220,7 @@ func (h *WorkflowsHandler) UpdateWorkflowYAML(w http.ResponseWriter, r *http.Req
 			Err(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if _, err := tq.CreateWorkflowLabel(ctx, gen.CreateWorkflowLabelParams{
+		created, err := tq.CreateWorkflowLabel(ctx, gen.CreateWorkflowLabelParams{
 			ID:            uuid.NewString(),
 			WorkflowID:    wfID,
 			Name:          l.Name,
@@ -223,7 +234,17 @@ func (h *WorkflowsHandler) UpdateWorkflowYAML(w http.ResponseWriter, r *http.Req
 			WipLimitHard:  wipLimitHard,
 			VerifyMode:    verifyMode,
 			VerifyCommand: verifyCmd,
-		}); err != nil {
+		})
+		if err != nil {
+			Err(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		cfg, err := resolveYAMLAutonomy(l, gates[l.Name])
+		if err != nil {
+			Err(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := saveLabelAutonomy(ctx, tq, created.ID, cfg); err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -295,6 +316,7 @@ func (h *WorkflowsHandler) ImportWorkflowYAML(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	gates := in.gateSet()
 	for _, l := range in.Labels {
 		agentIgnore := int64(0)
 		if l.AgentIgnore {
@@ -322,7 +344,7 @@ func (h *WorkflowsHandler) ImportWorkflowYAML(w http.ResponseWriter, r *http.Req
 			Err(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		if _, err := h.q.CreateWorkflowLabel(ctx, gen.CreateWorkflowLabelParams{
+		created, err := h.q.CreateWorkflowLabel(ctx, gen.CreateWorkflowLabelParams{
 			ID:            uuid.NewString(),
 			WorkflowID:    wfID,
 			Name:          l.Name,
@@ -336,7 +358,17 @@ func (h *WorkflowsHandler) ImportWorkflowYAML(w http.ResponseWriter, r *http.Req
 			WipLimitHard:  wipLimitHard,
 			VerifyMode:    verifyMode,
 			VerifyCommand: verifyCmd,
-		}); err != nil {
+		})
+		if err != nil {
+			Err(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		cfg, err := resolveYAMLAutonomy(l, gates[l.Name])
+		if err != nil {
+			Err(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := saveLabelAutonomy(ctx, h.q, created.ID, cfg); err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return
 		}

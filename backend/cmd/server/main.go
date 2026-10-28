@@ -17,6 +17,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
+	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/shadow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/backup"
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
@@ -172,7 +173,10 @@ func main() {
 	// WS-specific handlers still take the concrete *ws.Hub directly (ticket
 	// issuing/consuming, per-client broadcast), so hub itself is passed
 	// there unchanged.
-	pub := notify.FanOut(hub, notifier)
+	// Shadow autonomy recorder: a second async subscriber that records what the
+	// per-gate autonomy policy would decide on gate landing. Never transitions.
+	shadowRec := shadow.New(termQ)
+	pub := notify.FanOut(hub, notifier, shadowRec)
 
 	// Shared workflow engine with the fan-out publisher
 	engine := workflow.New(db.SQL(), pub)
@@ -584,6 +588,7 @@ func main() {
 	// No-op immediately when NOTIFY_WEBHOOK_URL is unset — notifier.Run
 	// returns as soon as it observes the disabled Notifier.
 	go notifier.Run(ctx)
+	go shadowRec.Run(ctx)
 	if cfg.ChatIdleTimeout > 0 {
 		go terminal.ReapLoop(ctx)
 	}

@@ -442,6 +442,106 @@ export interface paths {
         };
         trace?: never;
     };
+    "/tasks/{id}/always-ask": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Set a task's always_ask override
+         * @description When true the autonomy policy never auto-approves this task at a gate.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        always_ask: boolean;
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/tasks/{id}/autonomy-decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Latest shadow autonomy decision for the task's current label
+         * @description Recorded when the task landed on a gate whose autonomy mode is not ask. Shadow only: this release never moves a task.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutonomyDecision"];
+                    };
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/dependencies": {
         parameters: {
             query?: never;
@@ -3386,7 +3486,7 @@ export interface paths {
         put?: never;
         /**
          * Import a workflow from a YAML body
-         * @description Creates a new workflow from a YAML document with the same shape produced by GET /workflows/{id}/export.yaml (name, description, labels, transitions). Fails if a workflow with the same name already exists.
+         * @description Creates a new workflow from a YAML document with the same shape produced by GET /workflows/{id}/export.yaml (name, description, labels, transitions). Fails if a workflow with the same name already exists. Labels may carry an optional autonomy block (mode, ask_on, hold, max_cost_usd); see WorkflowLabel.autonomy.
          */
         post: {
             parameters: {
@@ -3475,7 +3575,7 @@ export interface paths {
                         "application/json": components["schemas"]["Workflow"];
                     };
                 };
-                /** @description Duplicate workflow name or invalid label color */
+                /** @description Duplicate workflow name or invalid label color or autonomy block or autonomy block */
                 400: {
                     headers: {
                         [name: string]: unknown;
@@ -3520,7 +3620,7 @@ export interface paths {
         };
         /**
          * Export a workflow as YAML
-         * @description Returns the workflow's name, description, labels, and transitions as a portable YAML document (Content-Disposition: attachment), suitable for re-importing via POST /workflows/import or PUT /workflows/{id}/yaml.
+         * @description Returns the workflow's name, description, labels, and transitions as a portable YAML document (Content-Disposition: attachment), suitable for re-importing via POST /workflows/import or PUT /workflows/{id}/yaml. Labels with a non-ask autonomy policy include an autonomy block (mode, ask_on, hold, max_cost_usd).
          */
         get: {
             parameters: {
@@ -6346,6 +6446,35 @@ export interface components {
             /** @description Images in the latest preview capture. human_gate items only, when the review brief could be built; omitted when 0. */
             preview_count?: number;
         };
+        LabelAutonomy: {
+            /** @enum {string} */
+            mode: "ask" | "on_flags" | "auto";
+            ask_on: components["schemas"]["RiskFlagCode"][];
+            /** @description Stored but not used yet. */
+            hold_seconds: number;
+            /** @description Hard stop when the task's total cost exceeds this; null = no cap. */
+            max_cost_usd?: number | null;
+        };
+        AutonomyReason: {
+            /** @description mode_ask, always_ask, verify_failed, cost_exceeded, no_diff, flag_raised, auto_policy or no_blocking_flags. */
+            code: string;
+            detail: string;
+        };
+        /** @description A shadow decision recorded when a task landed on a gate. Nothing is acted on. */
+        AutonomyDecision: {
+            id: string;
+            task_id: string;
+            workflow_id: string;
+            label: string;
+            run_id?: string | null;
+            /** @enum {string} */
+            mode: "ask" | "on_flags" | "auto";
+            /** @enum {string} */
+            decision: "approve" | "ask";
+            reasons: components["schemas"]["AutonomyReason"][];
+            /** Format: date-time */
+            created_at: string;
+        };
         /**
          * @description Deterministic, advisory risk flag computed from the task's branch diff. migration - a migrations/ path, a .sql file named like schema, or DDL (CREATE/ALTER/DROP TABLE|INDEX|VIEW|TRIGGER) in a .sql file. auth_or_security - path contains auth, oauth, token, secret, middleware, crypto, password, credential, jwt, csrf, cors, permission, security or session, or a .env* file. dependencies - manifests/lockfiles (go.mod, package.json, requirements*.txt, Cargo.*, ...) or a Dockerfile FROM change. tests_removed - a test file deleted, net test functions removed, or skip/only markers added. ci_config - .github/workflows, .gitea/workflows or .gitlab-ci.yml. large_change - more than 800 changed lines (lockfiles/generated excluded) or more than 25 files. outside_plan_scope - the plan in agent_notes lists files and the diff touches others (skipped when the plan has no file list).
          * @enum {string}
@@ -6551,6 +6680,8 @@ export interface components {
             side_effects?: components["schemas"]["TaskSideEffect"][];
             /** @description An edit to the source issue that the sync importer held back because a human had already approved the task (it passed a human gate). Null when none is pending. Apply or discard it via /tasks/{id}/source-update. Populated on GET /tasks and GET /tasks/{id} and the source-update responses. */
             source_pending_update?: components["schemas"]["TaskSourcePendingUpdate"] | null;
+            /** @description Per-task override: when true the autonomy policy always asks a human at gates (a hard stop). Set via PATCH /tasks/{id}/always-ask. */
+            always_ask?: boolean;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -6917,6 +7048,8 @@ export interface components {
             verify_mode: "inherit" | "custom" | "disabled";
             /** @description The label's own command; only meaningful (and required) when verify_mode is custom, else empty. */
             verify_command: string;
+            /** @description Per-gate autonomy policy; null when the mode is ask (the default). Only human-gate labels may have a non-ask mode (every transition out of it human-triggered, at least one, not agent_ignore or terminal). Written via the labels array of PUT /workflows/{id} or the YAML autonomy block (mode, ask_on, hold such as 10m, max_cost_usd). This release only records shadow decisions; nothing is approved automatically. Invalid mode, unknown ask_on code, autonomy on a non-gate label, a missing mode or a negative hold/cost give 400. */
+            autonomy?: components["schemas"]["LabelAutonomy"] | null;
         };
         WorkflowTransition: {
             id: string;

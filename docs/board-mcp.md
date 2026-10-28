@@ -209,7 +209,7 @@ The admin profile adds:
 
 | Tool | What it does |
 |---|---|
-| `create_workflow` | Create a workflow from a YAML document (same shape as [workflow export](workflows.md)) |
+| `create_workflow` | Create a workflow from a YAML document (same shape as [workflow export](workflows.md); human-gate labels may carry an optional `autonomy:` block, see workflows.md "Autonomy per gate") |
 | `update_workflow` | Replace a workflow's name, description, labels and transitions from YAML. It's a full replacement, so read it with `get_workflow` first. Refused if it would drop a label that still holds tasks in that workflow (archived ones included) |
 | `add_repo` | Onboard a repo: `remote_url` clones it under `REPO_BASE_DIR` in the background (poll `get_repo` for `clone_status: ready`), or `path` registers a checkout already on the server. Also takes `name`, `workflow_id`, `verify_command`, `verify_timeout_seconds`, `preview_command`, `preview_routes`, `preview_paths_glob`, `runtime_languages`, `max_concurrent_runs`, `issue_sync_enabled`, `issue_sync_label` |
 | `update_repo` | Change those same settings (except `path`) on an existing repo; only the fields passed change |

@@ -113,3 +113,13 @@ func TestPlanFiles(t *testing.T) {
 		t.Error("expected none")
 	}
 }
+
+func TestFlagCodesUnique(t *testing.T) {
+	seen := map[string]bool{}
+	for _, c := range FlagCodes {
+		seen[c] = true
+	}
+	if len(FlagCodes) != 7 || len(seen) != 7 {
+		t.Fatalf("FlagCodes = %v", FlagCodes)
+	}
+}

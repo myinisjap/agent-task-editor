@@ -231,6 +231,18 @@ or `null`), `runs` (`total`, `failed`, `rework_loops`, `cost_usd`,
 branch), `truncated` and `computed_at`. Works for any task, `404` if unknown.
 No LLM calls; flags are advisory.
 
+### `GET /tasks/{id}/autonomy-decision`
+Latest shadow autonomy decision for the task's current label (see
+[workflows.md § Autonomy per gate](workflows.md#autonomy-per-gate)):
+`{id, task_id, workflow_id, label, run_id, mode, decision, reasons: [{code, detail}], created_at}`
+where `decision` is `approve` or `ask`. `404` if the task is unknown or no
+decision was recorded for its current label. Nothing is acted on.
+
+### `PATCH /tasks/{id}/always-ask`
+Body `{"always_ask": true|false}`. Sets the per-task override that makes the
+autonomy policy always ask a human at gates. Returns the task (with
+`always_ask`); `404` if unknown.
+
 ### `GET /tasks/{id}/review-comments`
 List all inline diff review comments on the task (open and resolved), ordered oldest-first.
 
