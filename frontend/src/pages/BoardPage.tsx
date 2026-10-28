@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, Layers, LayoutGrid, Pause, Play, Rows3 } from 'lucide-react'
+import { Archive, ArchiveRestore, ChevronDown, Layers, LayoutGrid, Pause, Play, Rows3, Search, SlidersHorizontal } from 'lucide-react'
 import { labelDisplayName } from '../lib/labelDisplay'
 import { useAgentsStore } from '../stores/agents'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -9,6 +9,7 @@ import { errMessage } from '../lib/errMessage'
 import { useWorkflowStore } from '../stores/workflow'
 import { useReposStore } from '../stores/repos'
 import TaskBoard from '../components/board/TaskBoard'
+import BoardFilterSheet, { TASK_TYPES, GIT_STATES } from '../components/board/BoardFilterSheet'
 import NewTaskModal from '../components/board/NewTaskModal'
 import OnboardingChecklist from '../components/board/OnboardingChecklist'
 import { api, type BulkAction, type BulkResult, type Task, type TaskCost } from '../api/client'
@@ -23,8 +24,6 @@ import { useCommandPaletteStore } from '../stores/commandPalette'
 
 const CONDENSED_STORAGE_KEY = 'board.condensed'
 
-const TASK_TYPES = ['feature', 'bug', 'chore', 'spike']
-const GIT_STATES = ['pushed', 'pr_open', 'pr_merged', 'pr_closed']
 
 // Trailing debounce window for coalescing WS-driven REST refetches (per-task
 // `GET /tasks/{id}` fan-out and the cost rollup) — see task.label_changed /
@@ -59,9 +58,12 @@ export default function BoardPage() {
   const [costWarnedTaskIds, setCostWarnedTaskIds] = useState(() => new Set<string>())
   const [showNewTask, setShowNewTask] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
+  const [showFilterSheet, setShowFilterSheet] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
   const focusRequested = useCommandPaletteStore((s) => s.boardSearchFocusRequested)
   useEffect(() => {
     if (focusRequested > 0) {
+      setSearchOpen(true)
       searchRef.current?.focus()
       useCommandPaletteStore.setState({ boardSearchFocusRequested: 0 })
     }
@@ -366,6 +368,10 @@ export default function BoardPage() {
     [filteredTasks, costByTask]
   )
 
+  const searchExpanded = searchOpen || search !== ''
+  const activeFilterCount = [filterRepo, filterType, filterGitState].filter(Boolean).length + (showArchived ? 1 : 0)
+  const showMobileCost = isMobile && hasFilters && filteredCost > 0
+
   const clearFilters = () => {
     setSearchParams(
       (prev) => {
@@ -454,12 +460,87 @@ export default function BoardPage() {
 
   return (
     <PageFrame
-      title="Board"
+      title={isMobile && workflows.length > 0 ? <span className="sr-only">Board</span> : 'Board'}
+      titleAdornment={
+        isMobile && workflows.length > 0 ? (
+          <span className="relative inline-flex items-center min-w-0">
+            <select
+              aria-label="Workflow"
+              value={workflow?.id ?? ''}
+              onChange={(e) => setSelectedId(e.target.value)}
+              className="appearance-none bg-transparent text-xl font-semibold text-fg pr-5 truncate max-w-[45vw] focus:outline-none focus-visible:ring-1 focus-visible:ring-accent rounded cursor-pointer"
+            >
+              {workflows.map((wf) => (
+                <option key={wf.id} value={wf.id}>
+                  {wf.name}
+                </option>
+              ))}
+            </select>
+            <Icon icon={ChevronDown} size="sm" className="pointer-events-none absolute right-0" aria-hidden />
+          </span>
+        ) : undefined
+      }
       width="full"
       fill
-      headerClassName="mb-4"
+      headerClassName={isMobile ? 'mb-2 flex-nowrap' : 'mb-4'}
       help={{ onClick: () => setShowHelp(true), title: 'About the board' }}
       actions={
+        isMobile ? (
+          <div className="flex items-center gap-1.5 min-w-0">
+            {searchExpanded ? (
+              <input
+                ref={searchRef}
+                autoFocus
+                aria-label="Search tasks"
+                title={shortcutHint('focus-search')}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onBlur={() => {
+                  if (!search) setSearchOpen(false)
+                }}
+                placeholder="Search tasks…"
+                className="bg-surface-sunken border border-border rounded px-2.5 py-1 text-xs text-fg placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-accent w-32 min-w-0 flex-1"
+              />
+            ) : (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="!px-2"
+                aria-label="Search tasks"
+                title={shortcutHint('focus-search')}
+                onClick={() => setSearchOpen(true)}
+              >
+                <Icon icon={Search} size="sm" />
+              </Button>
+            )}
+            <Button
+              size="sm"
+              className={`!px-2 ${activeFilterCount ? '!bg-accent/15 !border-accent !text-accent-fg' : ''}`}
+              aria-label={activeFilterCount ? `Filters, ${activeFilterCount} active` : 'Filters'}
+              aria-haspopup="dialog"
+              aria-expanded={showFilterSheet}
+              title="Filters"
+              onClick={() => setShowFilterSheet(true)}
+            >
+              <Icon icon={SlidersHorizontal} size="sm" />
+              {activeFilterCount > 0 && (
+                <span data-testid="filter-count-badge" className="text-[10px] leading-none">
+                  {activeFilterCount}
+                </span>
+              )}
+            </Button>
+            <Button
+              size="sm"
+              onClick={toggleCondensed}
+              aria-pressed={condensed}
+              aria-label={condensed ? 'Switch to expanded view' : 'Switch to condensed view'}
+              title={condensed ? 'Switch to expanded view' : 'Switch to condensed view'}
+              className={`!px-2 ${condensed ? '!bg-accent/15 !border-accent !text-accent-fg' : ''}`}
+            >
+              <Icon icon={condensed ? Rows3 : LayoutGrid} size="sm" />
+            </Button>
+          </div>
+        ) : (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           {workflows.length > 0 && (
             <div className="flex items-center gap-1.5">
@@ -500,6 +581,7 @@ export default function BoardPage() {
             </Button>
           )}
         </div>
+        )
       }
     >
       {showHelp && (
@@ -511,6 +593,7 @@ export default function BoardPage() {
       <OnboardingChecklist />
 
       {/* Filter bar */}
+      {!isMobile && (
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <input
           ref={searchRef}
@@ -566,6 +649,25 @@ export default function BoardPage() {
           </span>
         )}
       </div>
+      )}
+
+      {isMobile && showFilterSheet && (
+        <BoardFilterSheet
+          repos={repos}
+          filterRepo={filterRepo}
+          filterType={filterType}
+          filterGitState={filterGitState}
+          showArchived={showArchived}
+          setFilterRepo={setFilterRepo}
+          setFilterType={setFilterType}
+          setFilterGitState={setFilterGitState}
+          setShowArchived={setShowArchived}
+          hasFilters={hasFilters}
+          onClear={clearFilters}
+          filteredCost={filteredCost}
+          onClose={() => setShowFilterSheet(false)}
+        />
+      )}
 
       {/* Bulk action toolbar — appears while cards are selected */}
       {selectedIds.size > 0 && (
@@ -639,6 +741,16 @@ export default function BoardPage() {
             workflowId={workflow?.id}
             groupByRepo={groupByRepo}
             repos={repos}
+            mobileNavFooter={
+              showMobileCost ? (
+                <p
+                  className="text-[11px] text-fg-subtle mt-0.5"
+                  title="Sum of recorded run cost across the currently-visible (filtered) tasks"
+                >
+                  Filtered cost: ${filteredCost.toFixed(2)}
+                </p>
+              ) : undefined
+            }
           />
         </div>
       )}

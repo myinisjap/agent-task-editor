@@ -3,7 +3,7 @@
 // that a partial-failure response surfaces the error banner without
 // clearing the selection.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import BoardPage from './BoardPage'
@@ -660,5 +660,105 @@ describe('BoardPage URL-persisted filters', () => {
     await user.click(screen.getByRole('button', { name: 'Clear filters' }))
     expect(screen.getByTestId('loc')).toHaveTextContent(/^\/board$/)
     expect(await screen.findByText('Beta thing')).toBeInTheDocument()
+  })
+})
+
+describe('BoardPage on phone', () => {
+  const origMM = window.matchMedia
+  beforeEach(() => {
+    window.matchMedia = ((q: string) => ({
+      matches: true, media: q, addEventListener: vi.fn(), removeEventListener: vi.fn(),
+    })) as unknown as typeof window.matchMedia
+    window.innerWidth = 400
+    costByTaskMock.mockReset().mockResolvedValue([{ task_id: 'task-1', cost_usd: 1.5 }])
+    tasksListMock.mockReset()
+    workflowsListMock.mockReset()
+    seedStores([
+      task({ id: 'task-1', title: 'Alpha thing', type: 'feature' }),
+      task({ id: 'task-2', title: 'Beta thing', type: 'bug' }),
+    ])
+  })
+  afterEach(() => {
+    window.matchMedia = origMM
+    window.innerWidth = 1024
+  })
+
+  function renderAt(url: string) {
+    return render(
+      <MemoryRouter initialEntries={[url]}>
+        <BoardPage />
+        <LocationProbe />
+      </MemoryRouter>,
+    )
+  }
+
+  it('shows the active filter count on the Filters button', async () => {
+    renderAt('/board?type=bug&archived=1')
+    const btn = await screen.findByRole('button', { name: 'Filters, 2 active' })
+    expect(within(btn).getByTestId('filter-count-badge')).toHaveTextContent('2')
+  })
+
+  it('has a plain Filters button without a badge when nothing is active', async () => {
+    renderAt('/board')
+    expect(await screen.findByRole('button', { name: 'Filters' })).toBeInTheDocument()
+    expect(screen.queryByTestId('filter-count-badge')).not.toBeInTheDocument()
+  })
+
+  it('filters through the sheet, clears, and closes with Escape', async () => {
+    const user = userEvent.setup()
+    renderAt('/board')
+    await screen.findByText('Alpha thing')
+    await user.click(screen.getByRole('button', { name: 'Filters' }))
+    const dialog = screen.getByRole('dialog', { name: 'Board filters' })
+    await user.selectOptions(within(dialog).getByLabelText('Type'), 'feature')
+    expect(screen.getByTestId('loc')).toHaveTextContent('/board?type=feature')
+    await user.click(within(dialog).getByRole('button', { name: 'Clear filters' }))
+    expect(screen.getByTestId('loc')).toHaveTextContent(/^\/board$/)
+    await user.click(screen.getByRole('button', { name: 'Filters' }))
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('makes the workflow picker the heading', async () => {
+    renderAt('/board')
+    expect(await screen.findByLabelText('Workflow')).toBeInTheDocument()
+    expect(screen.queryByText('Workflow:')).not.toBeInTheDocument()
+  })
+
+  it('expands search from an icon, collapses on blur when empty', async () => {
+    const user = userEvent.setup()
+    renderAt('/board')
+    await screen.findByText('Alpha thing')
+    expect(screen.queryByPlaceholderText('Search tasks…')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Search tasks' }))
+    const input = screen.getByPlaceholderText('Search tasks…')
+    expect(input).toHaveFocus()
+    await user.tab()
+    expect(screen.queryByPlaceholderText('Search tasks…')).not.toBeInTheDocument()
+  })
+
+  it('keeps search expanded while a query is set', async () => {
+    renderAt('/board?q=alp')
+    expect(await screen.findByPlaceholderText('Search tasks…')).toHaveValue('alp')
+  })
+
+  it('has an icon-only condensed toggle', async () => {
+    const user = userEvent.setup()
+    renderAt('/board')
+    const btn = await screen.findByRole('button', { name: 'Switch to condensed view' })
+    expect(btn).toHaveAttribute('aria-pressed', 'false')
+    await user.click(btn)
+    expect(screen.getByRole('button', { name: 'Switch to expanded view' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('shows filtered cost only while filters are active', async () => {
+    renderAt('/board')
+    await screen.findByText('Alpha thing')
+    expect(screen.queryByText(/Filtered cost/)).not.toBeInTheDocument()
+  })
+
+  it('shows filtered cost as small text under the chips when filtered', async () => {
+    renderAt('/board?type=feature')
+    expect(await screen.findByText('Filtered cost: $1.50')).toBeInTheDocument()
   })
 })
