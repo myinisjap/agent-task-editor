@@ -38,6 +38,11 @@ type notification struct {
 // the operator-facing version of this note.
 func (n notification) debounceKey() string {
 	if n.TaskID == "" {
+		if n.Label != "" {
+			// Gate-scoped (autonomy_stepped_down): different gates must not
+			// debounce each other.
+			return n.Reason + ":" + n.Label
+		}
 		return n.Reason
 	}
 	return n.Reason + ":" + n.TaskID
@@ -61,6 +66,8 @@ func (n *Notifier) classify(ctx context.Context, ev rawEvent) (notification, boo
 		return n.classifyAutonomy(ctx, ev.eventType, wsevent.ToMap(ev.payload))
 	case wsevent.TypeSystemCostBudgetTripped:
 		return n.classifyCostBudgetTripped(wsevent.ToMap(ev.payload))
+	case wsevent.TypeAutonomySteppedDown:
+		return n.classifySteppedDown(wsevent.ToMap(ev.payload))
 	default:
 		return notification{}, false
 	}
@@ -193,6 +200,22 @@ func (n *Notifier) classifyCostBudgetTripped(payload map[string]any) (notificati
 		Event:   "system.cost_budget_tripped",
 		Reason:  "cost_budget_tripped",
 		Message: stringField(payload, "message"),
+	}
+	n.fillTimestampAndURL(&note)
+	return note, true
+}
+
+func (n *Notifier) classifySteppedDown(payload map[string]any) (notification, bool) {
+	label := stringField(payload, "label")
+	if label == "" {
+		return notification{}, false
+	}
+	note := notification{
+		Event:  "autonomy.stepped_down",
+		Reason: "autonomy_stepped_down",
+		Label:  label,
+		Message: fmt.Sprintf("Gate %s stepped down from %s to %s: %s", label,
+			stringField(payload, "from_mode"), stringField(payload, "to_mode"), stringField(payload, "reason")),
 	}
 	n.fillTimestampAndURL(&note)
 	return note, true

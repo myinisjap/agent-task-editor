@@ -355,3 +355,40 @@ func TestNotifier_NonAskGate_SilentUntilAskedOrHeld(t *testing.T) {
 	n.Publish("task.autonomy_held", map[string]any{"task_id": held.ID, "label": "review-plan", "actor": "me"})
 	waitFor(t, func() bool { return received.Load() == 2 })
 }
+
+func TestNotifier_AutonomySteppedDown_PerGateDebounce(t *testing.T) {
+	db := setupTestDB(t)
+	q := gen.New(db.SQL())
+
+	var received atomic.Int32
+	var lastBody atomic.Pointer[map[string]any]
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := make(map[string]any)
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		lastBody.Store(&body)
+		received.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	n := notify.New(srv.URL, "", time.Hour, q)
+	runNotifier(t, n)
+
+	ev := func(label string) map[string]any {
+		return map[string]any{"workflow_id": "wf", "label": label, "from_mode": "auto", "to_mode": "on_flags", "reason": "2 escapes in 14 days"}
+	}
+	n.Publish("autonomy.stepped_down", ev("review"))
+	waitFor(t, func() bool { return received.Load() == 1 })
+	body := lastBody.Load()
+	if (*body)["event"] != "autonomy.stepped_down" || (*body)["reason"] != "autonomy_stepped_down" || (*body)["label"] != "review" {
+		t.Errorf("body = %v", *body)
+	}
+	// A different gate is not debounced by the first; the same gate is.
+	n.Publish("autonomy.stepped_down", ev("plan_review"))
+	waitFor(t, func() bool { return received.Load() == 2 })
+	n.Publish("autonomy.stepped_down", ev("review"))
+	time.Sleep(200 * time.Millisecond)
+	if got := received.Load(); got != 2 {
+		t.Errorf("deliveries = %d, want 2", got)
+	}
+}

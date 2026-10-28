@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -11,7 +12,9 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy"
+	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/policy"
 	"github.com/myinisjap/agent-task-editor/backend/internal/needsme"
+	"github.com/myinisjap/agent-task-editor/backend/internal/pathglob"
 	"github.com/myinisjap/agent-task-editor/backend/internal/reviewbrief"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -29,6 +32,26 @@ type backtestRequest struct {
 	AskOn      []string `json:"ask_on"`
 	MaxCostUSD *float64 `json:"max_cost_usd"`
 	Days       int      `json:"days"`
+	// ExtraRules are draft ask rules to include in the replay (scoped to this
+	// gate; an optional repo_id limits one to tasks of that repo).
+	ExtraRules []askRuleInput `json:"extra_rules"`
+}
+
+type backtestRuleStop struct {
+	TaskID      string    `json:"task_id"`
+	Title       string    `json:"title"`
+	At          time.Time `json:"at"`
+	RuleIndexes []int     `json:"rule_indexes"`
+}
+
+// backtestRules reports how many recent policy approvals the draft rules
+// would have stopped.
+type backtestRules struct {
+	PolicyApprovals int                `json:"policy_approvals"`
+	Evaluated       int                `json:"evaluated"`
+	Unknown         int                `json:"unknown"`
+	WouldStop       int                `json:"would_stop"`
+	Stopped         []backtestRuleStop `json:"stopped"`
 }
 
 type backtestPass struct {
@@ -52,6 +75,7 @@ type backtestResponse struct {
 	Truncated bool           `json:"truncated"`
 	TimedOut  bool           `json:"timed_out"`
 	Passes    []backtestPass `json:"passes"`
+	Rules     *backtestRules `json:"rules"`
 }
 
 // Backtest replays recent passes through a gate against a proposed autonomy
@@ -73,6 +97,17 @@ func (h *AutonomyHandler) Backtest(w http.ResponseWriter, r *http.Request) {
 	if err := cfg.Validate(reviewbrief.FlagCodes); err != nil {
 		Err(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	var extra []autonomy.AskRule
+	for i, in := range body.ExtraRules {
+		ru := in.toRule()
+		ru.ID = fmt.Sprintf("extra:%d", i)
+		ru.Label = nil
+		if err := ru.Validate(); err != nil {
+			Err(w, http.StatusBadRequest, fmt.Sprintf("extra_rules[%d]: %s", i, err.Error()))
+			return
+		}
+		extra = append(extra, ru)
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), backtestTimeout)
@@ -162,9 +197,10 @@ func (h *AutonomyHandler) Backtest(w http.ResponseWriter, r *http.Request) {
 		picked[i], picked[j] = picked[j], picked[i]
 	}
 
+	ruleCache := map[string][]autonomy.AskRule{}
 	for _, p := range picked {
 		bp := backtestPass{TaskID: p.row.TaskID, Title: p.row.Title, At: p.row.CreatedAt, Outcome: p.outcome, Flags: []string{}}
-		skip, flags, ok := h.backtestOne(ctx, cfg, p.row)
+		skip, flags, ok := h.backtestOne(ctx, cfg, wfID, label, extra, ruleCache, p.row)
 		if !ok {
 			bp.Unknown = true
 			if ctx.Err() != nil {
@@ -195,12 +231,73 @@ func (h *AutonomyHandler) Backtest(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if len(extra) > 0 {
+		resp.Rules = h.backtestRules(ctx, wfID, label, since, extra)
+	}
 	JSON(w, http.StatusOK, resp)
+}
+
+// backtestRules replays the draft rules over the recent policy approvals at
+// the gate. Only the extra rules are matched: "how many would it have stopped".
+func (h *AutonomyHandler) backtestRules(ctx context.Context, wfID, label, since string, extra []autonomy.AskRule) *backtestRules {
+	out := &backtestRules{Stopped: []backtestRuleStop{}}
+	needDiff := false
+	for _, ru := range extra {
+		needDiff = needDiff || ru.NeedsDiff()
+	}
+	sinceT, _ := time.Parse(sqlTimeFmt, since)
+	rows, err := h.q.ListPolicyApprovalsAtGate(ctx, gen.ListPolicyApprovalsAtGateParams{
+		WorkflowID: wfID, Label: label, OutcomeAt: &sinceT, Limit: backtestMaxPasses,
+	})
+	if err != nil {
+		return out
+	}
+	m := pathglob.NewMatcher()
+	for _, d := range rows {
+		out.PolicyApprovals++
+		if ctx.Err() != nil {
+			out.Unknown++
+			continue
+		}
+		task, err := h.q.GetTask(ctx, d.TaskID)
+		if err != nil {
+			out.Unknown++
+			continue
+		}
+		at := time.Now()
+		if d.OutcomeAt != nil {
+			at = *d.OutcomeAt
+		}
+		facts := autonomy.Facts{TaskType: task.Type}
+		if needDiff {
+			res, err := reviewbrief.DiffAsOf(ctx, h.q, task, at)
+			if err == nil && res.Available && res.Changed.Files > 0 {
+				facts.HasDiff = true
+				facts.Files = res.Paths
+				facts.ChangedLines = res.Changed.Additions + res.Changed.Deletions
+			}
+		}
+		out.Evaluated++
+		var idx []int
+		for i, ru := range extra {
+			if ru.RepoID != nil && *ru.RepoID != task.RepoID {
+				continue
+			}
+			if ru.Matches(facts, m) {
+				idx = append(idx, i)
+			}
+		}
+		if len(idx) > 0 {
+			out.WouldStop++
+			out.Stopped = append(out.Stopped, backtestRuleStop{TaskID: d.TaskID, Title: d.TaskTitle, At: at, RuleIndexes: idx})
+		}
+	}
+	return out
 }
 
 // backtestOne recomputes Evaluate's inputs as of the pass. ok=false means the
 // pass cannot be evaluated (unknown).
-func (h *AutonomyHandler) backtestOne(ctx context.Context, cfg autonomy.Config, e gen.ListGateExitsRow) (skip bool, flags []string, ok bool) {
+func (h *AutonomyHandler) backtestOne(ctx context.Context, cfg autonomy.Config, wfID, label string, extra []autonomy.AskRule, cache map[string][]autonomy.AskRule, e gen.ListGateExitsRow) (skip bool, flags []string, ok bool) {
 	flags = []string{}
 	if ctx.Err() != nil {
 		return false, nil, false
@@ -231,17 +328,44 @@ func (h *AutonomyHandler) backtestOne(ctx context.Context, cfg autonomy.Config, 
 	default:
 		return false, nil, false
 	}
-	if cfg.Mode == autonomy.ModeOnFlags {
-		res, err := reviewbrief.DiffAsOf(ctx, h.q, task, e.CreatedAt)
-		if err != nil || !res.Available {
+	// Stored rules applicable at this gate for the task's repo, plus drafts.
+	rules, cached := cache[task.RepoID]
+	if !cached {
+		rl, rid := label, task.RepoID
+		rows, err := h.q.ListApplicableAskRules(ctx, gen.ListApplicableAskRulesParams{WorkflowID: wfID, Label: &rl, RepoID: &rid})
+		if err != nil {
 			return false, nil, false
 		}
-		if res.Changed.Files > 0 {
-			in.HasDiff = true
-			for _, f := range res.Flags {
-				in.Flags = append(in.Flags, f.Code)
+		rules = policy.RulesFromRows(rows)
+		cache[task.RepoID] = rules
+	}
+	for _, ru := range extra {
+		if ru.RepoID == nil || *ru.RepoID == task.RepoID {
+			rules = append(rules[:len(rules):len(rules)], ru)
+		}
+	}
+	in.Rules = rules
+	needDiff := cfg.Mode == autonomy.ModeOnFlags
+	for _, ru := range rules {
+		needDiff = needDiff || ru.NeedsDiff()
+	}
+	in.Facts.TaskType = task.Type
+	if needDiff {
+		res, err := reviewbrief.DiffAsOf(ctx, h.q, task, e.CreatedAt)
+		if cfg.Mode == autonomy.ModeOnFlags && (err != nil || !res.Available) {
+			return false, nil, false
+		}
+		if err == nil && res.Available && res.Changed.Files > 0 {
+			in.Facts.HasDiff = true
+			in.Facts.Files = res.Paths
+			in.Facts.ChangedLines = res.Changed.Additions + res.Changed.Deletions
+			if cfg.Mode == autonomy.ModeOnFlags {
+				in.HasDiff = true
+				for _, f := range res.Flags {
+					in.Flags = append(in.Flags, f.Code)
+				}
+				flags = append(flags, in.Flags...)
 			}
-			flags = append(flags, in.Flags...)
 		}
 	}
 	d := autonomy.Evaluate(in)

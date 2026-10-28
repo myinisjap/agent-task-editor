@@ -56,6 +56,8 @@ told to trust the code over a lesson and to say so in their notes.
 - **Repos page** — each repo has a **Lessons** button that opens a panel to add, edit, retire/reactivate and delete lessons, filter by status, and see each lesson's kind, body, scope (path globs, stages) and injected count.
 - **Settings → Lessons** — the same controls for global (repo-less) lessons.
 - **Task Detail → Remember for this repo** — shown next to each human reply (the "Human decisions" list, backed by `GET /tasks/{id}/human-decisions`) and each human label-history note (e.g. rejections). It opens a form prefilled with that text (trimmed to 300 characters, kind `preference`) and creates an active lesson with `source_task_id` set to the task.
+- **Should have asked** — `POST /tasks/{id}/autonomy/should-have-asked` can create an active lesson (kind `trap` by default) whose path globs are the ask rule's globs, with `source_task_id` set to the task. See [workflows.md](workflows.md#should-have-asked).
+
 
 ## API
 

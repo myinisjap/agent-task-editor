@@ -1,5 +1,5 @@
 // Package autonomy holds the pure policy types and evaluator for the
-// per-gate autonomy dial. It is a leaf package (stdlib only).
+// per-gate autonomy dial. It is a leaf package (stdlib and pathglob only).
 package autonomy
 
 import (

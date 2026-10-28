@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -27,6 +28,117 @@ func (q *Queries) ClaimAutonomyApproval(ctx context.Context, arg ClaimAutonomyAp
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const countGateEscapesForStepDown = `-- name: CountGateEscapesForStepDown :one
+SELECT COUNT(DISTINCT COALESCE(decision_id, id)) FROM autonomy_escapes
+WHERE workflow_id = ?1 AND label = ?2 AND reset_by_change_id IS NULL AND created_at >= ?3
+`
+
+type CountGateEscapesForStepDownParams struct {
+	WorkflowID string    `json:"workflow_id"`
+	Label      string    `json:"label"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// One bad approval reported twice counts once (COALESCE on decision_id).
+func (q *Queries) CountGateEscapesForStepDown(ctx context.Context, arg CountGateEscapesForStepDownParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countGateEscapesForStepDown, arg.WorkflowID, arg.Label, arg.CreatedAt)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const createAskRule = `-- name: CreateAskRule :one
+INSERT INTO autonomy_ask_rules (id, repo_id, workflow_id, label, path_globs, task_type, min_changed_lines, created_by, source_task_id, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, repo_id, workflow_id, label, path_globs, task_type, min_changed_lines, created_by, source_task_id, created_at, hit_count, last_hit_at
+`
+
+type CreateAskRuleParams struct {
+	ID              string    `json:"id"`
+	RepoID          *string   `json:"repo_id"`
+	WorkflowID      string    `json:"workflow_id"`
+	Label           *string   `json:"label"`
+	PathGlobs       string    `json:"path_globs"`
+	TaskType        *string   `json:"task_type"`
+	MinChangedLines *int64    `json:"min_changed_lines"`
+	CreatedBy       string    `json:"created_by"`
+	SourceTaskID    *string   `json:"source_task_id"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+func (q *Queries) CreateAskRule(ctx context.Context, arg CreateAskRuleParams) (AutonomyAskRule, error) {
+	row := q.db.QueryRowContext(ctx, createAskRule,
+		arg.ID,
+		arg.RepoID,
+		arg.WorkflowID,
+		arg.Label,
+		arg.PathGlobs,
+		arg.TaskType,
+		arg.MinChangedLines,
+		arg.CreatedBy,
+		arg.SourceTaskID,
+		arg.CreatedAt,
+	)
+	var i AutonomyAskRule
+	err := row.Scan(
+		&i.ID,
+		&i.RepoID,
+		&i.WorkflowID,
+		&i.Label,
+		&i.PathGlobs,
+		&i.TaskType,
+		&i.MinChangedLines,
+		&i.CreatedBy,
+		&i.SourceTaskID,
+		&i.CreatedAt,
+		&i.HitCount,
+		&i.LastHitAt,
+	)
+	return i, err
+}
+
+const createAutonomyChange = `-- name: CreateAutonomyChange :one
+INSERT INTO autonomy_changes (id, workflow_id, label, from_mode, to_mode, actor, reason, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, workflow_id, label, from_mode, to_mode, actor, reason, created_at
+`
+
+type CreateAutonomyChangeParams struct {
+	ID         string    `json:"id"`
+	WorkflowID string    `json:"workflow_id"`
+	Label      string    `json:"label"`
+	FromMode   string    `json:"from_mode"`
+	ToMode     string    `json:"to_mode"`
+	Actor      string    `json:"actor"`
+	Reason     string    `json:"reason"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+func (q *Queries) CreateAutonomyChange(ctx context.Context, arg CreateAutonomyChangeParams) (AutonomyChange, error) {
+	row := q.db.QueryRowContext(ctx, createAutonomyChange,
+		arg.ID,
+		arg.WorkflowID,
+		arg.Label,
+		arg.FromMode,
+		arg.ToMode,
+		arg.Actor,
+		arg.Reason,
+		arg.CreatedAt,
+	)
+	var i AutonomyChange
+	err := row.Scan(
+		&i.ID,
+		&i.WorkflowID,
+		&i.Label,
+		&i.FromMode,
+		&i.ToMode,
+		&i.Actor,
+		&i.Reason,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const createAutonomyDecision = `-- name: CreateAutonomyDecision :exec
@@ -67,28 +179,89 @@ func (q *Queries) CreateAutonomyDecision(ctx context.Context, arg CreateAutonomy
 	return err
 }
 
-const createAutonomyEscape = `-- name: CreateAutonomyEscape :exec
-INSERT INTO autonomy_escapes (id, task_id, workflow_id, label, source)
-VALUES (?, ?, ?, ?, ?)
+const createAutonomyEscape = `-- name: CreateAutonomyEscape :one
+INSERT INTO autonomy_escapes (id, task_id, workflow_id, label, source, decision_id, actor, note, rule_id, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, task_id, workflow_id, label, source, created_at, decision_id, actor, note, rule_id, reset_by_change_id
 `
 
 type CreateAutonomyEscapeParams struct {
-	ID         string `json:"id"`
-	TaskID     string `json:"task_id"`
-	WorkflowID string `json:"workflow_id"`
-	Label      string `json:"label"`
-	Source     string `json:"source"`
+	ID         string    `json:"id"`
+	TaskID     string    `json:"task_id"`
+	WorkflowID string    `json:"workflow_id"`
+	Label      string    `json:"label"`
+	Source     string    `json:"source"`
+	DecisionID *string   `json:"decision_id"`
+	Actor      *string   `json:"actor"`
+	Note       *string   `json:"note"`
+	RuleID     *string   `json:"rule_id"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
-func (q *Queries) CreateAutonomyEscape(ctx context.Context, arg CreateAutonomyEscapeParams) error {
-	_, err := q.db.ExecContext(ctx, createAutonomyEscape,
+func (q *Queries) CreateAutonomyEscape(ctx context.Context, arg CreateAutonomyEscapeParams) (AutonomyEscape, error) {
+	row := q.db.QueryRowContext(ctx, createAutonomyEscape,
 		arg.ID,
 		arg.TaskID,
 		arg.WorkflowID,
 		arg.Label,
 		arg.Source,
+		arg.DecisionID,
+		arg.Actor,
+		arg.Note,
+		arg.RuleID,
+		arg.CreatedAt,
 	)
-	return err
+	var i AutonomyEscape
+	err := row.Scan(
+		&i.ID,
+		&i.TaskID,
+		&i.WorkflowID,
+		&i.Label,
+		&i.Source,
+		&i.CreatedAt,
+		&i.DecisionID,
+		&i.Actor,
+		&i.Note,
+		&i.RuleID,
+		&i.ResetByChangeID,
+	)
+	return i, err
+}
+
+const deleteAskRule = `-- name: DeleteAskRule :execrows
+DELETE FROM autonomy_ask_rules WHERE id = ?1
+`
+
+func (q *Queries) DeleteAskRule(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteAskRule, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const getAskRule = `-- name: GetAskRule :one
+SELECT id, repo_id, workflow_id, label, path_globs, task_type, min_changed_lines, created_by, source_task_id, created_at, hit_count, last_hit_at FROM autonomy_ask_rules WHERE id = ?1
+`
+
+func (q *Queries) GetAskRule(ctx context.Context, id string) (AutonomyAskRule, error) {
+	row := q.db.QueryRowContext(ctx, getAskRule, id)
+	var i AutonomyAskRule
+	err := row.Scan(
+		&i.ID,
+		&i.RepoID,
+		&i.WorkflowID,
+		&i.Label,
+		&i.PathGlobs,
+		&i.TaskType,
+		&i.MinChangedLines,
+		&i.CreatedBy,
+		&i.SourceTaskID,
+		&i.CreatedAt,
+		&i.HitCount,
+		&i.LastHitAt,
+	)
+	return i, err
 }
 
 const getAutonomyDecision = `-- name: GetAutonomyDecision :one
@@ -203,6 +376,36 @@ func (q *Queries) GetLatestAutonomyDecision(ctx context.Context, arg GetLatestAu
 	return i, err
 }
 
+const getLatestPolicyApprovedDecision = `-- name: GetLatestPolicyApprovedDecision :one
+SELECT id, task_id, workflow_id, label, run_id, mode, decision, reasons, created_at, outcome, hold_seconds, due_at, note, outcome_at, outcome_actor FROM autonomy_decisions
+WHERE task_id = ? AND outcome IN ('approved','undone')
+ORDER BY outcome_at DESC, rowid DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLatestPolicyApprovedDecision(ctx context.Context, taskID string) (AutonomyDecision, error) {
+	row := q.db.QueryRowContext(ctx, getLatestPolicyApprovedDecision, taskID)
+	var i AutonomyDecision
+	err := row.Scan(
+		&i.ID,
+		&i.TaskID,
+		&i.WorkflowID,
+		&i.Label,
+		&i.RunID,
+		&i.Mode,
+		&i.Decision,
+		&i.Reasons,
+		&i.CreatedAt,
+		&i.Outcome,
+		&i.HoldSeconds,
+		&i.DueAt,
+		&i.Note,
+		&i.OutcomeAt,
+		&i.OutcomeActor,
+	)
+	return i, err
+}
+
 const holdPendingAutonomy = `-- name: HoldPendingAutonomy :execrows
 UPDATE autonomy_decisions
 SET outcome = 'held', outcome_at = ?1, outcome_actor = ?2
@@ -229,8 +432,191 @@ func (q *Queries) HoldPendingAutonomy(ctx context.Context, arg HoldPendingAutono
 	return result.RowsAffected()
 }
 
+const listApplicableAskRules = `-- name: ListApplicableAskRules :many
+SELECT id, repo_id, workflow_id, label, path_globs, task_type, min_changed_lines, created_by, source_task_id, created_at, hit_count, last_hit_at FROM autonomy_ask_rules
+WHERE workflow_id = ?1 AND (label IS NULL OR label = ?2) AND (repo_id IS NULL OR repo_id = ?3)
+ORDER BY created_at, rowid
+`
+
+type ListApplicableAskRulesParams struct {
+	WorkflowID string  `json:"workflow_id"`
+	Label      *string `json:"label"`
+	RepoID     *string `json:"repo_id"`
+}
+
+func (q *Queries) ListApplicableAskRules(ctx context.Context, arg ListApplicableAskRulesParams) ([]AutonomyAskRule, error) {
+	rows, err := q.db.QueryContext(ctx, listApplicableAskRules, arg.WorkflowID, arg.Label, arg.RepoID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AutonomyAskRule
+	for rows.Next() {
+		var i AutonomyAskRule
+		if err := rows.Scan(
+			&i.ID,
+			&i.RepoID,
+			&i.WorkflowID,
+			&i.Label,
+			&i.PathGlobs,
+			&i.TaskType,
+			&i.MinChangedLines,
+			&i.CreatedBy,
+			&i.SourceTaskID,
+			&i.CreatedAt,
+			&i.HitCount,
+			&i.LastHitAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAskRules = `-- name: ListAskRules :many
+SELECT id, repo_id, workflow_id, label, path_globs, task_type, min_changed_lines, created_by, source_task_id, created_at, hit_count, last_hit_at FROM autonomy_ask_rules
+WHERE (?1 = '' OR workflow_id = ?1)
+  AND (?2 = '' OR label = ?2 OR label IS NULL)
+  AND (?3 = '' OR repo_id = ?3 OR repo_id IS NULL)
+ORDER BY created_at DESC, rowid DESC
+`
+
+type ListAskRulesParams struct {
+	Column1 interface{} `json:"column_1"`
+	Column2 interface{} `json:"column_2"`
+	Column3 interface{} `json:"column_3"`
+}
+
+// Empty-string filters mean "any". A label/repo filter also returns the
+// all-gates / all-repos rules, because those apply too.
+func (q *Queries) ListAskRules(ctx context.Context, arg ListAskRulesParams) ([]AutonomyAskRule, error) {
+	rows, err := q.db.QueryContext(ctx, listAskRules, arg.Column1, arg.Column2, arg.Column3)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AutonomyAskRule
+	for rows.Next() {
+		var i AutonomyAskRule
+		if err := rows.Scan(
+			&i.ID,
+			&i.RepoID,
+			&i.WorkflowID,
+			&i.Label,
+			&i.PathGlobs,
+			&i.TaskType,
+			&i.MinChangedLines,
+			&i.CreatedBy,
+			&i.SourceTaskID,
+			&i.CreatedAt,
+			&i.HitCount,
+			&i.LastHitAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAutonomyChanges = `-- name: ListAutonomyChanges :many
+SELECT id, workflow_id, label, from_mode, to_mode, actor, reason, created_at FROM autonomy_changes WHERE workflow_id = ?1 AND label = ?2
+ORDER BY created_at DESC, rowid DESC
+LIMIT ?3
+`
+
+type ListAutonomyChangesParams struct {
+	WorkflowID string `json:"workflow_id"`
+	Label      string `json:"label"`
+	Limit      int64  `json:"limit"`
+}
+
+func (q *Queries) ListAutonomyChanges(ctx context.Context, arg ListAutonomyChangesParams) ([]AutonomyChange, error) {
+	rows, err := q.db.QueryContext(ctx, listAutonomyChanges, arg.WorkflowID, arg.Label, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AutonomyChange
+	for rows.Next() {
+		var i AutonomyChange
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkflowID,
+			&i.Label,
+			&i.FromMode,
+			&i.ToMode,
+			&i.Actor,
+			&i.Reason,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAutonomyEscapesForDecision = `-- name: ListAutonomyEscapesForDecision :many
+SELECT id, task_id, workflow_id, label, source, created_at, decision_id, actor, note, rule_id, reset_by_change_id FROM autonomy_escapes WHERE decision_id = ?1 ORDER BY created_at, rowid
+`
+
+func (q *Queries) ListAutonomyEscapesForDecision(ctx context.Context, decisionID *string) ([]AutonomyEscape, error) {
+	rows, err := q.db.QueryContext(ctx, listAutonomyEscapesForDecision, decisionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AutonomyEscape
+	for rows.Next() {
+		var i AutonomyEscape
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.WorkflowID,
+			&i.Label,
+			&i.Source,
+			&i.CreatedAt,
+			&i.DecisionID,
+			&i.Actor,
+			&i.Note,
+			&i.RuleID,
+			&i.ResetByChangeID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAutonomyEscapesForTask = `-- name: ListAutonomyEscapesForTask :many
-SELECT id, task_id, workflow_id, label, source, created_at FROM autonomy_escapes WHERE task_id = ? ORDER BY created_at, rowid
+SELECT id, task_id, workflow_id, label, source, created_at, decision_id, actor, note, rule_id, reset_by_change_id FROM autonomy_escapes WHERE task_id = ? ORDER BY created_at, rowid
 `
 
 func (q *Queries) ListAutonomyEscapesForTask(ctx context.Context, taskID string) ([]AutonomyEscape, error) {
@@ -249,6 +635,11 @@ func (q *Queries) ListAutonomyEscapesForTask(ctx context.Context, taskID string)
 			&i.Label,
 			&i.Source,
 			&i.CreatedAt,
+			&i.DecisionID,
+			&i.Actor,
+			&i.Note,
+			&i.RuleID,
+			&i.ResetByChangeID,
 		); err != nil {
 			return nil, err
 		}
@@ -294,6 +685,107 @@ func (q *Queries) ListDueAutonomyApprovals(ctx context.Context, dueAt *time.Time
 			&i.Note,
 			&i.OutcomeAt,
 			&i.OutcomeActor,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGateEscapeSourcesForStepDown = `-- name: ListGateEscapeSourcesForStepDown :many
+SELECT DISTINCT source FROM autonomy_escapes
+WHERE workflow_id = ?1 AND label = ?2 AND reset_by_change_id IS NULL AND created_at >= ?3
+ORDER BY source
+`
+
+type ListGateEscapeSourcesForStepDownParams struct {
+	WorkflowID string    `json:"workflow_id"`
+	Label      string    `json:"label"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+func (q *Queries) ListGateEscapeSourcesForStepDown(ctx context.Context, arg ListGateEscapeSourcesForStepDownParams) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listGateEscapeSourcesForStepDown, arg.WorkflowID, arg.Label, arg.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var source string
+		if err := rows.Scan(&source); err != nil {
+			return nil, err
+		}
+		items = append(items, source)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listGateEscapes = `-- name: ListGateEscapes :many
+SELECT e.id, e.task_id, e.workflow_id, e.label, e.source, e.created_at, e.decision_id, e.actor, e.note, e.rule_id, e.reset_by_change_id, COALESCE(t.title, '') AS task_title
+FROM autonomy_escapes e
+LEFT JOIN tasks t ON t.id = e.task_id
+WHERE e.workflow_id = ?1 AND e.label = ?2
+ORDER BY e.created_at DESC, e.rowid DESC
+LIMIT ?3
+`
+
+type ListGateEscapesParams struct {
+	WorkflowID string `json:"workflow_id"`
+	Label      string `json:"label"`
+	Limit      int64  `json:"limit"`
+}
+
+type ListGateEscapesRow struct {
+	ID              string    `json:"id"`
+	TaskID          string    `json:"task_id"`
+	WorkflowID      string    `json:"workflow_id"`
+	Label           string    `json:"label"`
+	Source          string    `json:"source"`
+	CreatedAt       time.Time `json:"created_at"`
+	DecisionID      *string   `json:"decision_id"`
+	Actor           *string   `json:"actor"`
+	Note            *string   `json:"note"`
+	RuleID          *string   `json:"rule_id"`
+	ResetByChangeID *string   `json:"reset_by_change_id"`
+	TaskTitle       string    `json:"task_title"`
+}
+
+func (q *Queries) ListGateEscapes(ctx context.Context, arg ListGateEscapesParams) ([]ListGateEscapesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listGateEscapes, arg.WorkflowID, arg.Label, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListGateEscapesRow
+	for rows.Next() {
+		var i ListGateEscapesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.WorkflowID,
+			&i.Label,
+			&i.Source,
+			&i.CreatedAt,
+			&i.DecisionID,
+			&i.Actor,
+			&i.Note,
+			&i.RuleID,
+			&i.ResetByChangeID,
+			&i.TaskTitle,
 		); err != nil {
 			return nil, err
 		}
@@ -419,6 +911,86 @@ func (q *Queries) ListPendingAutonomyApprovals(ctx context.Context) ([]AutonomyD
 	return items, nil
 }
 
+const listPolicyApprovalsAtGate = `-- name: ListPolicyApprovalsAtGate :many
+SELECT d.id, d.task_id, d.workflow_id, d.label, d.run_id, d.mode, d.decision, d.reasons, d.created_at, d.outcome, d.hold_seconds, d.due_at, d.note, d.outcome_at, d.outcome_actor, t.title AS task_title
+FROM autonomy_decisions d
+JOIN tasks t ON t.id = d.task_id
+WHERE d.workflow_id = ?1 AND d.label = ?2 AND d.outcome IN ('approved','undone') AND d.outcome_at >= ?3
+ORDER BY d.outcome_at DESC, d.rowid DESC
+LIMIT ?4
+`
+
+type ListPolicyApprovalsAtGateParams struct {
+	WorkflowID string     `json:"workflow_id"`
+	Label      string     `json:"label"`
+	OutcomeAt  *time.Time `json:"outcome_at"`
+	Limit      int64      `json:"limit"`
+}
+
+type ListPolicyApprovalsAtGateRow struct {
+	ID           string     `json:"id"`
+	TaskID       string     `json:"task_id"`
+	WorkflowID   string     `json:"workflow_id"`
+	Label        string     `json:"label"`
+	RunID        *string    `json:"run_id"`
+	Mode         string     `json:"mode"`
+	Decision     string     `json:"decision"`
+	Reasons      string     `json:"reasons"`
+	CreatedAt    time.Time  `json:"created_at"`
+	Outcome      *string    `json:"outcome"`
+	HoldSeconds  *int64     `json:"hold_seconds"`
+	DueAt        *time.Time `json:"due_at"`
+	Note         *string    `json:"note"`
+	OutcomeAt    *time.Time `json:"outcome_at"`
+	OutcomeActor *string    `json:"outcome_actor"`
+	TaskTitle    string     `json:"task_title"`
+}
+
+func (q *Queries) ListPolicyApprovalsAtGate(ctx context.Context, arg ListPolicyApprovalsAtGateParams) ([]ListPolicyApprovalsAtGateRow, error) {
+	rows, err := q.db.QueryContext(ctx, listPolicyApprovalsAtGate,
+		arg.WorkflowID,
+		arg.Label,
+		arg.OutcomeAt,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListPolicyApprovalsAtGateRow
+	for rows.Next() {
+		var i ListPolicyApprovalsAtGateRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.WorkflowID,
+			&i.Label,
+			&i.RunID,
+			&i.Mode,
+			&i.Decision,
+			&i.Reasons,
+			&i.CreatedAt,
+			&i.Outcome,
+			&i.HoldSeconds,
+			&i.DueAt,
+			&i.Note,
+			&i.OutcomeAt,
+			&i.OutcomeActor,
+			&i.TaskTitle,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRecentPolicyApprovals = `-- name: ListRecentPolicyApprovals :many
 SELECT id, task_id, workflow_id, label, run_id, mode, decision, reasons, created_at, outcome, hold_seconds, due_at, note, outcome_at, outcome_actor FROM autonomy_decisions
 WHERE outcome = 'approved' AND outcome_at >= ?1
@@ -462,6 +1034,48 @@ func (q *Queries) ListRecentPolicyApprovals(ctx context.Context, outcomeAt *time
 		return nil, err
 	}
 	return items, nil
+}
+
+const recordAskRuleHits = `-- name: RecordAskRuleHits :exec
+UPDATE autonomy_ask_rules SET hit_count = hit_count + 1, last_hit_at = ?1
+WHERE id IN (/*SLICE:ids*/?)
+`
+
+type RecordAskRuleHitsParams struct {
+	At  *time.Time `json:"at"`
+	Ids []string   `json:"ids"`
+}
+
+func (q *Queries) RecordAskRuleHits(ctx context.Context, arg RecordAskRuleHitsParams) error {
+	query := recordAskRuleHits
+	var queryParams []interface{}
+	queryParams = append(queryParams, arg.At)
+	if len(arg.Ids) > 0 {
+		for _, v := range arg.Ids {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:ids*/?", strings.Repeat(",?", len(arg.Ids))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:ids*/?", "NULL", 1)
+	}
+	_, err := q.db.ExecContext(ctx, query, queryParams...)
+	return err
+}
+
+const resetGateEscapes = `-- name: ResetGateEscapes :exec
+UPDATE autonomy_escapes SET reset_by_change_id = ?1
+WHERE workflow_id = ?2 AND label = ?3 AND reset_by_change_id IS NULL
+`
+
+type ResetGateEscapesParams struct {
+	ResetByChangeID *string `json:"reset_by_change_id"`
+	WorkflowID      string  `json:"workflow_id"`
+	Label           string  `json:"label"`
+}
+
+func (q *Queries) ResetGateEscapes(ctx context.Context, arg ResetGateEscapesParams) error {
+	_, err := q.db.ExecContext(ctx, resetGateEscapes, arg.ResetByChangeID, arg.WorkflowID, arg.Label)
+	return err
 }
 
 const setAutonomyOutcome = `-- name: SetAutonomyOutcome :exec
@@ -531,6 +1145,34 @@ func (q *Queries) SetWorkflowLabelAutonomy(ctx context.Context, arg SetWorkflowL
 	return err
 }
 
+const stepDownLabelAutonomy = `-- name: StepDownLabelAutonomy :execrows
+UPDATE workflow_labels SET autonomy_mode = ?1, autonomy_ask_on = ?2
+WHERE workflow_id = ?3 AND name = ?4 AND autonomy_mode = ?5
+`
+
+type StepDownLabelAutonomyParams struct {
+	AutonomyMode   string `json:"autonomy_mode"`
+	AutonomyAskOn  string `json:"autonomy_ask_on"`
+	WorkflowID     string `json:"workflow_id"`
+	Name           string `json:"name"`
+	AutonomyMode_2 string `json:"autonomy_mode_2"`
+}
+
+// The conditional on the current mode is the race arbiter.
+func (q *Queries) StepDownLabelAutonomy(ctx context.Context, arg StepDownLabelAutonomyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, stepDownLabelAutonomy,
+		arg.AutonomyMode,
+		arg.AutonomyAskOn,
+		arg.WorkflowID,
+		arg.Name,
+		arg.AutonomyMode_2,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const sumTaskCostBefore = `-- name: SumTaskCostBefore :one
 SELECT CAST(COALESCE(SUM(cost_usd),0) AS REAL) AS cost_usd
 FROM agent_runs
@@ -550,6 +1192,52 @@ func (q *Queries) SumTaskCostBefore(ctx context.Context, arg SumTaskCostBeforePa
 	return cost_usd, err
 }
 
+const supersedePendingAtGate = `-- name: SupersedePendingAtGate :many
+UPDATE autonomy_decisions SET outcome = 'superseded', note = ?1, outcome_at = ?2
+WHERE workflow_id = ?3 AND label = ?4 AND outcome = 'pending'
+RETURNING id, task_id
+`
+
+type SupersedePendingAtGateParams struct {
+	Note       *string    `json:"note"`
+	OutcomeAt  *time.Time `json:"outcome_at"`
+	WorkflowID string     `json:"workflow_id"`
+	Label      string     `json:"label"`
+}
+
+type SupersedePendingAtGateRow struct {
+	ID     string `json:"id"`
+	TaskID string `json:"task_id"`
+}
+
+func (q *Queries) SupersedePendingAtGate(ctx context.Context, arg SupersedePendingAtGateParams) ([]SupersedePendingAtGateRow, error) {
+	rows, err := q.db.QueryContext(ctx, supersedePendingAtGate,
+		arg.Note,
+		arg.OutcomeAt,
+		arg.WorkflowID,
+		arg.Label,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SupersedePendingAtGateRow
+	for rows.Next() {
+		var i SupersedePendingAtGateRow
+		if err := rows.Scan(&i.ID, &i.TaskID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const supersedePendingAutonomy = `-- name: SupersedePendingAutonomy :exec
 UPDATE autonomy_decisions
 SET outcome = 'superseded', outcome_at = ?1
@@ -565,4 +1253,47 @@ type SupersedePendingAutonomyParams struct {
 func (q *Queries) SupersedePendingAutonomy(ctx context.Context, arg SupersedePendingAutonomyParams) error {
 	_, err := q.db.ExecContext(ctx, supersedePendingAutonomy, arg.OutcomeAt, arg.TaskID, arg.Label)
 	return err
+}
+
+const updateAskRule = `-- name: UpdateAskRule :one
+UPDATE autonomy_ask_rules
+SET repo_id = ?1, label = ?2, path_globs = ?3, task_type = ?4, min_changed_lines = ?5
+WHERE id = ?6
+RETURNING id, repo_id, workflow_id, label, path_globs, task_type, min_changed_lines, created_by, source_task_id, created_at, hit_count, last_hit_at
+`
+
+type UpdateAskRuleParams struct {
+	RepoID          *string `json:"repo_id"`
+	Label           *string `json:"label"`
+	PathGlobs       string  `json:"path_globs"`
+	TaskType        *string `json:"task_type"`
+	MinChangedLines *int64  `json:"min_changed_lines"`
+	ID              string  `json:"id"`
+}
+
+func (q *Queries) UpdateAskRule(ctx context.Context, arg UpdateAskRuleParams) (AutonomyAskRule, error) {
+	row := q.db.QueryRowContext(ctx, updateAskRule,
+		arg.RepoID,
+		arg.Label,
+		arg.PathGlobs,
+		arg.TaskType,
+		arg.MinChangedLines,
+		arg.ID,
+	)
+	var i AutonomyAskRule
+	err := row.Scan(
+		&i.ID,
+		&i.RepoID,
+		&i.WorkflowID,
+		&i.Label,
+		&i.PathGlobs,
+		&i.TaskType,
+		&i.MinChangedLines,
+		&i.CreatedBy,
+		&i.SourceTaskID,
+		&i.CreatedAt,
+		&i.HitCount,
+		&i.LastHitAt,
+	)
+	return i, err
 }

@@ -393,7 +393,7 @@ func TestUndoAutonomy(t *testing.T) {
 		t.Fatalf("history = %+v", last)
 	}
 	esc, _ := e.q.ListAutonomyEscapesForTask(ctx, task.ID)
-	if len(esc) != 1 || esc[0].Source != "undo" || esc[0].Label != "review" {
+	if len(esc) != 1 || esc[0].Source != "undo" || esc[0].Label != "review" || esc[0].DecisionID == nil || *esc[0].DecisionID != id || esc[0].Actor == nil {
 		t.Fatalf("escapes = %+v", esc)
 	}
 	d, _ := e.q.GetAutonomyDecision(ctx, id)

@@ -83,6 +83,7 @@ sql:
       - "internal/storage/migrations/081_agent_logs_seq.up.sql"
       - "internal/storage/migrations/082_autonomy.up.sql"
       - "internal/storage/migrations/083_autonomy_act.up.sql"
+      - "internal/storage/migrations/084_autonomy_rules.up.sql"
     gen:
       go:
         package: "gen"

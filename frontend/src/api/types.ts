@@ -651,6 +651,398 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/autonomy/suggestions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Candidate ask-rule conditions derived from a task
+         * @description Deepest common directories of the changed files as `dir/**` globs (top 3 by file count), `*.ext` globs for specific kinds (sql, proto, yaml, ...), the task type and a size threshold rounded down from the changed lines. Without a diff, path_globs is empty and min_changed_lines is null.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutonomySuggestions"];
+                    };
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/autonomy/should-have-asked": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report that a policy-approved task should have been asked about
+         * @description Records an escape (source should_have_asked) against the task's latest policy approval, optionally creates an ask rule (scoped to this gate or all gates of the workflow; optionally this repo), optionally sends the task back through its failure path with a note (skipped when it is done) and optionally creates an active lesson with the rule's globs. May step the gate down (see GET/PUT /settings/autonomy). Everything is validated before anything is written.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ShouldHaveAskedRequest"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ShouldHaveAskedResponse"];
+                    };
+                };
+                /** @description Invalid rule */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Task not approved by the policy */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autonomy/ask-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List ask rules
+         * @description The label and repo filters also return the all-gates / all-repos rules, because those apply too.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    workflow_id?: string;
+                    label?: string;
+                    repo_id?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AskRule"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create an ask rule */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AskRuleInput"] & {
+                        workflow_id: string;
+                        label?: string | null;
+                        repo_id?: string | null;
+                        source_task_id?: string | null;
+                    };
+                };
+            };
+            responses: {
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AskRule"];
+                    };
+                };
+                /** @description No condition */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autonomy/ask-rules/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete an ask rule */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Rule not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Update an ask rule
+         * @description Nullable fields (repo_id, label, task_type, min_changed_lines) are cleared with an explicit null. workflow_id cannot change.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AskRuleInput"] & {
+                        label?: string | null;
+                        repo_id?: string | null;
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AskRule"];
+                    };
+                };
+                /** @description The merged rule is invalid */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Rule not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/workflows/{id}/labels/{label}/autonomy/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A gate's autonomy changes and escapes
+         * @description Newest first, up to 200 each.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    label: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutonomyHistory"];
+                    };
+                };
+                /** @description Workflow not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/autonomy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the escape step-down settings */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutonomySettings"];
+                    };
+                };
+            };
+        };
+        /** Update the escape step-down settings */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AutonomySettings"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutonomySettings"];
+                    };
+                };
+                /** @description Out of range */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/dependencies": {
         parameters: {
             query?: never;
@@ -3665,6 +4057,8 @@ export interface paths {
                         max_cost_usd?: number | null;
                         /** @default 30 */
                         days?: number;
+                        /** @description Draft ask rules to include in the replay (scoped to this gate). Each may carry an optional repo_id. */
+                        extra_rules?: components["schemas"]["AskRuleInput"][];
                     };
                 };
             };
@@ -6665,8 +7059,10 @@ export interface components {
             max_cost_usd?: number | null;
         };
         AutonomyReason: {
-            /** @description mode_ask, always_ask, verify_failed, cost_exceeded, no_diff, flag_raised, undone, auto_policy or no_blocking_flags. */
+            /** @description mode_ask, always_ask, verify_failed, cost_exceeded, no_diff, flag_raised, undone, ask_rule, auto_policy or no_blocking_flags. */
             code: string;
+            /** @description The matching ask rule (code ask_rule only). */
+            rule_id?: string;
             detail: string;
         };
         AutonomyBacktest: {
@@ -6693,6 +7089,151 @@ export interface components {
                 would_skip: boolean | null;
                 unknown: boolean;
             }[];
+            /** @description Present when extra_rules was sent. How many recent policy approvals at the gate (max 500) the draft rules would have stopped. */
+            rules: {
+                policy_approvals: number;
+                evaluated: number;
+                unknown: number;
+                would_stop: number;
+                stopped: {
+                    task_id: string;
+                    title: string;
+                    /** Format: date-time */
+                    at: string;
+                    /** @description Indexes into extra_rules. */
+                    rule_indexes: number[];
+                }[];
+            } | null;
+        };
+        /** @description An ask rule forces a human decision at a gate when a task matches ALL of its set conditions. Rules are never deleted automatically; renaming a label leaves rules pointing at the old name. */
+        AskRule: {
+            id: string;
+            /** @description Null = all repos. */
+            repo_id: string | null;
+            workflow_id: string;
+            /** @description Null = all gates of the workflow. */
+            label: string | null;
+            /** @description Lesson glob syntax; any glob matching any changed file satisfies the condition. */
+            path_globs: string[];
+            task_type: string | null;
+            /** @description Additions plus deletions of the task diff must be at least this. */
+            min_changed_lines: number | null;
+            created_by: string;
+            source_task_id: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** @description Real (non-backtest) evaluations the rule forced to ask. */
+            hit_count: number;
+            /** Format: date-time */
+            last_hit_at: string | null;
+            summary: string;
+        };
+        /** @description Rule conditions. At least one of path_globs, task_type, min_changed_lines is required. */
+        AskRuleInput: {
+            path_globs?: string[];
+            /** @description Only used by backtest extra_rules to limit a draft to one repo. */
+            repo_id?: string | null;
+            task_type?: string | null;
+            min_changed_lines?: number | null;
+        };
+        AutonomyGlobSuggestion: {
+            glob: string;
+            /** @enum {string} */
+            kind: "dir" | "ext";
+            files: number;
+        };
+        AutonomySuggestions: {
+            task_id: string;
+            workflow_id: string;
+            repo_id: string;
+            /** @description The gate the policy approved the task at */
+            label: string;
+            policy_approved: boolean;
+            decision_id: string | null;
+            diff_available: boolean;
+            changed_files: number;
+            changed_lines: number;
+            path_globs: components["schemas"]["AutonomyGlobSuggestion"][];
+            task_type: string | null;
+            min_changed_lines: number | null;
+        };
+        AutonomyEscape: {
+            id: string;
+            task_id: string;
+            task_title: string;
+            /** @enum {string} */
+            source: "undo" | "should_have_asked" | "rejected_later" | "reopened";
+            decision_id: string | null;
+            actor: string | null;
+            note: string | null;
+            rule_id: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** @description Still counts toward the step-down threshold. */
+            counted: boolean;
+        };
+        AutonomyChange: {
+            id: string;
+            workflow_id: string;
+            label: string;
+            /** @enum {string} */
+            from_mode: "ask" | "on_flags" | "auto";
+            /** @enum {string} */
+            to_mode: "ask" | "on_flags" | "auto";
+            /** @description "policy" for an automatic step-down. */
+            actor: string;
+            reason: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        AutonomyHistory: {
+            workflow_id: string;
+            label: string;
+            /**
+             * @description Null when the label no longer exists.
+             * @enum {string|null}
+             */
+            current_mode: "ask" | "on_flags" | "auto" | null;
+            changes: components["schemas"]["AutonomyChange"][];
+            escapes: components["schemas"]["AutonomyEscape"][];
+            step_down: {
+                escapes_counted: number;
+                threshold: number;
+                window_days: number;
+            };
+        };
+        AutonomySettings: {
+            /** @description Distinct escapes within the window that lower a gate one notch; 0 = never step down. */
+            step_down_escapes: number;
+            step_down_window_days: number;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        ShouldHaveAskedRequest: {
+            rule?: components["schemas"]["AskRuleInput"];
+            /** @description Limit the rule and lesson to the task's repo. */
+            scope_repo?: boolean;
+            /**
+             * @default this_gate
+             * @enum {string}
+             */
+            label_scope: "this_gate" | "all_gates";
+            /** @description Send the task back through its failure path with this note (not when done). */
+            send_back_note?: string;
+            lesson?: {
+                body: string;
+                /** @default trap */
+                kind: string;
+            };
+        };
+        ShouldHaveAskedResponse: {
+            escape: components["schemas"]["AutonomyEscape"];
+            rule: components["schemas"]["AskRule"] | null;
+            lesson: components["schemas"]["RepoLesson"] | null;
+            sent_back: boolean;
+            send_back_error?: string;
+            step_down: components["schemas"]["AutonomyChange"] | null;
+            task: components["schemas"]["Task"];
         };
         /** @description A decision recorded when a task landed on a gate. An approve decision carries an outcome (pending until its hold window ends); ask decisions have no outcome. */
         AutonomyDecision: {
@@ -8047,7 +8588,7 @@ export interface components {
             error: string;
         };
         /** @description Envelope of every message the server pushes on the /ws socket (and the locally synthesised `resync` after a reconnect). Discriminated by `type`. */
-        WsEvent: components["schemas"]["WsTaskLabelChangedEvent"] | components["schemas"]["WsTaskUpdatedEvent"] | components["schemas"]["WsTaskSideEffectEvent"] | components["schemas"]["WsTaskAgentStartedEvent"] | components["schemas"]["WsTaskAgentDoneEvent"] | components["schemas"]["WsTaskNeedsHumanEvent"] | components["schemas"]["WsTaskCostWarningEvent"] | components["schemas"]["WsSystemCostBudgetTrippedEvent"] | components["schemas"]["WsTaskReviewCommentsChangedEvent"] | components["schemas"]["WsTaskVerificationEvent"] | components["schemas"]["WsTaskPreviewEvent"] | components["schemas"]["WsTaskRateLimitedEvent"] | components["schemas"]["WsProviderPauseChangedEvent"] | components["schemas"]["WsTaskGitStateChangedEvent"] | components["schemas"]["WsTaskPrMergeableChangedEvent"] | components["schemas"]["WsTaskReviewCommentAddedEvent"] | components["schemas"]["WsTaskSubtaskConflictEvent"] | components["schemas"]["WsTaskSourceCommentAddedEvent"] | components["schemas"]["WsTaskCreatedEvent"] | components["schemas"]["WsTaskCreatedBulkEvent"] | components["schemas"]["WsRepoCloneDoneEvent"] | components["schemas"]["WsRepoCloneFailedEvent"] | components["schemas"]["WsAgentLogEvent"] | components["schemas"]["WsAgentLogReplayEvent"] | components["schemas"]["WsTaskAutonomyPendingEvent"] | components["schemas"]["WsTaskAutonomyHeldEvent"] | components["schemas"]["WsTaskAutonomyApprovedEvent"] | components["schemas"]["WsTaskAutonomyUndoneEvent"] | components["schemas"]["WsTaskAutonomyAskedEvent"] | components["schemas"]["WsResyncEvent"];
+        WsEvent: components["schemas"]["WsTaskLabelChangedEvent"] | components["schemas"]["WsTaskUpdatedEvent"] | components["schemas"]["WsTaskSideEffectEvent"] | components["schemas"]["WsTaskAgentStartedEvent"] | components["schemas"]["WsTaskAgentDoneEvent"] | components["schemas"]["WsTaskNeedsHumanEvent"] | components["schemas"]["WsTaskCostWarningEvent"] | components["schemas"]["WsSystemCostBudgetTrippedEvent"] | components["schemas"]["WsTaskReviewCommentsChangedEvent"] | components["schemas"]["WsTaskVerificationEvent"] | components["schemas"]["WsTaskPreviewEvent"] | components["schemas"]["WsTaskRateLimitedEvent"] | components["schemas"]["WsProviderPauseChangedEvent"] | components["schemas"]["WsTaskGitStateChangedEvent"] | components["schemas"]["WsTaskPrMergeableChangedEvent"] | components["schemas"]["WsTaskReviewCommentAddedEvent"] | components["schemas"]["WsTaskSubtaskConflictEvent"] | components["schemas"]["WsTaskSourceCommentAddedEvent"] | components["schemas"]["WsTaskCreatedEvent"] | components["schemas"]["WsTaskCreatedBulkEvent"] | components["schemas"]["WsRepoCloneDoneEvent"] | components["schemas"]["WsRepoCloneFailedEvent"] | components["schemas"]["WsAgentLogEvent"] | components["schemas"]["WsAgentLogReplayEvent"] | components["schemas"]["WsTaskAutonomyPendingEvent"] | components["schemas"]["WsTaskAutonomyHeldEvent"] | components["schemas"]["WsTaskAutonomyApprovedEvent"] | components["schemas"]["WsTaskAutonomyUndoneEvent"] | components["schemas"]["WsTaskAutonomyAskedEvent"] | components["schemas"]["WsAutonomySteppedDownEvent"] | components["schemas"]["WsResyncEvent"];
         WsTaskLabelChangedEvent: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -8226,9 +8767,33 @@ export interface components {
             /** @description Omitted when no decision row exists (evaluation_error). */
             decision_id?: string;
             /** @enum {string} */
-            reason: "policy" | "skipped" | "failed" | "evaluation_error";
+            reason: "policy" | "skipped" | "failed" | "evaluation_error" | "stepped_down";
             /** @description Reason codes of the ask decision (policy only). */
             reasons: string[];
+        };
+        WsAutonomySteppedDownEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "autonomy.stepped_down";
+            payload: components["schemas"]["WsAutonomySteppedDownPayload"];
+        };
+        /** @description A gate's autonomy mode was lowered one notch after enough escapes within the window (see GET/PUT /settings/autonomy). */
+        WsAutonomySteppedDownPayload: {
+            workflow_id: string;
+            label: string;
+            /** @enum {string} */
+            from_mode: "ask" | "on_flags" | "auto";
+            /** @enum {string} */
+            to_mode: "ask" | "on_flags" | "auto";
+            /** @description Always "policy". */
+            actor: string;
+            reason: string;
+            /** @description Distinct escapes counted. */
+            escapes: number;
+            /** @description The autonomy_changes row (see the gate history endpoint). */
+            change_id: string;
         };
         WsTaskCostWarningEvent: {
             /**

@@ -124,12 +124,13 @@ components:
     AutonomyReason:
       type: object
       properties:
-        code: { type: string, description: "mode_ask, always_ask, verify_failed, cost_exceeded, no_diff, flag_raised, undone, auto_policy or no_blocking_flags." }
+        code: { type: string, description: "mode_ask, always_ask, verify_failed, cost_exceeded, no_diff, flag_raised, undone, ask_rule, auto_policy or no_blocking_flags." }
+        rule_id: { type: string, description: The matching ask rule (code ask_rule only). }
         detail: { type: string }
       required: [code, detail]
     AutonomyBacktest:
       type: object
-      required: [total, evaluated, unknown, would_skip, would_ask, rejected, escaped, truncated, timed_out, passes]
+      required: [total, evaluated, unknown, would_skip, would_ask, rejected, escaped, truncated, timed_out, passes, rules]
       properties:
         total: { type: integer }
         evaluated: { type: integer }
@@ -154,6 +155,151 @@ components:
               flags: { type: array, items: { type: string } }
               would_skip: { type: boolean, nullable: true }
               unknown: { type: boolean }
+        rules:
+          nullable: true
+          description: Present when extra_rules was sent. How many recent policy approvals at the gate (max 500) the draft rules would have stopped.
+          type: object
+          required: [policy_approvals, evaluated, unknown, would_stop, stopped]
+          properties:
+            policy_approvals: { type: integer }
+            evaluated: { type: integer }
+            unknown: { type: integer }
+            would_stop: { type: integer }
+            stopped:
+              type: array
+              items:
+                type: object
+                required: [task_id, title, at, rule_indexes]
+                properties:
+                  task_id: { type: string }
+                  title: { type: string }
+                  at: { type: string, format: date-time }
+                  rule_indexes: { type: array, items: { type: integer }, description: Indexes into extra_rules. }
+    AskRule:
+      type: object
+      description: >-
+        An ask rule forces a human decision at a gate when a task matches ALL of
+        its set conditions. Rules are never deleted automatically; renaming a
+        label leaves rules pointing at the old name.
+      required: [id, repo_id, workflow_id, label, path_globs, task_type, min_changed_lines, created_by, source_task_id, created_at, hit_count, last_hit_at, summary]
+      properties:
+        id: { type: string }
+        repo_id: { type: string, nullable: true, description: Null = all repos. }
+        workflow_id: { type: string }
+        label: { type: string, nullable: true, description: Null = all gates of the workflow. }
+        path_globs: { type: array, items: { type: string }, description: Lesson glob syntax; any glob matching any changed file satisfies the condition. }
+        task_type: { type: string, nullable: true }
+        min_changed_lines: { type: integer, nullable: true, description: Additions plus deletions of the task diff must be at least this. }
+        created_by: { type: string }
+        source_task_id: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        hit_count: { type: integer, description: Real (non-backtest) evaluations the rule forced to ask. }
+        last_hit_at: { type: string, format: date-time, nullable: true }
+        summary: { type: string }
+    AskRuleInput:
+      type: object
+      description: Rule conditions. At least one of path_globs, task_type, min_changed_lines is required.
+      properties:
+        path_globs: { type: array, items: { type: string }, maxItems: 20 }
+        repo_id: { type: string, nullable: true, description: Only used by backtest extra_rules to limit a draft to one repo. }
+        task_type: { type: string, nullable: true }
+        min_changed_lines: { type: integer, minimum: 1, nullable: true }
+    AutonomyGlobSuggestion:
+      type: object
+      required: [glob, kind, files]
+      properties:
+        glob: { type: string }
+        kind: { type: string, enum: [dir, ext] }
+        files: { type: integer }
+    AutonomySuggestions:
+      type: object
+      required: [task_id, workflow_id, repo_id, label, policy_approved, decision_id, diff_available, changed_files, changed_lines, path_globs, task_type, min_changed_lines]
+      properties:
+        task_id: { type: string }
+        workflow_id: { type: string }
+        repo_id: { type: string }
+        label: { type: string, description: The gate the policy approved the task at, else the task's current label. }
+        policy_approved: { type: boolean }
+        decision_id: { type: string, nullable: true }
+        diff_available: { type: boolean }
+        changed_files: { type: integer }
+        changed_lines: { type: integer }
+        path_globs: { type: array, items: { $ref: "#/components/schemas/AutonomyGlobSuggestion" } }
+        task_type: { type: string, nullable: true }
+        min_changed_lines: { type: integer, nullable: true }
+    AutonomyEscape:
+      type: object
+      required: [id, task_id, task_title, source, decision_id, actor, note, rule_id, created_at, counted]
+      properties:
+        id: { type: string }
+        task_id: { type: string }
+        task_title: { type: string }
+        source: { type: string, enum: [undo, should_have_asked, rejected_later, reopened] }
+        decision_id: { type: string, nullable: true }
+        actor: { type: string, nullable: true }
+        note: { type: string, nullable: true }
+        rule_id: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        counted: { type: boolean, description: Still counts toward the step-down threshold. }
+    AutonomyChange:
+      type: object
+      required: [id, workflow_id, label, from_mode, to_mode, actor, reason, created_at]
+      properties:
+        id: { type: string }
+        workflow_id: { type: string }
+        label: { type: string }
+        from_mode: { type: string, enum: [ask, on_flags, auto] }
+        to_mode: { type: string, enum: [ask, on_flags, auto] }
+        actor: { type: string, description: '"policy" for an automatic step-down.' }
+        reason: { type: string }
+        created_at: { type: string, format: date-time }
+    AutonomyHistory:
+      type: object
+      required: [workflow_id, label, current_mode, changes, escapes, step_down]
+      properties:
+        workflow_id: { type: string }
+        label: { type: string }
+        current_mode: { type: string, nullable: true, enum: [ask, on_flags, auto], description: Null when the label no longer exists. }
+        changes: { type: array, items: { $ref: "#/components/schemas/AutonomyChange" } }
+        escapes: { type: array, items: { $ref: "#/components/schemas/AutonomyEscape" } }
+        step_down:
+          type: object
+          required: [escapes_counted, threshold, window_days]
+          properties:
+            escapes_counted: { type: integer }
+            threshold: { type: integer }
+            window_days: { type: integer }
+    AutonomySettings:
+      type: object
+      required: [step_down_escapes, step_down_window_days]
+      properties:
+        step_down_escapes: { type: integer, minimum: 0, maximum: 100, description: Distinct escapes within the window that lower a gate one notch; 0 = never step down. }
+        step_down_window_days: { type: integer, minimum: 1, maximum: 365 }
+        updated_at: { type: string, format: date-time }
+    ShouldHaveAskedRequest:
+      type: object
+      properties:
+        rule: { $ref: "#/components/schemas/AskRuleInput" }
+        scope_repo: { type: boolean, description: Limit the rule and lesson to the task's repo. }
+        label_scope: { type: string, enum: [this_gate, all_gates], default: this_gate }
+        send_back_note: { type: string, description: Send the task back through its failure path with this note (not when done). }
+        lesson:
+          type: object
+          required: [body]
+          properties:
+            body: { type: string, maxLength: 300 }
+            kind: { type: string, default: trap }
+    ShouldHaveAskedResponse:
+      type: object
+      required: [escape, rule, lesson, sent_back, step_down, task]
+      properties:
+        escape: { $ref: "#/components/schemas/AutonomyEscape" }
+        rule: { allOf: [{ $ref: "#/components/schemas/AskRule" }], nullable: true }
+        lesson: { allOf: [{ $ref: "#/components/schemas/RepoLesson" }], nullable: true }
+        sent_back: { type: boolean }
+        send_back_error: { type: string }
+        step_down: { allOf: [{ $ref: "#/components/schemas/AutonomyChange" }], nullable: true }
+        task: { $ref: "#/components/schemas/Task" }
     AutonomyDecision:
       type: object
       description: >-
@@ -2401,6 +2547,7 @@ components:
         - $ref: "#/components/schemas/WsTaskAutonomyApprovedEvent"
         - $ref: "#/components/schemas/WsTaskAutonomyUndoneEvent"
         - $ref: "#/components/schemas/WsTaskAutonomyAskedEvent"
+        - $ref: "#/components/schemas/WsAutonomySteppedDownEvent"
         - $ref: "#/components/schemas/WsResyncEvent"
       discriminator:
         propertyName: type
@@ -2434,6 +2581,7 @@ components:
           task.autonomy_approved: "#/components/schemas/WsTaskAutonomyApprovedEvent"
           task.autonomy_undone: "#/components/schemas/WsTaskAutonomyUndoneEvent"
           task.autonomy_asked: "#/components/schemas/WsTaskAutonomyAskedEvent"
+          autonomy.stepped_down: "#/components/schemas/WsAutonomySteppedDownEvent"
           resync: "#/components/schemas/WsResyncEvent"
 
     WsTaskLabelChangedEvent:
@@ -2613,12 +2761,32 @@ components:
         task_id: { type: string }
         label: { type: string }
         decision_id: { type: string, description: Omitted when no decision row exists (evaluation_error). }
-        reason: { type: string, enum: [policy, skipped, failed, evaluation_error] }
+        reason: { type: string, enum: [policy, skipped, failed, evaluation_error, stepped_down] }
         reasons:
           type: array
           items: { type: string }
           description: Reason codes of the ask decision (policy only).
       required: [task_id, label, reason, reasons]
+
+    WsAutonomySteppedDownEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [autonomy.stepped_down] }
+        payload: { $ref: "#/components/schemas/WsAutonomySteppedDownPayload" }
+      required: [type, payload]
+    WsAutonomySteppedDownPayload:
+      type: object
+      description: A gate's autonomy mode was lowered one notch after enough escapes within the window (see GET/PUT /settings/autonomy).
+      properties:
+        workflow_id: { type: string }
+        label: { type: string }
+        from_mode: { type: string, enum: [ask, on_flags, auto] }
+        to_mode: { type: string, enum: [ask, on_flags, auto] }
+        actor: { type: string, description: Always "policy". }
+        reason: { type: string }
+        escapes: { type: integer, description: Distinct escapes counted. }
+        change_id: { type: string, description: The autonomy_changes row (see the gate history endpoint). }
+      required: [workflow_id, label, from_mode, to_mode, actor, reason, escapes, change_id]
 
     WsTaskCostWarningEvent:
       type: object
@@ -3280,6 +3448,161 @@ paths:
               schema: { $ref: "#/components/schemas/AutonomyUndoResponse" }
         "404": { description: Task not found }
         "409": { description: Last gate exit was not by the policy, task already merged or archived, or a run is live }
+
+  /tasks/{id}/autonomy/suggestions:
+    get:
+      summary: Candidate ask-rule conditions derived from a task
+      description: >
+        Deepest common directories of the changed files as `dir/**` globs (top 3
+        by file count), `*.ext` globs for specific kinds (sql, proto, yaml, ...),
+        the task type and a size threshold rounded down from the changed lines.
+        Without a diff, path_globs is empty and min_changed_lines is null.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutonomySuggestions" }
+        "404": { description: Task not found }
+
+  /tasks/{id}/autonomy/should-have-asked:
+    post:
+      summary: Report that a policy-approved task should have been asked about
+      description: >
+        Records an escape (source should_have_asked) against the task's latest
+        policy approval, optionally creates an ask rule (scoped to this gate or
+        all gates of the workflow; optionally this repo), optionally sends the
+        task back through its failure path with a note (skipped when it is
+        done) and optionally creates an active lesson with the rule's globs.
+        May step the gate down (see GET/PUT /settings/autonomy). Everything is
+        validated before anything is written.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ShouldHaveAskedRequest" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ShouldHaveAskedResponse" }
+        "400": { description: Invalid rule, lesson or label_scope }
+        "404": { description: Task not found }
+        "409": { description: Task not approved by the policy, archived, or cannot be sent back (no failure path, run live) }
+
+  /autonomy/ask-rules:
+    get:
+      summary: List ask rules
+      description: The label and repo filters also return the all-gates / all-repos rules, because those apply too.
+      parameters:
+        - { name: workflow_id, in: query, schema: { type: string } }
+        - { name: label, in: query, schema: { type: string } }
+        - { name: repo_id, in: query, schema: { type: string } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AskRule" } }
+    post:
+      summary: Create an ask rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AskRuleInput"
+                - type: object
+                  required: [workflow_id]
+                  properties:
+                    workflow_id: { type: string }
+                    label: { type: string, nullable: true }
+                    repo_id: { type: string, nullable: true }
+                    source_task_id: { type: string, nullable: true }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AskRule" }
+        "400": { description: No condition, invalid glob, or unknown workflow, label or repo }
+
+  /autonomy/ask-rules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    patch:
+      summary: Update an ask rule
+      description: Nullable fields (repo_id, label, task_type, min_changed_lines) are cleared with an explicit null. workflow_id cannot change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: "#/components/schemas/AskRuleInput"
+                - type: object
+                  properties:
+                    label: { type: string, nullable: true }
+                    repo_id: { type: string, nullable: true }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AskRule" }
+        "400": { description: The merged rule is invalid }
+        "404": { description: Rule not found }
+    delete:
+      summary: Delete an ask rule
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Rule not found }
+
+  /workflows/{id}/labels/{label}/autonomy/history:
+    get:
+      summary: A gate's autonomy changes and escapes
+      description: Newest first, up to 200 each.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: label, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutonomyHistory" }
+        "404": { description: Workflow not found }
+
+  /settings/autonomy:
+    get:
+      summary: Get the escape step-down settings
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutonomySettings" }
+    put:
+      summary: Update the escape step-down settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AutonomySettings" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutonomySettings" }
+        "400": { description: Out of range }
 
   /tasks/{id}/dependencies:
     get:
@@ -4689,6 +5012,10 @@ paths:
                 ask_on: { type: array, items: { type: string } }
                 max_cost_usd: { type: number, nullable: true }
                 days: { type: integer, minimum: 1, maximum: 90, default: 30 }
+                extra_rules:
+                  type: array
+                  description: Draft ask rules to include in the replay (scoped to this gate). Each may carry an optional repo_id.
+                  items: { $ref: "#/components/schemas/AskRuleInput" }
       responses:
         "200":
           content:

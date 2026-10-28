@@ -222,6 +222,42 @@ The approval goes through the same code as `POST /tasks/{id}/approve` (`workflow
 
 **Backtest.** Before changing a gate, `POST /workflows/{id}/labels/{label}/autonomy/backtest` with `{mode, ask_on, max_cost_usd, days}` (`days` defaults to 30, max 90; over 90 is a 400) shows what that setting would have done to recent passes. It is read-only. Each human exit from the gate in the window (forced moves ignored) is one pass: `approved` if it left via the success transition, `rejected` if via the failure path. Inputs are recomputed as of the pass: the branch diff at the newest branch commit dated before it, the verify status and total cost of the runs up to then, and the task's current `always_ask`. Flags are only computed for `on_flags`; if the branch or commit is gone the pass is `unknown` and left out of the counts. The response has `total`, `evaluated`, `unknown`, `would_skip`, `would_ask`, `rejected`, `escaped` (rejected *and* would be skipped) and `passes` (oldest first). It looks at the 500 most recent passes (`truncated: true` if more) and after about 25 seconds the unprocessed passes come back `unknown` with `timed_out: true`.
 
+**Backtesting a draft rule.** The backtest body also accepts `extra_rules` (a list of rule conditions, each optionally with a `repo_id`) and then returns a `rules` block (`null` otherwise): `{policy_approvals, evaluated, unknown, would_stop, stopped: [{task_id, title, at, rule_indexes}]}`. It replays the draft rules against the (up to 500) recent policy approvals at the gate, using each task's diff as of the approval, and counts how many it would have stopped. Stored rules also apply to the normal backtest counts. Neither touches hit counters.
+
+### Ask rules
+
+An **ask rule** forces a human decision at a gate for tasks that look like ones that have slipped through before. A rule matches when **all** of its set conditions match:
+
+| Field | Condition |
+|---|---|
+| `path_globs` | any glob matches any changed file (same syntax as [lesson](lessons.md) globs: `**`, `*`, `?`, a pattern without `/` matches the basename, a trailing `/` is a directory prefix) |
+| `task_type` | equals the task's type |
+| `min_changed_lines` | additions + deletions of the task's diff is at least this |
+
+A rule needs at least one condition. Scope: `workflow_id` (required), `label` (null = all gates of the workflow), `repo_id` (null = all repos). A match adds an `ask_rule` reason (with `rule_id`) and forces `ask` in modes `on_flags` and `auto`, and increments the rule's `hit_count` / `last_hit_at` on real evaluations (never in a backtest). Conditions that need a diff (`path_globs`, `min_changed_lines`) do not match when there is no diff (no branch, or a plan gate). Rules are managed with `GET/POST/PATCH/DELETE /autonomy/ask-rules`; the `label` and `repo_id` list filters also return the all-gates / all-repos rules because those apply too. Rules are never deleted automatically, and renaming a label leaves rules pointing at the old name (labels are name-keyed).
+
+### Escapes
+
+An **escape** is a task that got through a gate and should not have. Each is a row in `autonomy_escapes` tied to the policy approval (`decision_id`). Sources:
+
+- `undo`: someone used Undo on an auto-approval.
+- `should_have_asked`: someone reported it (below).
+- `rejected_later`: a person rejected the task (its failure path) at a later human gate within 14 days of the approval.
+- `reopened`: a person moved the task out of a terminal label within 14 days.
+
+The last two are detected automatically when a human moves the task. The detection is best effort (the policy queue drops events when full) and records at most one escape per approval; an explicit `should_have_asked` or `undo` is always recorded.
+
+### Step-down
+
+When a gate reaches **N** distinct escaped approvals within **W** days it is lowered one notch (`auto` → `on_flags` → `ask`) by the server, which never steps up automatically. N and W are set at `GET/PUT /settings/autonomy` (`step_down_escapes`, default 2, `0` = never step down; `step_down_window_days`, default 14). One bad approval reported twice (for example undo and should-have-asked) counts once. The counter restarts after any change to the gate's autonomy, automatic or by a workflow update. Stepping `auto` → `on_flags` with an empty `ask_on` sets `ask_on` to every flag code (otherwise the step would change nothing). Pending auto-approvals at the gate are cancelled (`superseded`, with a `task.autonomy_asked` event, reason `stepped_down`), so a person decides. Every change is recorded in `autonomy_changes` (actor `policy` for a step-down, otherwise the caller of the workflow update) and published as the `autonomy.stepped_down` WebSocket event and webhook. `GET /workflows/{id}/labels/{label}/autonomy/history` returns the changes and escapes (newest first) with the current step-down counter.
+
+### Should have asked
+
+`POST /tasks/{id}/autonomy/should-have-asked` is for a task the policy approved. Body: `{rule?, scope_repo, label_scope: "this_gate"|"all_gates", send_back_note?, lesson?: {body, kind?}}`. It records an escape (source `should_have_asked`), creates the ask rule when `rule` is given (for this gate or every gate of the workflow; for this repo when `scope_repo`), sends the task back through its failure path with the note (the normal reject path; skipped for a done task, and a failure is reported in `send_back_error` without undoing the rest), and creates an active lesson using the rule's globs. Everything is validated before anything is written. It is a 409 if the policy did not approve the task (create a rule with `POST /autonomy/ask-rules` instead).
+
+`GET /tasks/{id}/autonomy/suggestions` proposes rule conditions from the task: the deepest common directories of the changed files as `dir/**` (top 3 by file count), `*.ext` for specific kinds (`.sql`, `.proto`, `.yaml`, ...), the task type, and a size threshold rounded down from the changed lines (to one significant digit).
+
+Task Detail shows the decision as a banner under the review brief (inside the compact brief card on phones): green "This would auto-approve" or neutral "The gate would still ask you" with flag chips and hard stops; nothing shows in `ask` mode. Under **Details**, the "Always ask for this task" switch sets `always_ask` (with Undo).
 Home lists pending approvals under **Auto-approving** (countdown, Hold; the Undo toast after Hold approves the task immediately, since a hold can't be re-armed) and recent ones under **Approved for you today** (Undo with confirm). Neither counts toward the needs-you badge. Task Detail shows the decision as a banner under the review brief (inside the compact brief card on phones): green "This would auto-approve" or neutral "The gate would still ask you" with flag chips and hard stops; the review header shows the countdown and Hold while pending, and History shows "Approved by policy" with the reason. Under **Details**, the "Always ask for this task" switch sets `always_ask` (with Undo).
 
 ## Custom Workflows
