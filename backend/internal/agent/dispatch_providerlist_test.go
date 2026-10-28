@@ -14,7 +14,7 @@ import (
 
 // seedTaskWithProviderList creates one agent config on "ready" whose provider
 // list is [primary, fallback], plus a task on "ready".
-func (h *e2eHarness) seedTaskWithProviderList(t *testing.T, wfID string) (taskID, configID, primaryPC, fallbackPC string) {
+func (h *e2eHarness) seedTaskWithProviderList(t *testing.T, wfID string, before func(configID, primaryPC, fallbackPC string)) (taskID, configID, primaryPC, fallbackPC string) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -33,6 +33,10 @@ func (h *e2eHarness) seedTaskWithProviderList(t *testing.T, wfID string) (taskID
 		Labels:                    `["ready"]`, MaxRetries: 1, RetryBackoffSecs: 1,
 	}); err != nil {
 		t.Fatalf("create agent config: %v", err)
+	}
+	// before runs ahead of task creation so blocks are in place before any sweep sees the task.
+	if before != nil {
+		before(configID, primaryPC, fallbackPC)
 	}
 	taskID = uuid.NewString()
 	if _, err := h.q.CreateTask(ctx, gen.CreateTaskParams{
@@ -65,9 +69,9 @@ func TestE2E_ProviderList_FallsThroughToNextProvider(t *testing.T) {
 	h := newE2EHarness(t, fp)
 	h.disp.RateLimits = NewRateLimitRegistry()
 	wfID := seedE2EWorkflow(t, h.q)
-	taskID, configID, primaryPC, fallbackPC := h.seedTaskWithProviderList(t, wfID)
-
-	h.disp.RateLimits.Block(providerPool(t, h.q, primaryPC), time.Now().Add(time.Hour))
+	taskID, configID, _, fallbackPC := h.seedTaskWithProviderList(t, wfID, func(_, primaryPC, _ string) {
+		h.disp.RateLimits.Block(providerPool(t, h.q, primaryPC), time.Now().Add(time.Hour))
+	})
 
 	select {
 	case <-step.started:
@@ -96,10 +100,10 @@ func TestE2E_ProviderList_AllBlocked_NoDispatch(t *testing.T) {
 	h := newE2EHarness(t, fp)
 	h.disp.RateLimits = NewRateLimitRegistry()
 	wfID := seedE2EWorkflow(t, h.q)
-	taskID, _, primaryPC, fallbackPC := h.seedTaskWithProviderList(t, wfID)
-
-	h.disp.RateLimits.Block(providerPool(t, h.q, primaryPC), time.Now().Add(time.Hour))
-	h.disp.RateLimits.Block(providerPool(t, h.q, fallbackPC), time.Now().Add(time.Hour))
+	taskID, _, _, _ := h.seedTaskWithProviderList(t, wfID, func(_, primaryPC, fallbackPC string) {
+		h.disp.RateLimits.Block(providerPool(t, h.q, primaryPC), time.Now().Add(time.Hour))
+		h.disp.RateLimits.Block(providerPool(t, h.q, fallbackPC), time.Now().Add(time.Hour))
+	})
 	h.waitForSweeps(t, 5)
 
 	runs, err := h.q.ListAgentRuns(context.Background(), taskID)

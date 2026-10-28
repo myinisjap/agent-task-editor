@@ -28,7 +28,7 @@ SQLite with WAL (Write-Ahead Logging) enabled for better concurrent read perform
 - `tasks.sql` — task CRUD + label moves + dispatch queries
 - `human_decisions.sql` — one row per waiting_human run; question written at escalation, reply on DispatchReply; read by startRun for the HUMAN DECISIONS prompt section; not pruned by log retention
 - `workflows.sql` — workflow, label, transition, history CRUD
-- `autonomy.sql` — per-label autonomy config write, `tasks.always_ask` write, `autonomy_decisions` insert/latest (shadow decisions; slice 1 of the autonomy dial)
+- `autonomy.sql` — per-label autonomy config write, `tasks.always_ask` write, `autonomy_decisions` insert/latest plus pending/claim/hold/outcome queries, `autonomy_escapes` (undo records)
 - `agents.sql` — agent config CRUD
 - `providers.sql` — provider config CRUD (provider/model/env, shared by agent configs and chat sessions)
 - `chat.sql` — chat session CRUD (interactive PTY terminal sessions)

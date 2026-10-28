@@ -24,6 +24,13 @@ const (
 	ReasonPRConflict Reason = "pr_conflict"
 	// ReasonHumanGate means the task sits on a label only a human can move it off.
 	ReasonHumanGate Reason = "human_gate"
+	// ReasonAutoApproving means the task sits on a human gate with a pending
+	// autonomy auto-approval (hold window running). It never also reports
+	// human_gate; a person can Hold it.
+	ReasonAutoApproving Reason = "auto_approving"
+	// ReasonApprovedByPolicy tags RecentPolicyApprovals items (not returned by
+	// Compute).
+	ReasonApprovedByPolicy Reason = "approved_by_policy"
 )
 
 // Item is one task that needs a human.
@@ -45,6 +52,16 @@ type Item struct {
 	// Since is when the task started needing a human (run creation for
 	// waiting_human, otherwise the task's last update).
 	Since time.Time
+	// DueAt and DecisionID are set for ReasonAutoApproving.
+	DueAt      *time.Time
+	DecisionID string
+	// GateLabel, ApprovedAt, Note, PRURL and Undoable are set for
+	// ReasonApprovedByPolicy items.
+	GateLabel  string
+	ApprovedAt time.Time
+	Note       string
+	PRURL      string
+	Undoable   bool
 }
 
 // WorkflowDef is the label/transition graph of one workflow.
@@ -55,8 +72,10 @@ type WorkflowDef struct {
 
 // Classify returns the primary needs-me item for a task, or ok=false.
 // run is the task's active run (nil when none). Precedence:
-// waiting_human > pr_conflict > human_gate.
-func Classify(task gen.Task, run *gen.AgentRun, wf WorkflowDef) (Item, bool) {
+// waiting_human > pr_conflict > auto_approving > human_gate. pending is the
+// task's pending autonomy auto-approval (nil when none); it only counts when it
+// is for the task's current label.
+func Classify(task gen.Task, run *gen.AgentRun, wf WorkflowDef, pending *gen.AutonomyDecision) (Item, bool) {
 	if task.Archived != 0 {
 		return Item{}, false
 	}
@@ -86,6 +105,13 @@ func Classify(task gen.Task, run *gen.AgentRun, wf WorkflowDef) (Item, bool) {
 	}
 	if isHumanGate(wf, task.Label) {
 		it := base
+		if pending != nil && pending.Label == task.Label {
+			it.Reason = ReasonAutoApproving
+			it.DueAt = pending.DueAt
+			it.DecisionID = pending.ID
+			it.Since = pending.CreatedAt
+			return it, true
+		}
 		it.Reason = ReasonHumanGate
 		return it, true
 	}
@@ -129,6 +155,14 @@ func Compute(ctx context.Context, q *gen.Queries) ([]Item, error) {
 	if err != nil {
 		return nil, err
 	}
+	pendingRows, err := q.ListPendingAutonomyApprovals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	pending := map[string]*gen.AutonomyDecision{}
+	for i := range pendingRows {
+		pending[pendingRows[i].TaskID] = &pendingRows[i]
+	}
 	wfs := map[string]WorkflowDef{}
 	out := []Item{}
 	for _, t := range tasks {
@@ -158,7 +192,7 @@ func Compute(ctx context.Context, q *gen.Queries) ([]Item, error) {
 				run = &r
 			}
 		}
-		if it, ok := Classify(t, run, wf); ok {
+		if it, ok := Classify(t, run, wf, pending[t.ID]); ok {
 			out = append(out, it)
 		}
 	}
@@ -169,3 +203,96 @@ func Compute(ctx context.Context, q *gen.Queries) ([]Item, error) {
 // IsHumanGate reports whether label is a human gate in wf (the definition used
 // for ReasonHumanGate items).
 func IsHumanGate(wf WorkflowDef, label string) bool { return isHumanGate(wf, label) }
+
+// LastGateExit finds the most recent label-history row (history is oldest
+// first) whose from_label is a human gate in wf: how the task last left a
+// gate. ok=false when it never has.
+func LastGateExit(history []gen.TaskLabelHistory, wf WorkflowDef) (gen.TaskLabelHistory, bool) {
+	for i := len(history) - 1; i >= 0; i-- {
+		h := history[i]
+		if h.FromLabel != nil && isHumanGate(wf, *h.FromLabel) {
+			return h, true
+		}
+	}
+	return gen.TaskLabelHistory{}, false
+}
+
+// CanUndo reports whether an auto-approval of task can be undone: its last gate
+// exit was made by the policy actor and it is not terminal-merged. It returns
+// the gate label to move back to.
+func CanUndo(task gen.Task, history []gen.TaskLabelHistory, wf WorkflowDef) (gate string, ok bool, reason string) {
+	h, found := LastGateExit(history, wf)
+	if !found || h.ActorID == nil || *h.ActorID != "policy" || h.FromLabel == nil {
+		return "", false, "the task's last gate exit was not an auto-approval"
+	}
+	for _, l := range wf.Labels {
+		if l.Name == task.Label && l.IsTerminal != 0 && (task.GitState == "pr_merged" || task.MergeStatus == "merged") {
+			return "", false, "task is already merged; cannot undo"
+		}
+	}
+	if task.Label == *h.FromLabel {
+		return "", false, "task is already on the gate"
+	}
+	return *h.FromLabel, true, ""
+}
+
+// RecentPolicyApprovals returns the tasks the autonomy policy approved in the
+// 24 hours before now (newest first, latest approval per task, archived and
+// deleted tasks skipped) for the "Approved for you" list.
+func RecentPolicyApprovals(ctx context.Context, q *gen.Queries, now time.Time) ([]Item, error) {
+	cutoff := now.Add(-24 * time.Hour)
+	rows, err := q.ListRecentPolicyApprovals(ctx, &cutoff)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	wfs := map[string]WorkflowDef{}
+	out := []Item{}
+	for _, d := range rows {
+		if seen[d.TaskID] {
+			continue
+		}
+		seen[d.TaskID] = true
+		t, err := q.GetTask(ctx, d.TaskID)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if t.Archived != 0 {
+			continue
+		}
+		wf, ok := wfs[t.WorkflowID]
+		if !ok {
+			labels, err := q.ListWorkflowLabels(ctx, t.WorkflowID)
+			if err != nil {
+				return nil, err
+			}
+			trans, err := q.ListWorkflowTransitions(ctx, t.WorkflowID)
+			if err != nil {
+				return nil, err
+			}
+			wf = WorkflowDef{Labels: labels, Transitions: trans}
+			wfs[t.WorkflowID] = wf
+		}
+		hist, err := q.ListTaskLabelHistory(ctx, t.ID)
+		if err != nil {
+			return nil, err
+		}
+		_, undoable, _ := CanUndo(t, hist, wf)
+		it := Item{
+			TaskID: t.ID, TaskTitle: t.Title, RepoID: t.RepoID, WorkflowID: t.WorkflowID, Label: t.Label,
+			Reason: ReasonApprovedByPolicy, DecisionID: d.ID, GateLabel: d.Label, PRURL: t.PrUrl, Undoable: undoable,
+		}
+		if d.OutcomeAt != nil {
+			it.ApprovedAt = *d.OutcomeAt
+			it.Since = *d.OutcomeAt
+		}
+		if d.Note != nil {
+			it.Note = *d.Note
+		}
+		out = append(out, it)
+	}
+	return out, nil
+}

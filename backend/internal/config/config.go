@@ -234,6 +234,10 @@ func Load(path string) (Config, error) {
 			if err := yaml.Unmarshal(data, &cfg); err != nil {
 				return cfg, err
 			}
+			if _, ok := cfg.APITokens["policy"]; ok {
+				slog.Warn("ignoring api_tokens entry: \"policy\" is a reserved actor name")
+				delete(cfg.APITokens, "policy")
+			}
 		}
 	}
 
@@ -267,6 +271,10 @@ func Load(path string) (Config, error) {
 			token = strings.TrimSpace(token)
 			if !ok || name == "" || token == "" {
 				slog.Warn("skipping malformed API_TOKENS entry", "entry", pair)
+				continue
+			}
+			if name == "policy" {
+				slog.Warn("skipping API_TOKENS entry: \"policy\" is a reserved actor name")
 				continue
 			}
 			cfg.APITokens[name] = token

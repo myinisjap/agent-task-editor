@@ -232,11 +232,27 @@ branch), `truncated` and `computed_at`. Works for any task, `404` if unknown.
 No LLM calls; flags are advisory.
 
 ### `GET /tasks/{id}/autonomy-decision`
-Latest shadow autonomy decision for the task's current label (see
+Latest autonomy decision for the task's current label (see
 [workflows.md § Autonomy per gate](workflows.md#autonomy-per-gate)):
-`{id, task_id, workflow_id, label, run_id, mode, decision, reasons: [{code, detail}], created_at}`
-where `decision` is `approve` or `ask`. `404` if the task is unknown or no
-decision was recorded for its current label. Nothing is acted on.
+`{id, task_id, workflow_id, label, run_id, mode, decision, reasons: [{code, detail}], created_at, outcome, hold_seconds, due_at, note, outcome_at, outcome_actor}`
+where `decision` is `approve` or `ask`. `outcome` is null for `ask`, otherwise
+`pending`, `approved`, `held`, `superseded`, `skipped`, `failed` or `undone`; the
+other outcome fields are null until set. `404` if the task is unknown or no
+decision was recorded for its current label.
+
+### `POST /tasks/{id}/autonomy/hold`
+Cancels a pending auto-approval for the task's current label (decision outcome
+`held`); the task becomes a normal review. Returns the decision (same shape as
+above). `404` if the task is unknown; `409` if nothing is pending (for example
+it was already approved: use undo).
+
+### `POST /tasks/{id}/autonomy/undo`
+Moves a task back to the gate it left by auto-approval. Only valid when the last
+gate exit was by actor `policy`. Records label history (actor = caller, note
+`Undo auto-approval`) and an `autonomy_escapes` row (source `undo`). Returns
+`{task, pr_left_open, message}`; an already opened PR is left in place and
+`pr_left_open` is true. `404` unknown task; `409` when archived, the last gate
+exit was not by `policy`, the task is terminal-merged, or a run is live.
 
 ### `PATCH /tasks/{id}/always-ask`
 Body `{"always_ask": true|false}`. Sets the per-task override that makes the
@@ -1212,7 +1228,10 @@ Returns aggregated statistics:
 
 The single server-side definition of "needs me". Returns `{ "items": [...] }`,
 oldest first (`since` ascending). Each task appears at most once with one
-primary `reason`; precedence is `waiting_human` > `pr_conflict` > `human_gate`.
+primary `reason`; precedence is `waiting_human` > `pr_conflict` > `auto_approving` > `human_gate`.
+The response also carries `approved_by_policy`: policy approvals from the last 24h
+(`task_id, task_title, repo_id, workflow_id, label, gate_label, approved_at, note,
+decision_id, pr_url?, undoable`), latest per task, always an array.
 
 ```json
 { "items": [
@@ -1227,6 +1246,10 @@ primary `reason`; precedence is `waiting_human` > `pr_conflict` > `human_gate`.
 - `waiting_human` — the task's active run is `waiting_human`; `run_id` and
   `message` (run feedback, else notes) are set when present.
 - `pr_conflict` — `git_state` is `pr_open` and `pr_mergeable` is `conflicting`.
+- `auto_approving` — a pending auto-approval exists for the task's current gate
+  label; `due_at` is when it will be approved and `decision_id` the decision.
+  The task is not also reported as `human_gate`. Hold it with
+  `POST /tasks/{id}/autonomy/hold`.
 - `human_gate` — the task is on a non-terminal label with no agent-triggerable
   outbound transition and at least one human transition (same rule as
   `workflow.IsHumanGateLabel`), with no pending/running run. `agent_ignore`

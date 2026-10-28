@@ -25,6 +25,11 @@ export function useNeedsMeSync() {
         event.type === 'task.agent_done' ||
         event.type === 'task.needs_human' ||
         event.type === 'task.updated' ||
+        event.type === 'task.autonomy_pending' ||
+        event.type === 'task.autonomy_held' ||
+        event.type === 'task.autonomy_approved' ||
+        event.type === 'task.autonomy_undone' ||
+        event.type === 'task.autonomy_asked' ||
         event.type === 'task.git_state_changed' ||
         event.type === 'task.pr_mergeable_changed'
       ) {

@@ -43,7 +43,7 @@ func (n notification) debounceKey() string {
 	return n.Reason + ":" + n.TaskID
 }
 
-// classify inspects a raw WS event and, if it is one of the four trigger
+// classify inspects a raw WS event and, if it is one of the trigger
 // events this package cares about, resolves it into a notification. ok is
 // false for any other event type, or when classification determines the
 // event should not notify (e.g. a task.label_changed into a non-gate
@@ -57,6 +57,8 @@ func (n *Notifier) classify(ctx context.Context, ev rawEvent) (notification, boo
 		return n.classifyLabelChanged(ctx, wsevent.ToMap(ev.payload))
 	case wsevent.TypeTaskCostWarning:
 		return n.classifyCostWarning(ctx, wsevent.ToMap(ev.payload))
+	case wsevent.TypeTaskAutonomyAsked, wsevent.TypeTaskAutonomyHeld:
+		return n.classifyAutonomy(ctx, ev.eventType, wsevent.ToMap(ev.payload))
 	case wsevent.TypeSystemCostBudgetTripped:
 		return n.classifyCostBudgetTripped(wsevent.ToMap(ev.payload))
 	default:
@@ -107,6 +109,14 @@ func (n *Notifier) classifyLabelChanged(ctx context.Context, payload map[string]
 	if !workflow.IsHumanGateLabel(labels, transitions, to) {
 		return notification{}, false
 	}
+	// A gate whose autonomy mode is not "ask" notifies only when the policy
+	// hands the task to a person (task.autonomy_asked) or a person holds an
+	// auto-approval (task.autonomy_held); tasks that will auto-approve stay quiet.
+	for _, l := range labels {
+		if l.Name == to && l.AutonomyMode != "ask" {
+			return notification{}, false
+		}
+	}
 	note := notification{
 		Event:     "task.label_changed",
 		Reason:    "human_gate",
@@ -115,6 +125,41 @@ func (n *Notifier) classifyLabelChanged(ctx context.Context, payload map[string]
 		Label:     to,
 		Message:   stringField(payload, "note"),
 	}
+	n.fillTimestampAndURL(&note)
+	return note, true
+}
+
+// classifyAutonomy turns task.autonomy_asked (the policy handed the task to a
+// person) and task.autonomy_held into a human_gate notification. They share the
+// human_gate debounce key with each other.
+func (n *Notifier) classifyAutonomy(ctx context.Context, eventType string, payload map[string]any) (notification, bool) {
+	taskID, _ := payload["task_id"].(string)
+	if taskID == "" {
+		return notification{}, false
+	}
+	task, err := n.q.GetTask(ctx, taskID)
+	if err != nil {
+		return notification{}, false
+	}
+	label := stringField(payload, "label")
+	if label == "" {
+		label = task.Label
+	}
+	msg := "Auto-approval held by " + stringField(payload, "actor")
+	if eventType == wsevent.TypeTaskAutonomyAsked {
+		msg = "Needs your decision (" + stringField(payload, "reason")
+		if rs, ok := payload["reasons"].([]any); ok && len(rs) > 0 {
+			codes := make([]string, 0, len(rs))
+			for _, r := range rs {
+				if s, ok := r.(string); ok {
+					codes = append(codes, s)
+				}
+			}
+			msg += ": " + strings.Join(codes, ", ")
+		}
+		msg += ")"
+	}
+	note := notification{Event: eventType, Reason: "human_gate", TaskID: taskID, TaskTitle: task.Title, Label: label, Message: msg}
 	n.fillTimestampAndURL(&note)
 	return note, true
 }

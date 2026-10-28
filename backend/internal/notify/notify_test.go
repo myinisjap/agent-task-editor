@@ -311,3 +311,47 @@ func waitFor(t *testing.T, cond func() bool) {
 	}
 	t.Fatal("condition not met within timeout")
 }
+
+func TestNotifier_NonAskGate_SilentUntilAskedOrHeld(t *testing.T) {
+	db := setupTestDB(t)
+	q := gen.New(db.SQL())
+	wfID := defaultWorkflowID(t, q)
+	ctx := context.Background()
+
+	labels, err := q.ListWorkflowLabels(ctx, wfID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range labels {
+		if l.Name == "review-plan" {
+			if err := q.SetWorkflowLabelAutonomy(ctx, gen.SetWorkflowLabelAutonomyParams{
+				AutonomyMode: "auto", AutonomyAskOn: "[]", AutonomyHoldSeconds: 600, ID: l.ID,
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	var received atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	n := notify.New(srv.URL, "", time.Hour, q)
+	runNotifier(t, n)
+
+	task := createTestTask(t, q, "review-plan", wfID)
+	n.Publish("task.label_changed", map[string]any{"task_id": task.ID, "from": "plan", "to": "review-plan"})
+	time.Sleep(200 * time.Millisecond)
+	if got := received.Load(); got != 0 {
+		t.Fatalf("auto gate landing must not notify, got %d", got)
+	}
+
+	n.Publish("task.autonomy_asked", map[string]any{"task_id": task.ID, "label": "review-plan", "reason": "policy", "reasons": []string{"verify_failed"}})
+	waitFor(t, func() bool { return received.Load() == 1 })
+
+	held := createTestTask(t, q, "review-plan", wfID)
+	n.Publish("task.autonomy_held", map[string]any{"task_id": held.ID, "label": "review-plan", "actor": "me"})
+	waitFor(t, func() bool { return received.Load() == 2 })
+}

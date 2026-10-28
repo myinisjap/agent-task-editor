@@ -62,3 +62,29 @@ func TestEvaluate(t *testing.T) {
 		t.Fatalf("detail = %q", d.Reasons[0].Detail)
 	}
 }
+
+func TestEvaluateUndoneForcesAsk(t *testing.T) {
+	d := Evaluate(Input{Mode: ModeAuto, Undone: true})
+	if d.Decision != DecisionAsk || d.Reasons[0].Code != ReasonUndone {
+		t.Fatalf("got %+v", d)
+	}
+}
+
+func TestApprovalNote(t *testing.T) {
+	cases := []struct {
+		mode  Mode
+		flags []string
+		v     string
+		hold  int
+		want  string
+	}{
+		{ModeOnFlags, nil, "pass", 600, "Auto-approved: gate set to Ask on flags; no flags; verify passed; held 10m"},
+		{ModeOnFlags, []string{"x", "y"}, "", 0, "Auto-approved: gate set to Ask on flags; no blocking flags (x, y); no verify; no hold"},
+		{ModeAuto, []string{"x"}, "pass", 30, "Auto-approved: gate set to Auto; flags ignored; verify passed; held 30s"},
+	}
+	for _, c := range cases {
+		if got := ApprovalNote(c.mode, c.flags, c.v, c.hold); got != c.want {
+			t.Errorf("got %q want %q", got, c.want)
+		}
+	}
+}

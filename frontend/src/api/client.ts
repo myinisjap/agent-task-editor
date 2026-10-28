@@ -549,6 +549,13 @@ export const api = {
   },
   needsMe: {
     list: () => request<Schemas['NeedsMeResponse']>('/needs-me').then((r) => r.items),
+    get: () => request<Schemas['NeedsMeResponse']>('/needs-me'),
+  },
+  autonomy: {
+    hold: (taskId: string) =>
+      request<Schemas['AutonomyDecision']>(`/tasks/${taskId}/autonomy/hold`, { method: 'POST' }),
+    undo: (taskId: string) =>
+      request<Schemas['AutonomyUndoResponse']>(`/tasks/${taskId}/autonomy/undo`, { method: 'POST' }),
   },
   dashboard: {
     get: () => request<Dashboard>('/dashboard'),

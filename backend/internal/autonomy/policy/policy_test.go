@@ -1,4 +1,4 @@
-package shadow
+package policy
 
 import (
 	"context"
@@ -19,7 +19,7 @@ import (
 type env struct {
 	db     *sql.DB
 	q      *gen.Queries
-	rec    *Recorder
+	rec    *Service
 	wfID   string
 	repoID string
 	labels map[string]gen.WorkflowLabel
@@ -81,7 +81,7 @@ func (e *env) decision(t *testing.T, task gen.Task, label string) (gen.AutonomyD
 	return d, true
 }
 
-func reasonCodes(t *testing.T, d gen.AutonomyDecision) []string {
+func decisionCodes(t *testing.T, d gen.AutonomyDecision) []string {
 	var rs []autonomy.Reason
 	if err := json.Unmarshal([]byte(d.Reasons), &rs); err != nil {
 		t.Fatal(err)
@@ -118,7 +118,7 @@ func TestAlwaysAskAndVerify(t *testing.T) {
 		t.Fatal(n, err)
 	}
 	e.rec.Handle(ctx, task.ID, "review")
-	if d, ok := e.decision(t, task, "review"); !ok || d.Decision != "ask" || reasonCodes(t, d)[0] != autonomy.ReasonAlwaysAsk {
+	if d, ok := e.decision(t, task, "review"); !ok || d.Decision != "ask" || decisionCodes(t, d)[0] != autonomy.ReasonAlwaysAsk {
 		t.Fatalf("always_ask: %+v", d)
 	}
 
@@ -135,7 +135,7 @@ func TestAlwaysAskAndVerify(t *testing.T) {
 	}
 	e.rec.Handle(ctx, task2.ID, "review")
 	d, ok := e.decision(t, task2, "review")
-	if !ok || d.Decision != "ask" || reasonCodes(t, d)[0] != autonomy.ReasonVerifyFailed || d.RunID == nil {
+	if !ok || d.Decision != "ask" || decisionCodes(t, d)[0] != autonomy.ReasonVerifyFailed || d.RunID == nil {
 		t.Fatalf("verify: %+v", d)
 	}
 }
@@ -146,7 +146,7 @@ func TestOnFlagsNoBranch(t *testing.T) {
 	task := e.task(t, "review")
 	e.rec.Handle(context.Background(), task.ID, "review")
 	d, ok := e.decision(t, task, "review")
-	if !ok || d.Decision != "ask" || reasonCodes(t, d)[0] != autonomy.ReasonNoDiff {
+	if !ok || d.Decision != "ask" || decisionCodes(t, d)[0] != autonomy.ReasonNoDiff {
 		t.Fatalf("decision = %+v", d)
 	}
 }

@@ -766,3 +766,18 @@ func TestLoad_RemoteMCP_InvalidBoolFails(t *testing.T) {
 		t.Fatal("want error for non-boolean MCP_REMOTE_ENABLED")
 	}
 }
+
+func TestLoad_APITokens_ReservedPolicyNameSkipped(t *testing.T) {
+	t.Setenv("API_TOKENS", "policy:tok0,alice:tok1")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if _, ok := cfg.APITokens["policy"]; ok {
+		t.Errorf("reserved name policy must be skipped, got %v", cfg.APITokens)
+	}
+	if cfg.APITokens["alice"] != "tok1" {
+		t.Errorf("alice missing: %v", cfg.APITokens)
+	}
+}

@@ -116,14 +116,29 @@ type AgentRun struct {
 }
 
 type AutonomyDecision struct {
+	ID           string     `json:"id"`
+	TaskID       string     `json:"task_id"`
+	WorkflowID   string     `json:"workflow_id"`
+	Label        string     `json:"label"`
+	RunID        *string    `json:"run_id"`
+	Mode         string     `json:"mode"`
+	Decision     string     `json:"decision"`
+	Reasons      string     `json:"reasons"`
+	CreatedAt    time.Time  `json:"created_at"`
+	Outcome      *string    `json:"outcome"`
+	HoldSeconds  *int64     `json:"hold_seconds"`
+	DueAt        *time.Time `json:"due_at"`
+	Note         *string    `json:"note"`
+	OutcomeAt    *time.Time `json:"outcome_at"`
+	OutcomeActor *string    `json:"outcome_actor"`
+}
+
+type AutonomyEscape struct {
 	ID         string    `json:"id"`
 	TaskID     string    `json:"task_id"`
 	WorkflowID string    `json:"workflow_id"`
 	Label      string    `json:"label"`
-	RunID      *string   `json:"run_id"`
-	Mode       string    `json:"mode"`
-	Decision   string    `json:"decision"`
-	Reasons    string    `json:"reasons"`
+	Source     string    `json:"source"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 

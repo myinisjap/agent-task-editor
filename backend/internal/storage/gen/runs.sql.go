@@ -226,6 +226,26 @@ func (q *Queries) GetAgentRun(ctx context.Context, id string) (AgentRun, error) 
 	return i, err
 }
 
+const getLatestTaskLabelHistory = `-- name: GetLatestTaskLabelHistory :one
+SELECT id, task_id, from_label, to_label, "trigger", actor_id, note, created_at FROM task_label_history WHERE task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1
+`
+
+func (q *Queries) GetLatestTaskLabelHistory(ctx context.Context, taskID string) (TaskLabelHistory, error) {
+	row := q.db.QueryRowContext(ctx, getLatestTaskLabelHistory, taskID)
+	var i TaskLabelHistory
+	err := row.Scan(
+		&i.ID,
+		&i.TaskID,
+		&i.FromLabel,
+		&i.ToLabel,
+		&i.Trigger,
+		&i.ActorID,
+		&i.Note,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getLatestTaskSession = `-- name: GetLatestTaskSession :one
 SELECT ar.session_id FROM agent_runs ar
 WHERE ar.task_id = ?1 AND ar.agent_config_id = ?2 AND ar.session_id != ''
@@ -676,7 +696,7 @@ func (q *Queries) ListRunTurnsByAgentConfig(ctx context.Context) ([]ListRunTurns
 }
 
 const listTaskLabelHistory = `-- name: ListTaskLabelHistory :many
-SELECT id, task_id, from_label, to_label, "trigger", actor_id, note, created_at FROM task_label_history WHERE task_id = ? ORDER BY created_at ASC
+SELECT id, task_id, from_label, to_label, "trigger", actor_id, note, created_at FROM task_label_history WHERE task_id = ? ORDER BY created_at ASC, rowid ASC
 `
 
 func (q *Queries) ListTaskLabelHistory(ctx context.Context, taskID string) ([]TaskLabelHistory, error) {

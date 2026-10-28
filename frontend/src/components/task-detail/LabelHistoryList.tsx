@@ -91,7 +91,7 @@ export default function LabelHistoryList({
               )}
             </div>
             {entry.note && <NotePanel note={entry.note} />}
-            {onRemember && entry.trigger === 'human' && entry.note && (
+            {onRemember && entry.trigger === 'human' && entry.actor_id !== 'policy' && entry.note && (
               <button
                 onClick={() => onRemember(entry.note ?? '')}
                 aria-label="Remember for this repo"

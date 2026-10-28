@@ -16,7 +16,8 @@ export const useNeedsMeStore = create<NeedsMeState>((set) => ({
   loaded: false,
   refresh: async () => {
     try {
-      const items = await api.needsMe.list()
+      // auto_approving tasks are not waiting on the user; keep them out of the badge/queue.
+      const items = (await api.needsMe.list()).filter((i) => i.reason !== 'auto_approving')
       const byTask: Record<string, NeedsMeItem> = {}
       for (const it of items) byTask[it.task_id] = it
       set({ items, byTask, loaded: true })

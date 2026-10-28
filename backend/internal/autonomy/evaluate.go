@@ -12,6 +12,7 @@ const (
 	ReasonFlagRaised      = "flag_raised"
 	ReasonAutoPolicy      = "auto_policy"
 	ReasonNoBlockingFlags = "no_blocking_flags"
+	ReasonUndone          = "undone"
 	DecisionApprove       = "approve"
 	DecisionAsk           = "ask"
 	verifyPass            = "pass"
@@ -27,6 +28,9 @@ type Input struct {
 	CostUSD      float64
 	MaxCostUSD   *float64
 	AlwaysAsk    bool
+	// Undone is set when the task is landing on this gate because a person
+	// undid an auto-approval; the policy must not re-approve it.
+	Undone bool
 }
 
 // Reason explains part of a decision.
@@ -47,6 +51,9 @@ func Evaluate(in Input) Decision {
 		return Decision{Decision: DecisionAsk, Reasons: []Reason{{Code: ReasonModeAsk, Detail: "gate mode is ask"}}}
 	}
 	reasons := []Reason{}
+	if in.Undone {
+		reasons = append(reasons, Reason{ReasonUndone, "auto-approval was undone; a person decides"})
+	}
 	if in.AlwaysAsk {
 		reasons = append(reasons, Reason{ReasonAlwaysAsk, "task is marked always_ask"})
 	}

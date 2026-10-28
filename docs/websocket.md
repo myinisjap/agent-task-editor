@@ -511,6 +511,15 @@ can be fetched via `GET /tasks/{id}/runs/{run_id}/logs?before=…`.
 }
 ```
 
+### Autonomy events
+Published by the autonomy policy (see [workflows.md](workflows.md#autonomy-per-gate)):
+
+- `task.autonomy_pending` — `{task_id, label, decision_id, due_at, hold_seconds}`: an auto-approval is waiting out its hold window.
+- `task.autonomy_held` — `{task_id, label, decision_id, actor}`: a pending approval was held.
+- `task.autonomy_approved` — `{task_id, decision_id, from, to, note}`: the policy approved the task.
+- `task.autonomy_undone` — `{task_id, label, from, pr_url}`: an auto-approval was undone; `label` is the gate, `from` the label it left.
+- `task.autonomy_asked` — `{task_id, label, decision_id, reason, reasons}`: a person must decide. `reason` is `policy`, `skipped`, `failed` or `evaluation_error`; `reasons` are the policy reason codes.
+
 ### `resync`
 Sent to a single client when events were dropped for it. Each client has a
 bounded send buffer (256 messages) and `Hub.Publish` never blocks on a slow
@@ -548,13 +557,15 @@ external URL instead, e.g. a Slack/Discord/ntfy webhook relay. See
 for configuration (`NOTIFY_WEBHOOK_URL`, `NOTIFY_BASE_URL`,
 `NOTIFY_DEBOUNCE`). Disabled by default.
 
-**Trigger events.** Exactly four of the WS events above fan out; everything
+**Trigger events.** Exactly six of the WS events above fan out; everything
 else is ignored:
 
 | WS event | `reason` | Notes |
 |---|---|---|
 | `task.needs_human` | `needs_human` | Always fires. |
-| `task.label_changed` | `human_gate` | Only when `to` is a human-gate label per `workflow.IsHumanGateLabel` (same rule as the frontend's browser notification) — a non-gate label change never fires. |
+| `task.label_changed` | `human_gate` | Only when `to` is a human-gate label per `workflow.IsHumanGateLabel` (same rule as the frontend's browser notification) — a non-gate label change never fires, and neither does a change into a gate whose autonomy mode is not `ask` (see `task.autonomy_asked` / `task.autonomy_held`). The browser notification still fires on any human-gate change. |
+| `task.autonomy_asked` | `human_gate` | The autonomy policy handed the task to a person. |
+| `task.autonomy_held` | `human_gate` | A pending auto-approval was held. |
 | `task.cost_warning` | `cost_warning` | |
 | `system.cost_budget_tripped` | `cost_budget_tripped` | No task — task fields are omitted from the payload. |
 

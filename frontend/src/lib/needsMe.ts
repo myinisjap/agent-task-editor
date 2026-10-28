@@ -12,6 +12,8 @@ export function needsMeReasonLabel(reason: NeedsMeReason, escalationReason?: str
       return escalationReason ? escalationInfo(escalationReason).label : 'Agent asked a question'
     case 'human_gate':
       return 'Waiting for your review'
+    case 'auto_approving':
+      return 'Auto-approving'
     case 'pr_conflict':
       return 'PR has conflicts'
     default:

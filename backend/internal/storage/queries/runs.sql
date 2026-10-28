@@ -166,7 +166,10 @@ INSERT INTO task_label_history (id, task_id, from_label, to_label, trigger, acto
 VALUES (?, ?, ?, ?, ?, ?, ?);
 
 -- name: ListTaskLabelHistory :many
-SELECT * FROM task_label_history WHERE task_id = ? ORDER BY created_at ASC;
+SELECT * FROM task_label_history WHERE task_id = ? ORDER BY created_at ASC, rowid ASC;
+
+-- name: GetLatestTaskLabelHistory :one
+SELECT * FROM task_label_history WHERE task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1;
 
 -- name: ListActiveAgentRuns :many
 SELECT ar.*, t.title as task_title, ac.name as agent_name
