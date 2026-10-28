@@ -6,7 +6,7 @@ import { useTasksStore } from '../../stores/tasks'
 
 // Index route: while setup is incomplete (and the checklist has not been
 // dismissed) land on the Board, where the Get Started checklist lives;
-// otherwise show the Dashboard as before.
+// otherwise show the Home control room.
 export default function HomeRoute({ children }: { children: ReactNode }) {
   const { complete, refresh } = useSetupStatus()
   const tasksLoaded = useTasksStore((s) => s.loaded)

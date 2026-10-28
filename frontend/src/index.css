@@ -19,6 +19,8 @@
   --color-danger-solid: oklch(0.51 0.19 27);
   --color-success: oklch(0.80 0.15 160);
   --color-success-soft: oklch(0.30 0.06 163);
+  --color-gate: oklch(0.80 0.14 350);
+  --color-gate-soft: oklch(0.30 0.07 350);
   --color-warning: oklch(0.83 0.15 80);
   --color-warning-soft: oklch(0.31 0.06 70);
   --color-danger: oklch(0.75 0.15 22);
@@ -312,6 +314,8 @@
   --color-danger-solid: oklch(0.51 0.19 27);
   --color-success: oklch(0.45 0.11 160);
   --color-success-soft: oklch(0.95 0.05 163);
+  --color-gate: oklch(0.48 0.18 350);
+  --color-gate-soft: oklch(0.95 0.03 350);
   --color-warning: oklch(0.48 0.11 60);
   --color-warning-soft: oklch(0.96 0.05 90);
   --color-danger: oklch(0.50 0.19 27);

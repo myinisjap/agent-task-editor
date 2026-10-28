@@ -74,7 +74,7 @@ export function sectionFor(item: NeedsMeItem): InboxSectionKey {
   return escalationInfo(item.escalation_reason).action === 'reply' ? 'answer' : 'fix'
 }
 
-function entrySince(e: InboxEntry): string {
+export function entrySince(e: InboxEntry): string {
   switch (e.kind) {
     case 'needs_me': return e.item.since
     case 'source_edit': return e.edit.since
@@ -99,7 +99,7 @@ export function buildInbox(
   return s
 }
 
-/** The one count: nav badge, tab badge, Overview and Inbox heading all use this. */
+/** The one count: nav badge, tab badge, Home and Inbox heading all use this. */
 export function inboxCount(s: InboxSections): number {
   return s.decide.length + s.answer.length + s.fix.length
 }

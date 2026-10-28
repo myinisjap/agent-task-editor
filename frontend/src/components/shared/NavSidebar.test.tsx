@@ -39,7 +39,7 @@ describe('NavSidebar', () => {
     expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/settings')
   })
 
-  it('keeps the Overview dashboard reachable inside a collapsed Insights group', () => {
+  it('shows Home always and keeps Insights links inside a collapsed group', () => {
     render(
       <MemoryRouter initialEntries={['/board']}>
         <NavSidebar />
@@ -48,12 +48,12 @@ describe('NavSidebar', () => {
 
     const toggle = screen.getByRole('button', { name: /Insights/i })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByRole('link', { name: 'Overview' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('href', '/')
+    expect(screen.queryByRole('link', { name: 'Cost & Usage' })).not.toBeInTheDocument()
 
     fireEvent.click(toggle)
 
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('href', '/dashboard')
     expect(screen.getByRole('link', { name: 'Cost & Usage' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Performance' })).toBeInTheDocument()
   })

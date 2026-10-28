@@ -23,6 +23,7 @@ Contrast (>= 4.5:1) is enforced by `src/theme/tokens.test.ts`; edit values the C
 | `warning` / `-soft` | idem | | | |
 | `danger` / `-soft` | idem | | | |
 | `info` / `-soft` | idem | | | |
+| `gate` / `-soft` | idem (human-gate highlight: pink) | | | |
 
 **Fill vs text rule.** Status tokens are *text/icon* colours for use on surfaces
 and their own `-soft` background. Only `accent` and `danger-solid` are fills,
