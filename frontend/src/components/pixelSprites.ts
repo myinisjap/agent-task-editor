@@ -197,89 +197,200 @@ function shift(hex: string, f: number): string {
   return '#' + [c(r), c(g), c(b)].map((v) => v.toString(16).padStart(2, '0')).join('')
 }
 
-// Overlay [col,row,char] cells onto a direction's base rows.
-function frameFor(dir: Dir, overlay: Array<[number, number, string]>, extraPalette: Record<string, string> = {}): Frame {
-  const rows = DIR_ROWS[dir].map((r) => r.split(''))
-  for (const [x, y, ch] of overlay) if (rows[y]) rows[y][x] = ch
-  return { rows: rows.map((r) => r.join('')), palette: { ...BASE_PALETTE, ...extraPalette } }
+
+// ---------------------------------------------------------------------------
+// Overlays. Frames are NOT baked: composeFrame builds the base rows (direction
+// body, then the robot head if any) and only then paints these [col,row,char]
+// cells on top, so tools survive robot mode (the head used to be swapped in
+// AFTER the overlays and erased raised tools).
+type Cell = [number, number, string]
+type Overlay = { cells: Cell[]; glance?: -1 | 1 }
+export type { Overlay }
+
+// Extra palette chars used by overlays; merged into every humanoid frame.
+//   a acting arm (skin)  c pen  g magnifier glass  m hammer  f flask
+//   p stamp  s spark  y bubble
+const OVERLAY_PALETTE: Record<string, string> = {
+  a: '#f0a875', c: '#fde68a', g: '#e2e8f0', m: '#d6d3d1', f: '#2dd4bf',
+  p: '#f472b6', s: '#fde047', y: '#bae6fd',
 }
 
-const ARM = { a: '#f0a875' } // acting-arm recolor (skin) — retinted per variant
+const vline = (x: number, y0: number, y1: number, ch: string): Cell[] => {
+  const out: Cell[] = []
+  for (let y = y0; y <= y1; y++) out.push([x, y, ch])
+  return out
+}
+const rect = (x: number, y: number, w: number, h: number, ch: string): Cell[] => {
+  const out: Cell[] = []
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) out.push([x + i, y + j, ch])
+  return out
+}
+const ov = (...parts: Cell[][]): Overlay => ({ cells: parts.flat() })
 
-// 3-frame walk cycle: contact-left, passing (mid-stride, feet together), and
-// contact-right. Applied only while moving. Cells clear to '.' where a foot
-// lifts. Authored for the FRONT/BACK leg block (cols 3-11, rows 18-23).
-const WALK_LEGS: Array<Array<[number, number, string]>> = [
-  // left foot forward
-  [[2, 22, 'B'], [3, 22, 'B'], [2, 23, 'o'], [3, 23, 'o'],
-   [11, 22, '.'], [12, 22, '.'], [11, 23, '.'], [12, 23, '.'], [10, 21, 'B'], [11, 21, 'B']],
-  // passing pose: both feet centered/together (mid-stride)
-  [[5, 22, 'B'], [6, 22, 'B'], [9, 22, 'B'], [10, 22, 'B'],
-   [5, 23, 'o'], [6, 23, 'o'], [9, 23, 'o'], [10, 23, 'o']],
-  // right foot forward
-  [[12, 22, 'B'], [13, 22, 'B'], [12, 23, 'o'], [13, 23, 'o'],
-   [3, 22, '.'], [4, 22, '.'], [3, 23, '.'], [4, 23, '.'], [4, 21, 'B'], [5, 21, 'B']],
-]
+type Tooled = Exclude<Action, 'robot'>
 
-// Actions are authored against the FRONT body (worker faces viewer while
-// using a tool). Right arm cols 12-13; hand/glove row 16.
-const ACTION_FRAMES: Record<Exclude<Action, 'robot'>, Frame[]> = {
+// Front-facing action loops (6-8 frames each: anticipation, hold, follow-through).
+// Right arm is cols 12-13; the head occupies cols 4-11 so tools at cols 12-13
+// never collide with it (in robot mode too).
+const penFrame = (px: number, lift: number): Overlay =>
+  ov([[12, 13, 'a'], [(12 + px) >> 1, 14, 'a']], [[px, 15 - lift, 'c'], [px, 16 - lift, 'c']])
+const lensFrame = (gx: number, up: number): Overlay =>
+  ov([[12, 11, 'a'], [Math.min(13, gx + 2), 9 - up, 'a']], rect(gx, 6 - up, 2, 2, 'g'), [[gx + 1, 8 - up, 'g']])
+
+export const ACTION_OVERLAYS: Record<Tooled, Overlay[]> = {
+  // breathing/glancing: look left, hold, look right, hold
   idle: [
-    frameFor('front', []),
-    frameFor('front', [[7, 10, 'N'], [8, 10, 'N']]),
-    frameFor('front', []),
-    frameFor('front', [[5, 6, 'K'], [10, 6, 'K'], [6, 6, 'e'], [11, 6, 'e']]),
+    ov(), ov(), { cells: [], glance: -1 }, { cells: [], glance: -1 },
+    ov(), ov(), { cells: [], glance: 1 }, { cells: [], glance: 1 },
   ],
-  drawing: [
-    frameFor('front', [[12, 13, 'a'], [13, 14, 'a'], [13, 15, 'c'], [13, 16, 'c']], { ...ARM, c: '#fde68a' }),
-    frameFor('front', [[12, 13, 'a'], [11, 14, 'a'], [10, 15, 'c'], [10, 16, 'c']], { ...ARM, c: '#fde68a' }),
-    frameFor('front', [[12, 13, 'a'], [9, 14, 'a'], [8, 15, 'c'], [8, 16, 'c']], { ...ARM, c: '#fde68a' }),
-    frameFor('front', [[12, 13, 'a'], [11, 14, 'a'], [10, 15, 'c'], [10, 16, 'c']], { ...ARM, c: '#fde68a' }),
-  ],
-  inspecting: [
-    frameFor('front', [[12, 11, 'a'], [13, 9, 'a'], [12, 6, 'g'], [13, 6, 'g'], [12, 7, 'g'], [13, 7, 'g'], [13, 8, 'g']], { ...ARM, g: '#e2e8f0' }),
-    frameFor('front', [[12, 11, 'a'], [10, 9, 'a'], [8, 6, 'g'], [9, 6, 'g'], [8, 7, 'g'], [9, 7, 'g'], [9, 8, 'g']], { ...ARM, g: '#e2e8f0' }),
-    frameFor('front', [[12, 11, 'a'], [13, 9, 'a'], [12, 6, 'g'], [13, 6, 'g'], [12, 7, 'g'], [13, 7, 'g'], [13, 8, 'g']], { ...ARM, g: '#e2e8f0' }),
-  ],
+  // pen zigzags across the paper, then lifts
+  drawing: [penFrame(12, 0), penFrame(10, 0), penFrame(8, 0), penFrame(9, 0), penFrame(11, 0), penFrame(9, 0), penFrame(10, 1), penFrame(12, 1)],
+  // magnifier sweeps right → centre → left, then leans in for a closer look
+  inspecting: [lensFrame(12, 0), lensFrame(10, 0), lensFrame(8, 0), lensFrame(8, 1), lensFrame(8, 1), lensFrame(10, 0), lensFrame(12, 0), lensFrame(12, 0)],
   hammering: [
-    frameFor('front', [[12, 8, 'a'], [13, 6, 'a'], [12, 3, 'm'], [13, 3, 'm'], [12, 4, 'm'], [13, 4, 'm'], [13, 5, 'a']], { ...ARM, m: '#d6d3d1' }),
-    frameFor('front', [[12, 11, 'a'], [13, 11, 'a'], [12, 12, 'm'], [13, 12, 'm'], [12, 13, 'm'], [13, 13, 'm']], { ...ARM, m: '#d6d3d1' }),
-    frameFor('front', [[12, 14, 'a'], [13, 14, 'a'], [12, 15, 'm'], [13, 15, 'm'], [12, 16, 'm'], [13, 16, 'm']], { ...ARM, m: '#d6d3d1' }),
-    frameFor('front', [[12, 11, 'a'], [13, 11, 'a'], [12, 12, 'm'], [13, 12, 'm'], [12, 13, 'm'], [13, 13, 'm']], { ...ARM, m: '#d6d3d1' }),
+    ov(vline(13, 11, 13, 'a'), rect(12, 8, 2, 3, 'm')), // wind-up
+    ov(vline(13, 9, 12, 'a'), rect(12, 5, 2, 3, 'm')), // raise
+    ov(vline(13, 7, 11, 'a'), rect(12, 2, 2, 3, 'm')), // peak
+    ov(vline(13, 7, 11, 'a'), rect(12, 2, 2, 3, 'm')), // peak hold
+    ov(vline(13, 12, 14, 'a'), rect(12, 15, 2, 3, 'm')), // strike
+    ov(vline(13, 12, 14, 'a'), rect(12, 15, 2, 3, 'm'), [[14, 17, 's'], [15, 18, 's'], [14, 19, 's']]), // impact spark
+    ov(vline(13, 11, 13, 'a'), rect(12, 12, 2, 3, 'm')), // recoil
+    ov(vline(13, 11, 13, 'a'), rect(12, 10, 2, 3, 'm')),
   ],
   testing: [
-    frameFor('front', [[12, 11, 'a'], [13, 12, 'a'], [12, 8, 'f'], [13, 8, 'f'], [12, 9, 'f'], [13, 9, 'f'], [13, 7, 'f']], { ...ARM, f: '#2dd4bf' }),
-    frameFor('front', [[12, 10, 'a'], [13, 11, 'a'], [11, 7, 'f'], [12, 7, 'f'], [11, 8, 'f'], [12, 8, 'f'], [12, 6, 'f']], { ...ARM, f: '#2dd4bf' }),
-    frameFor('front', [[12, 11, 'a'], [13, 10, 'a'], [13, 6, 'f'], [13, 7, 'f'], [12, 7, 'f'], [12, 8, 'f'], [13, 8, 'f']], { ...ARM, f: '#2dd4bf' }),
-    frameFor('front', [[12, 10, 'a'], [13, 11, 'a'], [11, 7, 'f'], [12, 7, 'f'], [11, 8, 'f'], [12, 8, 'f'], [12, 6, 'f']], { ...ARM, f: '#2dd4bf' }),
+    ov([[12, 12, 'a'], [13, 12, 'a']], rect(12, 10, 2, 2, 'f'), [[13, 9, 'f']]), // low
+    ov([[12, 11, 'a'], [13, 10, 'a']], rect(12, 7, 2, 3, 'f'), [[13, 6, 'f']]), // raise
+    ov([[12, 10, 'a'], [13, 11, 'a']], rect(11, 7, 2, 2, 'f'), [[12, 6, 'f']]), // swirl left
+    ov([[12, 11, 'a'], [13, 10, 'a']], rect(12, 7, 2, 2, 'f'), [[13, 6, 'f'], [14, 7, 'f']]), // swirl right
+    ov([[12, 10, 'a'], [13, 11, 'a']], rect(11, 7, 2, 2, 'f'), [[12, 6, 'f'], [13, 4, 'y']]), // swirl left + bubble
+    ov([[12, 11, 'a'], [13, 10, 'a']], rect(12, 7, 2, 2, 'f'), [[13, 6, 'f'], [14, 7, 'f'], [12, 3, 'y'], [13, 4, 'y']]), // swirl right + bubbles
+    ov([[12, 11, 'a'], [13, 10, 'a']], rect(12, 7, 2, 3, 'f'), [[13, 6, 'f'], [13, 3, 'y']]), // upright hold
+    ov([[12, 12, 'a'], [13, 11, 'a']], rect(12, 9, 2, 2, 'f'), [[13, 8, 'f']]), // lower
   ],
   approving: [
-    frameFor('front', [[12, 8, 'a'], [13, 6, 'a'], [12, 3, 'p'], [13, 3, 'p'], [12, 4, 'p'], [13, 4, 'p'], [13, 5, 'p']], { ...ARM, p: '#f472b6' }),
-    frameFor('front', [[12, 12, 'a'], [13, 12, 'a'], [12, 13, 'p'], [13, 13, 'p'], [12, 14, 'p'], [13, 14, 'p']], { ...ARM, p: '#f472b6' }),
-    frameFor('front', [[12, 12, 'a'], [13, 12, 'a'], [12, 13, 'p'], [13, 13, 'p'], [12, 14, 'p'], [13, 14, 'p']], { ...ARM, p: '#f472b6' }),
+    ov(vline(13, 12, 13, 'a'), rect(12, 14, 2, 2, 'p')), // rest
+    ov(vline(13, 9, 12, 'a'), rect(12, 6, 2, 3, 'p')), // raise
+    ov(vline(13, 6, 11, 'a'), rect(12, 2, 2, 3, 'p')), // peak
+    ov(vline(13, 6, 11, 'a'), rect(12, 2, 2, 3, 'p')), // hold
+    ov(vline(13, 12, 14, 'a'), rect(12, 15, 2, 2, 'p')), // slam
+    ov(vline(13, 12, 14, 'a'), rect(12, 15, 2, 1, 'p'), rect(11, 16, 4, 1, 'p')), // pressed
+    ov(vline(13, 12, 14, 'a'), rect(12, 15, 2, 1, 'p'), rect(11, 16, 4, 1, 'p')), // pressed hold
+    ov(vline(13, 10, 13, 'a'), rect(12, 11, 2, 3, 'p')), // lift
   ],
   celebrating: [
-    frameFor('front', [[13, 11, 'a'], [13, 10, 'a'], [13, 9, 'a'], [13, 8, 'a'], [2, 11, 'a'], [2, 10, 'a'], [2, 9, 'a'], [2, 8, 'a']], ARM),
-    frameFor('front', [[13, 11, 'a'], [13, 12, 'a'], [13, 13, 'a'], [13, 14, 'a'], [2, 11, 'a'], [2, 12, 'a'], [2, 13, 'a'], [2, 14, 'a']], ARM),
-    frameFor('front', [[13, 10, 'a'], [13, 9, 'a'], [13, 8, 'a'], [13, 6, 'a'], [2, 10, 'a'], [2, 9, 'a'], [2, 8, 'a'], [2, 6, 'a']], ARM),
-    frameFor('front', [[13, 11, 'a'], [13, 12, 'a'], [13, 13, 'a'], [13, 14, 'a'], [2, 11, 'a'], [2, 12, 'a'], [2, 13, 'a'], [2, 14, 'a']], ARM),
+    ov(vline(13, 11, 14, 'a'), vline(2, 11, 14, 'a')), // arms down
+    ov(vline(13, 12, 14, 'a'), vline(2, 12, 14, 'a')), // crouch
+    ov(vline(13, 9, 11, 'a'), vline(2, 9, 11, 'a')), // launch
+    ov(vline(13, 6, 11, 'a'), vline(2, 6, 11, 'a')), // jump peak
+    ov(vline(13, 6, 11, 'a'), vline(2, 6, 11, 'a')),
+    ov(vline(13, 9, 11, 'a'), vline(2, 9, 11, 'a')), // falling
+    ov(vline(13, 12, 14, 'a'), vline(2, 12, 14, 'a')), // land
+    ov(vline(13, 10, 12, 'a'), vline(2, 11, 14, 'a')),
   ],
   waving: [
-    frameFor('front', [[13, 11, 'a'], [13, 12, 'a'], [13, 13, 'a'], [13, 14, 'a']], ARM),
-    frameFor('front', [[13, 11, 'a'], [13, 10, 'a'], [13, 9, 'a'], [13, 8, 'a']], ARM),
-    frameFor('front', [[13, 10, 'a'], [13, 9, 'a'], [13, 7, 'a'], [13, 6, 'a']], ARM),
-    frameFor('front', [[13, 11, 'a'], [13, 10, 'a'], [13, 9, 'a'], [13, 8, 'a']], ARM),
+    ov(vline(13, 11, 14, 'a')),
+    ov(vline(13, 8, 11, 'a')),
+    ov(vline(13, 5, 11, 'a')), // raised hand hold
+    ov(vline(13, 8, 11, 'a'), [[12, 7, 'a'], [12, 6, 'a'], [13, 7, 'a']]), // wave left
+    ov(vline(13, 8, 11, 'a'), [[14, 7, 'a'], [14, 6, 'a'], [13, 7, 'a']]), // wave right
+    ov(vline(13, 8, 11, 'a'), [[12, 7, 'a'], [12, 6, 'a'], [13, 7, 'a']]),
+    ov(vline(13, 8, 11, 'a'), [[14, 7, 'a'], [14, 6, 'a'], [13, 7, 'a']]),
+    ov(vline(13, 5, 11, 'a')), // raised hand hold
   ],
 }
 
-// Plain directional standing/walking bodies (no tool) for when a sprite is
-// walking or shown from side/back. Frame index only matters for the head-bob
-// idle wobble on front.
-const WALK_BODY: Record<Dir, Frame> = {
-  front: frameFor('front', []),
-  side: frameFor('side', []),
-  back: frameFor('back', []),
+// Back-view work frames (4 each): worker at the workstation, facing up into it.
+// Arms move on the back body (cols 2-3 / 12-13, rows 8-16); tool colour peeks
+// above the shoulder for hammering / approving / testing.
+export const BACK_WORK_OVERLAYS: Record<Tooled, Overlay[]> = {
+  idle: [ov(), ov([[13, 16, '.'], [13, 15, 'G']]), ov(), ov([[2, 16, '.'], [2, 15, 'G']])],
+  drawing: [0, 1, 2, 1].map((k) => ov([[13 - k, 15, 'a'], [13 - k, 16, 'c']])),
+  inspecting: [0, 1, 2, 1].map((k) => ov(vline(13, 12 - k, 14, 'a'))),
+  hammering: [
+    ov(vline(13, 12, 14, 'a')),
+    ov(vline(13, 10, 13, 'a'), rect(12, 7, 2, 3, 'm')),
+    ov(vline(13, 9, 12, 'a'), rect(12, 5, 2, 3, 'm')),
+    ov(vline(13, 12, 14, 'a'), rect(12, 11, 2, 2, 'm')),
+  ],
+  testing: [
+    ov(vline(13, 12, 14, 'a')),
+    ov(vline(13, 10, 13, 'a'), rect(12, 8, 2, 2, 'f')),
+    ov(vline(13, 10, 12, 'a'), rect(11, 7, 2, 2, 'f')),
+    ov(vline(13, 10, 12, 'a'), rect(12, 6, 2, 2, 'f'), [[13, 4, 'y']]),
+  ],
+  approving: [
+    ov(vline(13, 12, 14, 'a')),
+    ov(vline(13, 9, 12, 'a'), rect(12, 6, 2, 3, 'p')),
+    ov(vline(13, 8, 11, 'a'), rect(12, 4, 2, 3, 'p')),
+    ov(vline(13, 13, 15, 'a'), rect(12, 14, 2, 2, 'p')),
+  ],
+  celebrating: [
+    ov(vline(13, 8, 11, 'a'), vline(2, 8, 11, 'a')),
+    ov(vline(13, 6, 11, 'a'), vline(2, 8, 11, 'a')),
+    ov(vline(13, 8, 11, 'a'), vline(2, 6, 11, 'a')),
+    ov(vline(13, 6, 11, 'a'), vline(2, 6, 11, 'a')),
+  ],
+  waving: [
+    ov(vline(13, 6, 11, 'a'), [[12, 5, 'a']]),
+    ov(vline(13, 6, 11, 'a'), [[14, 5, 'a']]),
+    ov(vline(13, 6, 11, 'a'), [[12, 5, 'a']]),
+    ov(vline(13, 6, 11, 'a'), [[14, 5, 'a']]),
+  ],
 }
+
+// Seconds per action frame (hammering is snappy, idle is lazy). officeScene
+// adds a small per-sprite jitter so a crew doesn't animate in lockstep.
+const ACTION_DUR: Record<Action, number> = {
+  idle: 0.35, drawing: 0.16, inspecting: 0.2, hammering: 0.11, testing: 0.16,
+  robot: 0.14, approving: 0.13, celebrating: 0.13, waving: 0.14,
+}
+export function actionFrameDur(action: Action): number {
+  return ACTION_DUR[action]
+}
+
+// Vertical body offset (art pixels) per action frame; only celebrating jumps.
+export const ACTION_BOB: Partial<Record<Action, number[]>> = {
+  celebrating: [0, 1, 0, -1, -1, 0, 1, 0],
+}
+export function actionBob(action: Action, frameIndex: number): number {
+  const t = ACTION_BOB[action]
+  return t ? t[((frameIndex % t.length) + t.length) % t.length] : 0
+}
+
+// Walk cycle: contact-L, pass, contact-R, pass (4 frames per direction). Legs
+// sit in cols 3-12 / rows 18-23 for front and back. Cells '.' clear a foot.
+const WALK_LEGS: Cell[][] = [
+  // contact: left foot forward, right foot lifted
+  [[2, 22, 'B'], [3, 22, 'B'], [2, 23, 'o'], [3, 23, 'o'],
+   [11, 22, '.'], [12, 22, '.'], [11, 23, '.'], [12, 23, '.'], [10, 21, 'B'], [11, 21, 'B']],
+  // pass: feet together under the body, right foot lifting
+  [[3, 22, '.'], [4, 22, '.'], [11, 22, '.'], [12, 22, '.'], [3, 23, '.'], [4, 23, '.'], [11, 23, '.'], [12, 23, '.'],
+   [9, 21, 'B'], [10, 21, 'B'], [9, 22, 'o'], [10, 22, 'o'], [9, 23, '.'], [10, 23, '.']],
+  // contact: right foot forward, left foot lifted
+  [[12, 22, 'B'], [13, 22, 'B'], [12, 23, 'o'], [13, 23, 'o'],
+   [3, 22, '.'], [4, 22, '.'], [3, 23, '.'], [4, 23, '.'], [4, 21, 'B'], [5, 21, 'B']],
+  // pass: left foot lifting
+  [[3, 22, '.'], [4, 22, '.'], [11, 22, '.'], [12, 22, '.'], [3, 23, '.'], [4, 23, '.'], [11, 23, '.'], [12, 23, '.'],
+   [5, 21, 'B'], [6, 21, 'B'], [5, 22, 'o'], [6, 22, 'o'], [5, 23, '.'], [6, 23, '.']],
+]
+
+// Side profile (facing right): authored strides instead of shifting boots.
+// Far leg is shaded ('l' leg, 'B' boot).
+const SIDE_WALK_LEGS: Cell[][] = [
+  // near leg trails, far leg reaches forward
+  [[7, 22, '.'], [8, 22, '.'], [7, 23, '.'], [8, 23, '.'],
+   [8, 18, 'l'], [8, 19, 'l'], [9, 20, 'l'], [9, 21, 'l'], [9, 22, 'B'], [10, 22, 'B'], [9, 23, 'o'], [10, 23, 'o']],
+  // pass: legs together
+  [[4, 23, '.'], [8, 23, '.']],
+  // far leg trails, near boot plants forward
+  [[4, 20, 'l'], [4, 21, 'l'], [2, 22, 'B'], [3, 22, 'B'], [2, 23, 'o'], [3, 23, 'o'], [9, 22, 'B'], [9, 23, 'o']],
+  // pass: legs together, boot lifting
+  [[4, 22, '.'], [4, 23, '.'], [8, 22, '.'], [8, 23, '.']],
+]
+
+// Body bob (art-pixel y offset) per walk frame: raised on the pass frames.
+export const WALK_BOB: number[] = [0, -1, 0, -1]
+export const WALK_FRAME_COUNT = WALK_LEGS.length
 
 // Robot (unchanged shape; still faces the viewer, ignores direction).
 const ROBOT_ROWS_BASE = [
@@ -312,22 +423,23 @@ const ROBOT_PALETTE = {
   a: '#a5b4fc', n: '#818cf8', r: '#6366f1', V: '#e0e7ff', R: '#4f46e5',
   M: '#818cf8', j: '#3730a3', d: '#3730a3', D: '#1e1b4b', w: '#312e81',
 }
-function robotFrame(visorFill: string, antennaFill: string): Frame {
+
+// Robot action loop: a bright visor pixel-column scans left→right→left and the
+// antenna blinks every other frame.
+function robotFrame(scanCol: number, antennaOn: boolean): Frame {
   const rows = ROBOT_ROWS_BASE.map((r) => r.split(''))
   for (let x = 0; x < GRID_W; x++) {
-    if (rows[5][x] === 'V') rows[5][x] = 'v'
-    if (rows[6][x] === 'V') rows[6][x] = 'v'
+    for (const y of [5, 6]) if (rows[y][x] === 'V') rows[y][x] = x === scanCol ? 'Y' : 'v'
   }
-  return { rows: rows.map((r) => r.join('')), palette: { ...ROBOT_PALETTE, v: visorFill, a: antennaFill } }
+  return {
+    rows: rows.map((r) => r.join('')),
+    palette: { ...ROBOT_PALETTE, v: '#312e81', Y: '#e0e7ff', a: antennaOn ? '#f472b6' : '#a5b4fc' },
+  }
 }
-const ROBOT_FRAMES: Frame[] = [
-  robotFrame('#312e81', '#a5b4fc'),
-  robotFrame('#e0e7ff', '#f472b6'),
-  robotFrame('#312e81', '#a5b4fc'),
-]
+const ROBOT_FRAMES: Frame[] = [4, 5, 7, 9, 11, 10, 8, 6].map((c, i) => robotFrame(c, i % 2 === 1))
 
 export function actionFrameCount(action: Action): number {
-  return action === 'robot' ? ROBOT_FRAMES.length : ACTION_FRAMES[action].length
+  return action === 'robot' ? ROBOT_FRAMES.length : ACTION_OVERLAYS[action].length
 }
 
 // Recolor a frame's palette for one worker, deriving matching -hi/-shade tones
@@ -428,11 +540,49 @@ function robotHead(rows: string[][], dir: Dir) {
   }
 }
 
+export type ComposeOpts = {
+  blink?: boolean // eyes closed this frame (front/side only)
+  breath?: boolean // head/shoulder settle by 1 px (idle breathing)
+}
+
+// Close the eyes: 'e' cells in the face rows become skin (human) / dim visor (robot).
+function applyBlink(rows: string[][], robot: boolean) {
+  const fill = robot ? 'V' : 'K'
+  for (let y = 4; y <= 7; y++) for (let x = 0; x < rows[y].length; x++) if (rows[y][x] === 'e') rows[y][x] = fill
+}
+
+// Slide the eyes one cell sideways (idle glance), staying inside the face.
+function applyGlance(rows: string[][], robot: boolean, shiftX: number) {
+  const fill = robot ? 'V' : 'K'
+  const r = rows[6]
+  const eyes: number[] = []
+  r.forEach((c, x) => { if (c === 'e') eyes.push(x) })
+  for (const x of eyes) {
+    const nx = x + shiftX
+    if (r[nx] === fill) { r[x] = fill; r[nx] = 'e' }
+  }
+}
+
+// Drop head rows 0-9 down one row (new[1..10] = old[0..9]); row 0 empties.
+function applyBreath(rows: string[][]) {
+  for (let y = 10; y >= 1; y--) rows[y] = rows[y - 1]
+  rows[0] = new Array(GRID_W).fill('.')
+}
+
+function paint(rows: string[][], cells: Cell[]) {
+  for (const [x, y, ch] of cells) if (rows[y] && x >= 0 && x < GRID_W) rows[y][x] = ch
+}
+
+const frameCache = new Map<string, Frame>()
+
 // Compose the sprite for action + frame, optional walk-leg overlay, per-worker
-// variant, facing direction, and whether to render as a robot. While walking
-// (walkLeg >= 0) or when not front-facing, we use the plain directional body
-// instead of the tool action (you can't see someone hammering from behind).
-// The legacy standalone `robot` action keeps its distinct scanning sprite.
+// variant, facing direction, and whether to render as a robot. Layers: base
+// body → (robot head) → blink/glance/breath → walk legs OR action/back-work
+// overlay. Front-facing parked sprites show the tool action; parked sprites
+// facing back show BACK_WORK_OVERLAYS (so the worker at the desk visibly
+// works); walking uses the walk cycle. The standalone `robot` action keeps its
+// distinct scanning sprite. Results are memoised (bounded) — callers must not
+// mutate the returned frame.
 export function composeFrame(
   action: Action,
   frameIndex: number,
@@ -440,52 +590,63 @@ export function composeFrame(
   variant?: Variant,
   dir: Dir = 'front',
   robot = false,
+  opts: ComposeOpts = {},
 ): Frame {
   if (action === 'robot') {
     return ROBOT_FRAMES[frameIndex % ROBOT_FRAMES.length]
   }
-
-  let base: Frame
-  if (walkLeg >= 0 || dir !== 'front') {
-    // Walking, or facing side/back → plain directional body (+ walk legs).
-    base = WALK_BODY[dir]
-  } else {
-    const frames = ACTION_FRAMES[action]
-    base = frames[frameIndex % frames.length]
+  const walking = walkLeg >= 0
+  const blink = !!opts.blink && dir !== 'back'
+  const breath = !!opts.breath && !walking
+  const vi = variant ? VARIANTS.indexOf(variant) : -2
+  let key = ''
+  if (vi !== -1) {
+    const n = walking ? 0 : dir === 'front' ? ACTION_OVERLAYS[action].length : dir === 'back' ? 4 : 1
+    const fi = walking || dir === 'side' ? 0 : ((frameIndex % n) + n) % n
+    key = `${action}|${fi}|${walkLeg}|${vi}|${dir}|${robot ? 1 : 0}|${blink ? 1 : 0}|${breath ? 1 : 0}`
+    const hit = frameCache.get(key)
+    if (hit) return hit
   }
 
-  const rows = base.rows.map((r) => r.split(''))
-  if (walkLeg >= 0) {
-    // Side profile has a single leg column; only front/back use the L/R walk
-    // overlay. For side, nudge the boot to fake a step.
-    if (dir === 'side') {
-      const shift = walkLeg % 3 === 1 ? 0 : walkLeg % 3 === 0 ? -1 : 1
-      for (let y = 22; y <= 23; y++) {
-        const r = rows[y]
-        for (let x = 0; x < r.length; x++) if (r[x] === 'B' || r[x] === 'b' || r[x] === 'o') {
-          const nx = x + shift
-          if (nx >= 0 && nx < r.length && r[nx] === '.') { r[nx] = r[x]; r[x] = '.' }
-        }
-      }
-    } else {
-      for (const [x, y, ch] of WALK_LEGS[walkLeg % WALK_LEGS.length]) if (rows[y]) rows[y][x] = ch
-    }
-  }
-
+  const rows = DIR_ROWS[dir].map((r) => r.split(''))
   if (robot) robotHead(rows, dir)
-  const composed = { rows: rows.map((r) => r.join('')), palette: base.palette }
-  const themed = applyVariant(composed, variant)
-  if (!robot) return themed
-  // Metallic recolor on top of any variant tint. The chassis (T) still takes
-  // the variant color so a robot crew varies in body paint; the head casing can
-  // pick up a faint variant tint on the visor for extra variety.
-  const palette = { ...themed.palette, ...ROBOT_SKIN }
-  if (variant?.T) {
-    palette.T = variant.T; palette.t = shift(variant.T, 1.28); palette.u = shift(variant.T, 0.72)
-    palette.V = shift(variant.T, 0.5) // visor tinted toward the chassis color
+  let glance: -1 | 0 | 1 = 0
+  let overlay: Cell[] = []
+  if (walking) {
+    overlay = (dir === 'side' ? SIDE_WALK_LEGS : WALK_LEGS)[walkLeg % WALK_LEGS.length]
+  } else if (dir === 'front') {
+    const frames = ACTION_OVERLAYS[action]
+    const o = frames[((frameIndex % frames.length) + frames.length) % frames.length]
+    overlay = o.cells
+    glance = o.glance ?? 0
+  } else if (dir === 'back') {
+    const frames = BACK_WORK_OVERLAYS[action]
+    overlay = frames[((frameIndex % frames.length) + frames.length) % frames.length].cells
   }
-  palette.a = ROBOT_SKIN.a
-  return { rows: themed.rows, palette }
-}
+  if (blink) applyBlink(rows, robot)
+  if (glance && !blink) applyGlance(rows, robot, glance)
+  if (breath) applyBreath(rows)
+  paint(rows, overlay)
 
-export const WALK_FRAME_COUNT = WALK_LEGS.length
+  const composed: Frame = { rows: rows.map((r) => r.join('')), palette: { ...BASE_PALETTE, ...OVERLAY_PALETTE } }
+  const themed = applyVariant(composed, variant)
+  let out: Frame = themed
+  if (robot) {
+    // Metallic recolor on top of any variant tint. The chassis (T) still takes
+    // the variant color so a robot crew varies in body paint; the head casing can
+    // pick up a faint variant tint on the visor for extra variety.
+    const palette = { ...themed.palette, ...ROBOT_SKIN }
+    if (variant?.T) {
+      palette.T = variant.T; palette.t = shift(variant.T, 1.28); palette.u = shift(variant.T, 0.72)
+      palette.V = shift(variant.T, 0.5) // visor tinted toward the chassis color
+    }
+    palette.a = ROBOT_SKIN.a
+    if (breath) palette.e = '#99f6e4' // antenna pulse
+    out = { rows: themed.rows, palette }
+  }
+  if (key) {
+    if (frameCache.size > 4000) frameCache.clear()
+    frameCache.set(key, out)
+  }
+  return out
+}

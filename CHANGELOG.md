@@ -27,6 +27,7 @@ triggers the "Release" workflow the same way.
 - **Agent log no longer shows raw JSON.** Thinking-only assistant turns and `tool_progress` heartbeats from Claude Code (and any other unrecognised stream-json event) used to appear as raw JSON blobs in the run Logs tab. They are now hidden by default and shown as short readable rows when Debug is ticked.
 
 ### Changed
+- **Smoother, larger Office/Robots scene.** `TaskFactory` takes an optional `zoom` prop (integer, default 3, or `'auto'` = the largest zoom up to 6 that fits all stations in one row). Workers have 4-frame walk cycles with a body bob, eased starts and stops, idle breathing and blinking, and longer action loops (robots included). Tasks moving between labels now walk from the old station to the new one instead of popping. New and removed tasks fade in and out. Workers at human-gate stations wave and show a "!" bubble. The animation pauses while the tab is hidden; reduced-motion still shows a single static frame.
 - **Chat no longer causes a page scrollbar.** The app's `<main>` is now a flex column and the Chat page fills the remaining height (`flex-1 min-h-0`) instead of `h-full`, so the paused-provider banner above it no longer pushes the page past the viewport. Only the messages and session list scroll.
 - **Compact Board header on phones.** The workflow name is now the page heading and acts as the picker. Search, Filters (with an active-filter count) and condensed view become icon buttons. Repo, type, git state and Archived move into a Filters bottom sheet with Clear filters. The stage chips are the only column navigation (swipe still works and the active chip scrolls into view); the pager row and dots are gone. Filtered cost shows as small text under the chips when filters are active. Desktop is unchanged.
 - **No more browser pop-ups.** Archive/unarchive, pause/resume, moving a task and board bulk actions happen immediately with an Undo toast (~6s). Deleting tasks, agents, provider configs, templates, schedules, intake rules/endpoints, rotating a webhook secret, stopping a run and discarding workflow edits ask in an in-page dialog that says what will be lost; removing a repo requires typing its name. Errors show next to the control that failed (or as an error toast) with the server's message. `alert`/`confirm`/`prompt` are now blocked by lint (`no-alert`).
@@ -82,6 +83,7 @@ triggers the "Release" workflow the same way.
 - **Opt-in tool profiles for the stdio board MCP.** `mcp-board` (Chat tab and Claude Desktop) reads a new `TOOL_PROFILE` env var: unset or `create` keeps today's three tools (`list_repos`, `list_workflows`, `create_task`); `readonly`, `full` and `admin` expose the same tool sets as the remote connector's `MCP_TOOL_PROFILE`, along with its server instructions. An unknown value exits with an error. The in-app Chat tab now defaults to the `full` profile: set the backend setting `MCP_BOARD_TOOL_PROFILE` (passed through in both compose files) to `create`, `readonly`, `full` or `admin` to change it; the session's scoped token is widened to exactly the REST calls that profile's tools make (an exact method+path allowlist; no DELETE or other routes) unless it is `create`. Set `create` if chat sessions read untrusted repo code. Claude Desktop keeps `create` as the default. See `docs/board-mcp.md`.
 
 ### Changed
+- **Smoother, larger Office/Robots scene.** `TaskFactory` takes an optional `zoom` prop (integer, default 3, or `'auto'` = the largest zoom up to 6 that fits all stations in one row). Workers have 4-frame walk cycles with a body bob, eased starts and stops, idle breathing and blinking, and longer action loops (robots included). Tasks moving between labels now walk from the old station to the new one instead of popping. New and removed tasks fade in and out. Workers at human-gate stations wave and show a "!" bubble. The animation pauses while the tab is hidden; reduced-motion still shows a single static frame.
 
 - **Low-memory cancels no longer retry in a tight loop.** When the memory guard stops a run, that task now waits 60s before it is dispatched again, doubling on back-to-back low-memory stops up to 5 minutes (shown as a `retry_backoff` block reason / "Cooling down" badge). Three such stops within 3 minutes across any tasks pause new dispatch for a minute (logged, and exported as `ate_dispatch_memory_pause_active` / `ate_dispatch_memory_pauses_total`, plus `ate_memguard_cancels_total`). These stops still do not count as failures or pause the task; user cancels and shutdown are unchanged.
 - **A merged PR now finishes its task.** When GitHub reports a task's PR as merged, the board moves the task to its workflow's terminal column (as a forced move noted "PR merged") and releases any run left waiting on a human. Before, a task that bounced back for a CI fix and then merged anyway stayed stuck in its working column with a run that could never resume. Tasks with a run still in progress are left alone.
@@ -102,6 +104,7 @@ triggers the "Release" workflow the same way.
 - **Phone chat message box and touch scrolling.** On phones, Chat has a native multi-line message box with a Send button (autocorrect, swipe typing, dictation and paste work; multi-line text is sent as one bracketed paste) plus a keyboard toggle for typing directly into the terminal. Swiping the terminal now scrolls the scrollback smoothly with momentum without popping the keyboard (only taps focus), and a "Jump to latest" button appears when scrolled up. Desktop is unchanged.
 
 ### Changed
+- **Smoother, larger Office/Robots scene.** `TaskFactory` takes an optional `zoom` prop (integer, default 3, or `'auto'` = the largest zoom up to 6 that fits all stations in one row). Workers have 4-frame walk cycles with a body bob, eased starts and stops, idle breathing and blinking, and longer action loops (robots included). Tasks moving between labels now walk from the old station to the new one instead of popping. New and removed tasks fade in and out. Workers at human-gate stations wave and show a "!" bubble. The animation pauses while the tab is hidden; reduced-motion still shows a single static frame.
 
 - **Agent log retention is on by default for new installs.** Fresh databases now keep 30 days of `agent_logs` for finished runs (`completed`, `failed`, `waiting_human`) instead of keeping them forever. Existing installs keep their stored setting (including `0`, keep forever) and nothing is deleted on upgrade. Change it on the Health page or via `PUT /api/v1/log-retention/settings`; `0` turns it off.
 - **SQLite uses `synchronous=NORMAL` in WAL mode.** Commits no longer fsync every time, which cuts disk load from frequent log flushes. The database can't be corrupted by this, but the last few commits may be lost on power loss or an OS crash.
@@ -125,6 +128,7 @@ triggers the "Release" workflow the same way.
 - **`effort` now applies to `opencode`** — mapped to `opencode run --variant`, a pass-through of `low`/`medium`/`high`/`xhigh`/`max` (no clamping), omitted entirely when unset. Unlike `claude`/`codex_cli` there's no fixed vendor enum to validate against, so an unsupported variant may be silently ignored or rejected by the underlying model provider; the runner logs the requested value so this is cross-referenceable against the run's actual behavior.
 
 ### Changed
+- **Smoother, larger Office/Robots scene.** `TaskFactory` takes an optional `zoom` prop (integer, default 3, or `'auto'` = the largest zoom up to 6 that fits all stations in one row). Workers have 4-frame walk cycles with a body bob, eased starts and stops, idle breathing and blinking, and longer action loops (robots included). Tasks moving between labels now walk from the old station to the new one instead of popping. New and removed tasks fade in and out. Workers at human-gate stations wave and show a "!" bubble. The animation pauses while the tab is hidden; reduced-motion still shows a single static frame.
 - `codex_cli` cost estimates got more accurate. With no model set on the provider config, the run is now priced against the model Codex actually used (read from its session file) instead of being flagged "cost unknown". Resumed runs no longer re-bill earlier runs' tokens when Codex reports a session total. Runs stopped mid-turn (max turns, timeout, crash) still have the tokens they spent priced.
 - Bumped the pinned agent CLIs in the backend image to their latest releases: Claude Code 2.1.238 → 2.1.301, Codex 0.146.1 → 0.163.0 and Qwen Code 0.21.6 → 0.25.2 (Codex and Qwen ship in the `-all-cli` image and `INSTALL_*_CLI=true` builds). Every flag the runners pass was re-checked against the new versions.
 - **`qwen_code`'s `max_turns` cap is now actually detected.** Qwen 0.25.2 (unlike `claude`) never emits a stream-json `result` with `subtype:"error_max_turns"` when `--max-session-turns` is reached — it prints "Reached max session turns for this session...." to stderr and exits non-zero instead. The runner now matches that message and escalates to `waiting_human` like the other providers that enforce the cap, instead of exhausting the task's retry budget on what was being misclassified as a genuine failure.
@@ -176,6 +180,7 @@ triggers the "Release" workflow the same way.
 - **Backend image base moved `node:26-alpine` → `node:26-bookworm-slim`** (breaking for anything built on top of the old image) — required for the toolchain feature above: `mise`'s prebuilt python/ruby/java runtimes need glibc, which alpine's musl libc doesn't provide. `mise` and `uv` are now baked into the image (both selecting the correct amd64/arm64 release asset via `TARGETARCH`, so `arm64` builds — e.g. Apple Silicon under `dev.sh` — work the same as `amd64`), and the compose files mount two new named volumes (`mise-data`, `uv-cache`) so installed toolchains and uv's package cache persist and are shared across repos. Expect a larger image than before (Debian's base is bigger than Alpine's); if you have a derivative image that `apk add`s on top of this one, it needs to switch to `apt-get`. `su-exec` was replaced by `gosu` (Debian's equivalent) in the entrypoint — no user-facing behavior change. The entrypoint's ownership remap now skips the recursive `chown` on `mise-data`/`uv-cache` (and the other remapped state dirs) when ownership already matches the configured `PUID`/`PGID`, so a populated toolchain cache doesn't get walked on every container start. Both compose files' backend healthcheck switched from `wget` (a busybox built-in that doesn't exist on the Debian base) to `curl`. The entrypoint also now unsets the SSL/TLS override vars (`SSL_CERT_FILE`, `GIT_SSL_NO_VERIFY`, etc.) when they arrive as empty strings — compose defines them unconditionally, and a set-but-empty `SSL_CERT_FILE` made `mise` load zero CA certs and fail every toolchain download (an empty `GIT_SSL_NO_VERIFY` would likewise read as *true* to git). Proxy and CA-trust vars are additionally passed through to `mise`/`uv` during toolchain prep, so cold installs work behind corporate proxies.
 
 ### Changed
+- **Smoother, larger Office/Robots scene.** `TaskFactory` takes an optional `zoom` prop (integer, default 3, or `'auto'` = the largest zoom up to 6 that fits all stations in one row). Workers have 4-frame walk cycles with a body bob, eased starts and stops, idle breathing and blinking, and longer action loops (robots included). Tasks moving between labels now walk from the old station to the new one instead of popping. New and removed tasks fade in and out. Workers at human-gate stations wave and show a "!" bubble. The animation pauses while the tab is hidden; reduced-motion still shows a single static frame.
 - Backend image and CI now use Go 1.27.2 (the agents' baseline Go toolchain moves from 1.26 to 1.27).
 
 - **Trimmed sidebar navigation.** The top level is now Inbox, Board, Chat, Pipeline, Repos and Settings (the Overview/Cost & Usage/Performance pages sit in a collapsed Insights group). **Pipeline** (`/pipeline/workflow`, `/pipeline/agents`) combines the Workflow and Agents pages as tabs; **Settings** (`/settings/providers`, `/settings/pricing`, `/settings/intake-rules`, `/settings/templates`, `/settings/health`) folds in Providers, Pricing, Intake Rules, Templates and Health, with the failing-health dot shown on Settings and its Health tab. Old URLs (`/workflow`, `/agents`, `/providers`, `/pricing`, `/templates`, `/intake-rules`, `/health`) redirect to the new locations, so bookmarks keep working.
@@ -281,6 +286,7 @@ triggers the "Release" workflow the same way.
   count) alongside the config's current `max_turns` cap.
 
 ### Changed
+- **Smoother, larger Office/Robots scene.** `TaskFactory` takes an optional `zoom` prop (integer, default 3, or `'auto'` = the largest zoom up to 6 that fits all stations in one row). Workers have 4-frame walk cycles with a body bob, eased starts and stops, idle breathing and blinking, and longer action loops (robots included). Tasks moving between labels now walk from the old station to the new one instead of popping. New and removed tasks fade in and out. Workers at human-gate stations wave and show a "!" bubble. The animation pauses while the tab is hidden; reduced-motion still shows a single static frame.
 - **Dashboard's "Avg turns/task" renamed to "Avg runs/task" and now split
   proportionally across every contributing agent config.** The metric
   (`agent_config_stats[].avg_turns_to_done` → `avg_runs_per_task`) counts
@@ -1368,6 +1374,7 @@ triggers the "Release" workflow the same way.
   paint instead of a placeholder that immediately disappears.
 
 ### Changed
+- **Smoother, larger Office/Robots scene.** `TaskFactory` takes an optional `zoom` prop (integer, default 3, or `'auto'` = the largest zoom up to 6 that fits all stations in one row). Workers have 4-frame walk cycles with a body bob, eased starts and stops, idle breathing and blinking, and longer action loops (robots included). Tasks moving between labels now walk from the old station to the new one instead of popping. New and removed tasks fade in and out. Workers at human-gate stations wave and show a "!" bubble. The animation pauses while the tab is hidden; reduced-motion still shows a single static frame.
 - **Compose now publishes on `127.0.0.1` by default instead of all
   interfaces.** `docker-compose.yml`/`docker-compose.release.yml` previously
   bound the backend (`8080`) and frontend (`5173`) ports to `0.0.0.0` while
@@ -1639,6 +1646,7 @@ triggers the "Release" workflow the same way.
 ## [0.14.0] - 2026-07-26
 
 ### Changed
+- **Smoother, larger Office/Robots scene.** `TaskFactory` takes an optional `zoom` prop (integer, default 3, or `'auto'` = the largest zoom up to 6 that fits all stations in one row). Workers have 4-frame walk cycles with a body bob, eased starts and stops, idle breathing and blinking, and longer action loops (robots included). Tasks moving between labels now walk from the old station to the new one instead of popping. New and removed tasks fade in and out. Workers at human-gate stations wave and show a "!" bubble. The animation pauses while the tab is hidden; reduced-motion still shows a single static frame.
 - **Further mobile layout fixes across the app.** The Workflow page now stacks
   the flowchart preview and YAML editor vertically (instead of side by side)
   on narrow screens, and its legend wraps instead of overflowing. The Repo,
@@ -1865,6 +1873,7 @@ triggers the "Release" workflow the same way.
   in `localStorage`.
 
 ### Changed
+- **Smoother, larger Office/Robots scene.** `TaskFactory` takes an optional `zoom` prop (integer, default 3, or `'auto'` = the largest zoom up to 6 that fits all stations in one row). Workers have 4-frame walk cycles with a body bob, eased starts and stops, idle breathing and blinking, and longer action loops (robots included). Tasks moving between labels now walk from the old station to the new one instead of popping. New and removed tasks fade in and out. Workers at human-gate stations wave and show a "!" bubble. The animation pauses while the tab is hidden; reduced-motion still shows a single static frame.
 - **Frontend now consumes the generated OpenAPI types as its single source of
   truth.** `frontend/src/api/client.ts` previously hand-maintained a parallel
   set of ~30 request/response type definitions that could drift from the
@@ -2084,6 +2093,7 @@ triggers the "Release" workflow the same way.
     API path.
 
 ### Changed
+- **Smoother, larger Office/Robots scene.** `TaskFactory` takes an optional `zoom` prop (integer, default 3, or `'auto'` = the largest zoom up to 6 that fits all stations in one row). Workers have 4-frame walk cycles with a body bob, eased starts and stops, idle breathing and blinking, and longer action loops (robots included). Tasks moving between labels now walk from the old station to the new one instead of popping. New and removed tasks fade in and out. Workers at human-gate stations wave and show a "!" bubble. The animation pauses while the tab is hidden; reduced-motion still shows a single static frame.
 - **Safer default `CORS_ORIGINS` and a startup warning for unauthenticated
   deployments.** The default `CORS_ORIGINS` is now
   `http://localhost:5173,http://localhost:8080` instead of `*`, closing a
@@ -2435,6 +2445,7 @@ triggers the "Release" workflow the same way.
   with no `Authorization` header even when a bearer token is configured.
 
 ### Changed
+- **Smoother, larger Office/Robots scene.** `TaskFactory` takes an optional `zoom` prop (integer, default 3, or `'auto'` = the largest zoom up to 6 that fits all stations in one row). Workers have 4-frame walk cycles with a body bob, eased starts and stops, idle breathing and blinking, and longer action loops (robots included). Tasks moving between labels now walk from the old station to the new one instead of popping. New and removed tasks fade in and out. Workers at human-gate stations wave and show a "!" bubble. The animation pauses while the tab is hidden; reduced-motion still shows a single static frame.
 - **Dispatch queue visibility now gated on worker-pool saturation** (#152).
   - The `queue_position` field on task responses — and the "N in queue"
     badge it drives on `TaskCard` and the task detail header — is now only
@@ -2560,6 +2571,7 @@ triggers the "Release" workflow the same way.
   already fully wired up; this only adds the missing in-image install path.
 
 ### Changed
+- **Smoother, larger Office/Robots scene.** `TaskFactory` takes an optional `zoom` prop (integer, default 3, or `'auto'` = the largest zoom up to 6 that fits all stations in one row). Workers have 4-frame walk cycles with a body bob, eased starts and stops, idle breathing and blinking, and longer action loops (robots included). Tasks moving between labels now walk from the old station to the new one instead of popping. New and removed tasks fade in and out. Workers at human-gate stations wave and show a "!" bubble. The animation pauses while the tab is hidden; reduced-motion still shows a single static frame.
 - **Split the Dashboard into three focused pages** to reduce clutter on a
   single overloaded view. All three still read from the same `GET
   /dashboard` payload — this is a frontend-only reorganization, no backend
@@ -2650,6 +2662,7 @@ triggers the "Release" workflow the same way.
     `docs/providers/codex_cli.md`.
 
 ### Changed
+- **Smoother, larger Office/Robots scene.** `TaskFactory` takes an optional `zoom` prop (integer, default 3, or `'auto'` = the largest zoom up to 6 that fits all stations in one row). Workers have 4-frame walk cycles with a body bob, eased starts and stops, idle breathing and blinking, and longer action loops (robots included). Tasks moving between labels now walk from the old station to the new one instead of popping. New and removed tasks fade in and out. Workers at human-gate stations wave and show a "!" bubble. The animation pauses while the tab is hidden; reduced-motion still shows a single static frame.
 - **Human-readable safety-net commit messages** (#63). The pool's automatic
   "safety-net" commit — created when an agent run completes with uncommitted
   changes left in its worktree — now leads with the task title as the commit
@@ -2721,6 +2734,7 @@ triggers the "Release" workflow the same way.
     account/token.
 
 ### Changed
+- **Smoother, larger Office/Robots scene.** `TaskFactory` takes an optional `zoom` prop (integer, default 3, or `'auto'` = the largest zoom up to 6 that fits all stations in one row). Workers have 4-frame walk cycles with a body bob, eased starts and stops, idle breathing and blinking, and longer action loops (robots included). Tasks moving between labels now walk from the old station to the new one instead of popping. New and removed tasks fade in and out. Workers at human-gate stations wave and show a "!" bubble. The animation pauses while the tab is hidden; reduced-motion still shows a single static frame.
 - **Refactored `AgentConfigPage` and `TaskDetailPage`** (#62), the two largest
   and most feature-churned pages in the frontend, into smaller, independently
   readable units — no behavior change. `stores/agents.ts` now owns agent CRUD
@@ -2870,6 +2884,7 @@ triggers the "Release" workflow the same way.
   write can no longer corrupt the file and break every subsequent claude-provider run.
 
 ### Changed
+- **Smoother, larger Office/Robots scene.** `TaskFactory` takes an optional `zoom` prop (integer, default 3, or `'auto'` = the largest zoom up to 6 that fits all stations in one row). Workers have 4-frame walk cycles with a body bob, eased starts and stops, idle breathing and blinking, and longer action loops (robots included). Tasks moving between labels now walk from the old station to the new one instead of popping. New and removed tasks fade in and out. Workers at human-gate stations wave and show a "!" bubble. The animation pauses while the tab is hidden; reduced-motion still shows a single static frame.
 - Centralized the previously-scattered provider error classification (login
   detection, transient-infra detection, and rate-limit detection) into a single
   pattern table in `backend/internal/agent/errclass.go` with per-pattern unit
@@ -2945,6 +2960,7 @@ First tagged release.
 - This changelog.
 
 ### Changed
+- **Smoother, larger Office/Robots scene.** `TaskFactory` takes an optional `zoom` prop (integer, default 3, or `'auto'` = the largest zoom up to 6 that fits all stations in one row). Workers have 4-frame walk cycles with a body bob, eased starts and stops, idle breathing and blinking, and longer action loops (robots included). Tasks moving between labels now walk from the old station to the new one instead of popping. New and removed tasks fade in and out. Workers at human-gate stations wave and show a "!" bubble. The animation pauses while the tab is hidden; reduced-motion still shows a single static frame.
 - Backend image runs as the host user at runtime via `PUID`/`PGID` instead of a
   build-time `HOST_UID`/`HOST_GID` remap. `dev.sh`/`run.sh` set these from
   `id -u`/`id -g`; the build no longer bakes in a UID.
