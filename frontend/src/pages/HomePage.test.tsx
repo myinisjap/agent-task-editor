@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, renderHook, fireEvent, within } from '@testing-library/react'
+import { render, screen, renderHook, fireEvent, within, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import HomePage from './HomePage'
 import { useNeedsMeStore } from '../stores/needsMe'
@@ -19,7 +19,7 @@ vi.mock('../api/client', async () => {
     ...actual,
     api: {
       needsMe: { list: () => Promise.resolve([]) },
-      tasks: { list: () => Promise.resolve({ items: [], nextCursor: null }) },
+      tasks: { list: () => Promise.resolve({ items: [], nextCursor: null }), reviewBrief: () => Promise.resolve({ human_gate: false }), previews: () => Promise.resolve({ capture: null }) },
       health: { providers: () => Promise.resolve({ checks: [], paused_providers: [] }) },
       workflows: { list: () => Promise.resolve([]) },
     },
@@ -40,7 +40,7 @@ beforeEach(() => {
   dashValue = { label_counts: { review: 2 }, workflow_label_counts: {}, active_agents: [], repo_concurrency: [], cost_by_day: [] }
   const old = new Date(Date.now() - 2 * 3600_000).toISOString()
   const item = { task_id: 'a', task_title: 'Approve A', repo_id: 'r', workflow_id: 'w', label: 'l', reason: 'human_gate', since: old }
-  useNeedsMeStore.setState({ items: [item], byTask: {}, refresh: async () => {} } as never)
+  useNeedsMeStore.setState({ items: [item], byTask: {}, loaded: true, refresh: async () => {} } as never)
   useInboxStore.setState({
     failedEffects: [{ task: { id: 'f', title: 'F' }, effects: [], since: new Date().toISOString() }],
     sourceEdits: [],
@@ -60,6 +60,15 @@ afterEach(() => vi.unstubAllGlobals())
 const renderPage = () => render(<MemoryRouter><HomePage /></MemoryRouter>)
 
 describe('HomePage', () => {
+  it('opens the review popup from a row and closes it with Escape', async () => {
+    render(<MemoryRouter><HomePage /></MemoryRouter>)
+    fireEvent.click(screen.getByRole('button', { name: /Approve A/ }))
+    const dialog = await screen.findByRole('dialog', { name: 'Needs you review' })
+    expect(within(dialog).getByRole('heading', { name: /Needs you · 1 of 3/ })).toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
   it('shows the shared count, summary, button rows and no inline actions', () => {
     const shared = renderHook(() => useInboxCount()).result.current
     renderPage()

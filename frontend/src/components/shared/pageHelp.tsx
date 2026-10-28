@@ -113,8 +113,10 @@ export function HomeHelp() {
         <h3 className="text-fg font-semibold">Needs you</h3>
         <p>
           Everything waiting on you, grouped as Decide, Answer and Fix setup, oldest first. N is
-          the same count as the Inbox badge in the navigation. Click a row to open the task (or
-          the Inbox for items without one). Ages over 30 minutes turn amber. When something new arrives the panel is tinted and the page edge pulses pink (no pulse with reduced motion).
+          the same count as the badge on Home in the navigation. Click a row to open it in the review
+          popup: approve, request changes, reply, retry or fix without leaving Home. j/k or
+          ↑/↓ move, a approves, r requests changes (or focuses the reply), ↵ opens the full task
+          page, Esc closes. Ages over 30 minutes turn amber. When something new arrives the panel is tinted and the page edge pulses pink (no pulse with reduced motion).
         </p>
       </section>
       <section className="flex flex-col gap-1.5">

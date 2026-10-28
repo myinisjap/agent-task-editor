@@ -21,6 +21,9 @@ export default function ModalShell({
   children,
   className,
   initialFocusRef,
+  closeOnEscape = true,
+  overlayClassName,
+  testId,
 }: {
   onClose: () => void
   ariaLabel: string
@@ -29,6 +32,12 @@ export default function ModalShell({
   className?: string
   /** Element to focus when the dialog opens; falls back to the first focusable element. */
   initialFocusRef?: MutableRefObject<HTMLElement | null>
+  /** Set false when the caller routes Escape itself (default true). */
+  closeOnEscape?: boolean
+  /** Replaces the default backdrop classes (e.g. to bottom-align on phones). */
+  overlayClassName?: string
+  /** `data-testid` on the role="dialog" element. */
+  testId?: string
 }) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const previouslyFocusedRef = useRef<HTMLElement | null>(null)
@@ -50,7 +59,7 @@ export default function ModalShell({
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose()
+        if (closeOnEscape) onClose()
         return
       }
       if (e.key !== 'Tab') return
@@ -84,7 +93,7 @@ export default function ModalShell({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [onClose])
+  }, [onClose, closeOnEscape])
 
   function handleBackdropClick(e: React.MouseEvent) {
     if (e.target === e.currentTarget) onClose()
@@ -92,7 +101,8 @@ export default function ModalShell({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      className={overlayClassName ?? 'fixed inset-0 z-50 flex items-center justify-center bg-black/60'}
+      data-testid={testId}
       onClick={handleBackdropClick}
       role="dialog"
       aria-modal="true"

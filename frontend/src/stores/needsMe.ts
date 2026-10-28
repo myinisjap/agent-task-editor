@@ -4,7 +4,7 @@ import { api, type NeedsMeItem } from '../api/client'
 type NeedsMeState = {
   items: NeedsMeItem[]
   byTask: Record<string, NeedsMeItem>
-  /** True once the first fetch has succeeded. */
+  /** True once the first refresh has settled (success or failure). */
   loaded: boolean
   refresh: () => Promise<void>
 }
@@ -22,6 +22,7 @@ export const useNeedsMeStore = create<NeedsMeState>((set) => ({
       set({ items, byTask, loaded: true })
     } catch {
       /* keep the previous set on transient failures */
+      set({ loaded: true })
     }
   },
 }))

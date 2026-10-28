@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { api, type Task } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
 import { useCommandPaletteStore, type TaskCommand } from '../../stores/commandPalette'
+import { REVIEW_QUEUE_HREF } from '../../lib/inbox'
 import { PAGES, formatKeys, isMacPlatform, shortcutKeys } from '../../lib/shortcuts'
 import { useDebouncedCallback } from '../../lib/useDebouncedCallback'
 
@@ -97,10 +98,11 @@ export default function CommandPalette({ onError }: { onError: (msg: string) => 
       .catch((e: unknown) => onError(e instanceof Error ? e.message : String(e)))
   }
 
-  const actions = [
+  const actions: { id: string; label: string; shortcut: string; keywords?: string; fn: () => void }[] = [
+    { id: 'review-queue', label: 'Review queue', shortcut: 'review-queue', keywords: 'inbox needs you approve', fn: () => navigate(REVIEW_QUEUE_HREF) },
     { id: 'new-task', label: 'Create task', shortcut: 'new-task', fn: () => useCommandPaletteStore.getState().setNewTaskOpen(true) },
     { id: 'help', label: 'Keyboard shortcuts', shortcut: 'help', fn: () => useCommandPaletteStore.getState().setSheetOpen(true) },
-  ].filter((a) => matches(q, a.label))
+  ].filter((a) => matches(q, a.label, a.keywords))
   const taskCmds: TaskCommand[] = (taskContext?.commands ?? []).filter((c) => matches(q, c.label, c.keywords))
   const pages = PAGES.filter((p) => matches(q, p.label, p.keywords))
   const empty = !searching && tasks.length === 0 && actions.length === 0 && taskCmds.length === 0 && pages.length === 0
