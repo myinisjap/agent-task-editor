@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { PageFrame } from '../components/ui'
 import { useDashboard } from '../lib/useDashboard'
 import { useNeedsMeStore } from '../stores/needsMe'
@@ -8,8 +7,8 @@ import { useHealthStore } from '../stores/health'
 import { useWorkflowStore } from '../stores/workflow'
 import { useTasksStore } from '../stores/tasks'
 import { useIsPhone } from '../lib/useMediaQuery'
-import { entryHref } from '../lib/homeInbox'
-import type { InboxEntry } from '../lib/inbox'
+import { entryKey, flattenInbox, type InboxEntry } from '../lib/inbox'
+import { useReviewSelection } from '../lib/useReviewSelection'
 import HelpModal from '../components/shared/HelpModal'
 import { HomeHelp } from '../components/shared/pageHelp'
 import SceneBand from '../components/home/SceneBand'
@@ -17,11 +16,18 @@ import NeedsYouPanel from '../components/home/NeedsYouPanel'
 import RunningNowPanel from '../components/home/RunningNowPanel'
 import TodayPanel from '../components/home/TodayPanel'
 import DispatchPill from '../components/home/DispatchPill'
+import ReviewPopup from '../components/home/ReviewPopup'
 
 export default function HomePage() {
-  const navigate = useNavigate()
   const { dash } = useDashboard()
   const sections = useInboxSections()
+  const flat = useMemo(() => flattenInbox(sections), [sections])
+  const needsMeLoaded = useNeedsMeStore((st) => st.loaded)
+  const effectsLoaded = useInboxStore((st) => st.loaded)
+  const healthLoaded = useHealthStore((st) => st.loaded)
+  const { selectedKey, isOpen, openKey, move, close } = useReviewSelection(flat, needsMeLoaded && effectsLoaded && healthLoaded)
+  const openerKey = useRef<string | undefined>(undefined)
+  const wasOpen = useRef(false)
   const refreshNeedsMe = useNeedsMeStore((st) => st.refresh)
   const refreshEffects = useInboxStore((st) => st.refresh)
   const fetchHealth = useHealthStore((st) => st.fetch)
@@ -43,8 +49,26 @@ export default function HomePage() {
     if (workflows.length === 0) useWorkflowStore.getState().fetch()
   }, [workflows.length])
 
-  // The single row-activation hook; the Inbox popup task swaps this one function.
-  const onSelect = (e: InboxEntry) => navigate(entryHref(e))
+  // The single row-activation hook: opens the review popup (URL: ?task=<entryKey>).
+  const onSelect = (e: InboxEntry) => {
+    openerKey.current = entryKey(e)
+    openKey(entryKey(e))
+  }
+
+  // When the popup closes, make sure focus lands on the row that opened it (or a sensible fallback).
+  useEffect(() => {
+    if (wasOpen.current && !isOpen) {
+      const panel = document.querySelector<HTMLElement>('[data-testid="needs-you-panel"]')
+      const key = openerKey.current
+      const row = key ? Array.from(panel?.querySelectorAll<HTMLElement>('[data-entry-key]') ?? []).find((el) => el.dataset.entryKey === key) : undefined
+      const target = row ?? panel?.querySelector<HTMLElement>('[data-entry-key]') ?? panel?.querySelector<HTMLElement>('h2')
+      if (target) {
+        if (!target.matches('button, a, [tabindex]')) target.tabIndex = -1
+        target.focus()
+      }
+    }
+    wasOpen.current = isOpen
+  }, [isOpen])
 
   // MAX_WORKERS isn't in GET /dashboard; the best available figure is the
   // largest repo_concurrency limit (a repo's cap, else the global MAX_WORKERS).
@@ -87,6 +111,10 @@ export default function HomePage() {
         <HelpModal title="About Home" onClose={() => setShowHelp(false)}>
           <HomeHelp />
         </HelpModal>
+      )}
+
+      {isOpen && (
+        <ReviewPopup flat={flat} selectedKey={selectedKey} onMove={move} onClose={close} workflows={workflows} />
       )}
 
       {!dash ? (

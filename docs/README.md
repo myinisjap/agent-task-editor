@@ -6,7 +6,7 @@ Agent Task Editor is a self-hosted Kanban board where AI agents automatically wo
 
 | File | Description |
 |---|---|
-| [overview.md](overview.md) | Architecture, core concepts, feature summary, and navigation (Inbox, Board, Chat, Pipeline, Repos, Settings, Insights) |
+| [overview.md](overview.md) | Architecture, core concepts, feature summary, and navigation (Home with Needs you, Board, Chat, Pipeline, Repos, Settings, Insights) |
 | [getting-started.md](getting-started.md) | Installation, environment variables, and first steps |
 | [workflows.md](workflows.md) | Workflow state machine: labels, transitions, approve/reject, verify commands, Pipeline graph editor |
 | [agents.md](agents.md) | Agent configs, providers, dispatcher, worker pool, prompt construction |

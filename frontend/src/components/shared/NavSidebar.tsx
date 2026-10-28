@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { Bell, BellOff, ChartColumn, ChevronRight, CircleDollarSign, FolderGit2, Inbox, House, MessageSquare, Moon, Settings, SquareKanban, Sun, Workflow, X } from 'lucide-react'
+import { Bell, BellOff, ChartColumn, ChevronRight, CircleDollarSign, FolderGit2, House, MessageSquare, Moon, Settings, SquareKanban, Sun, Workflow, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { useThemeStore } from '../../stores/theme'
@@ -26,7 +26,6 @@ interface NavGroup {
 // (as URL-backed tabs). Home (the control room) is the first link; Insights
 // (Cost & Usage, Performance) is a collapsible group.
 const homeLink = { to: '/', label: 'Home', icon: House }
-const inboxLink = { to: '/inbox', label: 'Inbox', icon: Inbox }
 const primaryLinks = [
   { to: '/board', label: 'Board', icon: SquareKanban },
   { to: '/chat', label: 'Chat', icon: MessageSquare },
@@ -200,15 +199,6 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
           >
             <Icon icon={homeLink.icon} size="md" />
             {homeLink.label}
-          </NavLink>
-          <NavLink
-            to={inboxLink.to}
-            title={shortcutHint("go-inbox", "Inbox")}
-            onClick={() => setIsOpen(false)}
-            className={linkClassName}
-          >
-            <Icon icon={inboxLink.icon} size="md" />
-            {inboxLink.label}
             {inboxCount > 0 && (
               <Badge
                 tone="accent"

@@ -4,7 +4,7 @@ import { isTypingTarget } from './inboxKeys'
 export { isTypingTarget }
 
 export type GlobalAction =
-  | 'new-task' | 'go-inbox' | 'go-board' | 'go-pipeline' | 'go-settings' | 'focus-search' | 'help'
+  | 'new-task' | 'review-queue' | 'go-board' | 'go-pipeline' | 'go-settings' | 'focus-search' | 'help'
 
 export interface Shortcut {
   id: string
@@ -17,7 +17,7 @@ export interface Shortcut {
 export const SHORTCUTS: Shortcut[] = [
   { id: 'palette', keys: ['Mod', 'K'], label: 'Open command palette' },
   { id: 'new-task', keys: ['c'], label: 'New task' },
-  { id: 'go-inbox', keys: ['g', 'i'], label: 'Go to Inbox' },
+  { id: 'review-queue', keys: ['g', 'i'], label: 'Review queue' },
   { id: 'go-board', keys: ['g', 'b'], label: 'Go to Board' },
   { id: 'go-pipeline', keys: ['g', 'p'], label: 'Go to Pipeline' },
   { id: 'go-settings', keys: ['g', 's'], label: 'Go to Settings' },
@@ -25,12 +25,12 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'help', keys: ['?'], label: 'Show keyboard shortcuts' },
 ]
 
-export const INBOX_SHORTCUTS: Shortcut[] = [
+export const REVIEW_SHORTCUTS: Shortcut[] = [
   { id: 'inbox-move', keys: ['j', '/', 'k'], label: 'Move down / up (also ↓ / ↑)' },
   { id: 'inbox-approve', keys: ['a'], label: 'Approve' },
-  { id: 'inbox-reject', keys: ['r'], label: 'Request changes' },
-  { id: 'inbox-open', keys: ['Enter'], label: 'Open full page (also o)' },
-  { id: 'inbox-esc', keys: ['Esc'], label: 'Close note' },
+  { id: 'inbox-reject', keys: ['r'], label: 'Request changes (or reply)' },
+  { id: 'inbox-open', keys: ['Enter'], label: 'Open full task page (also o)' },
+  { id: 'inbox-esc', keys: ['Esc'], label: 'Close note, then the popup' },
 ]
 
 export interface PageEntry { label: string; to: string; group: string; shortcutId?: string; keywords?: string }
@@ -38,7 +38,6 @@ export interface PageEntry { label: string; to: string; group: string; shortcutI
 /** Every navigable page; mirrors the routes in App.tsx and NavSidebar. */
 export const PAGES: PageEntry[] = [
   { label: 'Home', to: '/', group: 'Go to' },
-  { label: 'Inbox', to: '/inbox', group: 'Go to', shortcutId: 'go-inbox' },
   { label: 'Board', to: '/board', group: 'Go to', shortcutId: 'go-board' },
   { label: 'Chat', to: '/chat', group: 'Go to' },
   { label: 'Pipeline: Overview', to: '/pipeline/overview', group: 'Go to', shortcutId: 'go-pipeline' },
@@ -87,7 +86,7 @@ export function isPaletteToggle(e: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrl
 }
 
 const GO: Record<string, GlobalAction> = {
-  i: 'go-inbox', b: 'go-board', p: 'go-pipeline', s: 'go-settings',
+  i: 'review-queue', b: 'go-board', p: 'go-pipeline', s: 'go-settings',
 }
 
 /** Pure matcher for the single-key / "g then x" shortcuts. */

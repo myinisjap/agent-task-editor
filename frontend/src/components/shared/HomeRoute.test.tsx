@@ -26,9 +26,9 @@ vi.mock('../../api/client', async () => {
   }
 })
 
-function renderHome() {
+function renderHome(entry = '/') {
   return render(
-    <MemoryRouter initialEntries={['/']}>
+    <MemoryRouter initialEntries={[entry]}>
       <Routes>
         <Route path="/" element={<HomeRoute><div>DASH</div></HomeRoute>} />
         <Route path="/board" element={<div>BOARD</div>} />
@@ -56,6 +56,11 @@ describe('HomeRoute', () => {
   it('redirects to the Board while setup is incomplete', async () => {
     renderHome()
     expect(await screen.findByText('BOARD')).toBeInTheDocument()
+  })
+
+  it('stays on Home for review popup deep links while setup is incomplete', async () => {
+    renderHome('/?task=t1')
+    expect(await screen.findByText('DASH')).toBeInTheDocument()
   })
 
   it('shows the Dashboard once setup is complete', async () => {

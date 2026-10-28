@@ -28,9 +28,10 @@ describe('NavSidebar', () => {
       </MemoryRouter>,
     )
 
-    for (const name of ['Inbox', 'Board', 'Chat', 'Pipeline', 'Repos', 'Settings']) {
+    for (const name of ['Home', 'Board', 'Chat', 'Pipeline', 'Repos', 'Settings']) {
       expect(screen.getByRole('link', { name })).toBeInTheDocument()
     }
+    expect(screen.queryByRole('link', { name: 'Inbox' })).not.toBeInTheDocument()
     // Folded into Pipeline / Settings tabs, so no longer top-level links.
     for (const name of ['Workflow', 'Agents', 'Providers', 'Pricing', 'Templates', 'Intake Rules', 'Health']) {
       expect(screen.queryByRole('link', { name })).not.toBeInTheDocument()

@@ -3,13 +3,13 @@
   "short_name": "AgentEditor",
   "description": "Kanban-style task board for orchestrating coding agents",
   "id": "./",
-  "start_url": "./inbox",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#020617",
   "theme_color": "#020617",
   "shortcuts": [
-    { "name": "Inbox", "url": "./inbox" },
+    { "name": "Review queue", "url": "./?review=1" },
     { "name": "Board", "url": "./board" },
     { "name": "Chat", "url": "./chat" }
   ],
