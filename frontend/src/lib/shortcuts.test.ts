@@ -13,7 +13,7 @@ describe('globalShortcutAction', () => {
   it('resolves g sequences and clears pending on other keys', () => {
     const g = globalShortcutAction(ev('g'), null)
     expect(g).toEqual({ action: null, pending: 'g' })
-    expect(globalShortcutAction(ev('i'), 'g').action).toBe('go-inbox')
+    expect(globalShortcutAction(ev('i'), 'g').action).toBe('review-queue')
     expect(globalShortcutAction(ev('b'), 'g').action).toBe('go-board')
     expect(globalShortcutAction(ev('p'), 'g').action).toBe('go-pipeline')
     expect(globalShortcutAction(ev('s'), 'g').action).toBe('go-settings')

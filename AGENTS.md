@@ -52,7 +52,7 @@ agent-task-editor/
 │       ├── logretention/     # Periodic pruning of agent_logs for terminal runs; DB-backed settings
 │       ├── metrics/          # Process-wide Prometheus registry and custom collectors (leaf package)
 │       ├── memguard/         # Last-resort memory watchdog that cancels a single runaway agent run
-│       ├── needsme/          # Single server-side definition of which tasks need a human and why (drives GET /needs-me, Inbox, badges)
+│       ├── needsme/          # Single server-side definition of which tasks need a human and why (drives GET /needs-me, Needs-you panel/review popup, badges)
 │       ├── notify/           # Optional outbound webhook when a task needs a human (NOTIFY_WEBHOOK_URL)
 │       ├── reviewbrief/      # Deterministic review brief for human-gate tasks: diff risk flags, verification/run summary (GET /tasks/{id}/review-brief, needs-me risk_flags); also owns the shared task-diff git logic
 │       ├── remotemcp/        # Remote MCP endpoint (/mcp, streamable HTTP) + Google-backed OAuth server for claude.ai connectors; off unless MCP_REMOTE_ENABLED=true
@@ -70,7 +70,7 @@ agent-task-editor/
     └── src/
         ├── api/              # REST client, WS client, shared types
         ├── components/       # Board, diff viewer, shared UI
-        ├── pages/            # Board, Inbox, TaskDetail, Pipeline (overview/workflow/agents), Settings (providers/pricing/intake/templates/health), Repos, Chat, Insights (Dashboard/Usage/Performance)
+        ├── pages/            # Board, Home (components/home/ReviewPopup), TaskDetail, Pipeline (overview/workflow/agents), Settings (providers/pricing/intake/templates/health), Repos, Chat, Insights (Dashboard/Usage/Performance)
         └── stores/           # Zustand stores
 ```
 

@@ -17,9 +17,9 @@ describe('entry helpers', () => {
     expect(entryTitle(prov)).toBe('claude paused')
     expect(entryTitle({ kind: 'weird' } as unknown as InboxEntry)).toBe('Item')
   })
-  it('links to the task or the inbox', () => {
-    expect(entryHref(needs)).toBe('/tasks/a')
-    expect(entryHref(prov)).toBe('/inbox?task=provider%3Aclaude')
+  it('links to the review popup', () => {
+    expect(entryHref(needs)).toBe('/?task=a')
+    expect(entryHref(prov)).toBe('/?task=provider%3Aclaude')
   })
   it('section titles with fallback', () => {
     expect(sectionTitle('fix')).toBe('Fix setup')

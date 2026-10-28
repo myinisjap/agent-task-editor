@@ -14,7 +14,7 @@ function Loc() {
 }
 function setup() {
   return render(
-    <MemoryRouter initialEntries={['/inbox']}>
+    <MemoryRouter initialEntries={['/']}>
       <CommandHost />
       <Loc />
       <input data-testid="field" />
@@ -79,11 +79,12 @@ describe('CommandHost', () => {
     await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent('/board'))
   })
 
-  it('? opens the shortcut sheet including Inbox keys', async () => {
+  it('? opens the shortcut sheet including review queue keys', async () => {
     setup()
     key('?', { shiftKey: true })
     expect(await screen.findByRole('dialog', { name: 'Keyboard shortcuts' })).toBeInTheDocument()
-    expect(screen.getByText('Request changes')).toBeInTheDocument()
+    expect(screen.getByText('Review queue (Needs-you popup)')).toBeInTheDocument()
+    expect(screen.getByText('Request changes (or reply)')).toBeInTheDocument()
   })
 
   it('shows and runs the current task commands', async () => {

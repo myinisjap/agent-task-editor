@@ -31,20 +31,26 @@ export function inboxKeyAction(e: KeyLike): InboxKeyAction | null {
   }
 }
 
-export function useInboxKeyboard(enabled: boolean, handler: (action: InboxKeyAction) => void) {
+/**
+ * `opts.ownDialogTestId`: the caller is itself a dialog (the review popup), so only
+ * a *different* open dialog (lightbox, palette, help) takes the keyboard.
+ */
+export function useInboxKeyboard(enabled: boolean, handler: (action: InboxKeyAction) => void, opts?: { ownDialogTestId?: string }) {
   const ref = useRef(handler)
   useEffect(() => { ref.current = handler })
+  const ownId = opts?.ownDialogTestId
   useEffect(() => {
     if (!enabled) return
     const onKey = (e: KeyboardEvent) => {
       const action = inboxKeyAction(e)
       if (!action) return
       // A modal or lightbox owns the keyboard while open.
-      if (document.querySelector('[role="dialog"]')) return
+      const sel = ownId ? `[role="dialog"]:not([data-testid="${ownId}"])` : '[role="dialog"]'
+      if (document.querySelector(sel)) return
       e.preventDefault()
       ref.current(action)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [enabled])
+  }, [enabled, ownId])
 }
