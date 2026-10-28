@@ -7554,6 +7554,17 @@ export interface components {
                  */
                 monthly_forecast_usd?: number;
             } | null;
+            /** @description Activity since local midnight in the server's timezone (window is [midnight, next midnight)). Feeds the control-room Today panel. */
+            today: {
+                /** @description Distinct non-archived tasks that entered a terminal (is_terminal) label today, counted from task label history. A task that reached done more than once today counts once. */
+                done_count: number;
+                /** @description Verification results recorded today (run_verifications rows; same source as the task.verification WS event). */
+                verify_total: number;
+                /** @description How many of verify_total have status pass. The client computes the pass rate. */
+                verify_passed: number;
+                /** @description Agent runs whose started_at is today. */
+                runs_started: number;
+            };
         };
         /** @description Per-agent-config outcome-quality analytics: did the work stick, not just did the run exit cleanly. See [docs/api.md#dashboard](../docs/api.md#dashboard) for full metric definitions, attribution rules, and caveats. */
         OutcomeQuality: {

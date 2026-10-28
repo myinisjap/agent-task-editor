@@ -12,6 +12,7 @@ import (
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/providers"
+	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -42,13 +43,54 @@ type DashboardHandler struct {
 	// dashboard response's global_cost_budget field is omitted.
 	globalCost GlobalCostReporter
 
+	// now is the clock for the "today" window (overridable in tests).
+	now func() time.Time
+
 	usageMu       sync.Mutex
 	cachedUsage   claudeUsageResponse
 	cachedUsageAt time.Time
 }
 
 func NewDashboardHandler(q *gen.Queries, maxWorkers int, globalCost GlobalCostReporter) *DashboardHandler {
-	return &DashboardHandler{q: q, maxWorkers: maxWorkers, globalCost: globalCost}
+	return &DashboardHandler{q: q, maxWorkers: maxWorkers, globalCost: globalCost, now: time.Now}
+}
+
+// SetClock overrides the clock used for the "today" window (tests).
+// Midnight is computed in the returned time's Location.
+func (h *DashboardHandler) SetClock(now func() time.Time) { h.now = now }
+
+// todayStats is activity since local midnight.
+type todayStats struct {
+	DoneCount    int64 `json:"done_count"`
+	VerifyTotal  int64 `json:"verify_total"`
+	VerifyPassed int64 `json:"verify_passed"`
+	RunsStarted  int64 `json:"runs_started"`
+}
+
+// localDayRange returns the [start, end) window of now's calendar day as
+// canonical UTC timestamps. Midnight is local to now's Location (the server's
+// TZ / time.Local by default), unlike hoursRemainingInDay which uses UTC.
+func localDayRange(now time.Time) (start, end string) {
+	s := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	return storage.FormatTime(s), storage.FormatTime(s.AddDate(0, 0, 1))
+}
+
+func (h *DashboardHandler) today(ctx context.Context) (todayStats, error) {
+	start, end := localDayRange(h.now())
+	var t todayStats
+	done, err := h.q.CountTasksDoneInRange(ctx, gen.CountTasksDoneInRangeParams{RangeStart: start, RangeEnd: end})
+	if err != nil {
+		return t, err
+	}
+	v, err := h.q.CountVerificationsInRange(ctx, gen.CountVerificationsInRangeParams{RangeStart: start, RangeEnd: end})
+	if err != nil {
+		return t, err
+	}
+	runs, err := h.q.CountRunsStartedInRange(ctx, gen.CountRunsStartedInRangeParams{RangeStart: start, RangeEnd: end})
+	if err != nil {
+		return t, err
+	}
+	return todayStats{DoneCount: done, VerifyTotal: v.Total, VerifyPassed: v.Passed, RunsStarted: runs}, nil
 }
 
 type dashboardResponse struct {
@@ -67,6 +109,7 @@ type dashboardResponse struct {
 	ClaudeUsage         claudeUsageResponse       `json:"claude_usage"`
 	RepoConcurrency     []repoConcurrencyRow      `json:"repo_concurrency"`
 	GlobalCostBudget    *globalCostBudgetView     `json:"global_cost_budget,omitempty"`
+	Today               todayStats                `json:"today"`
 }
 
 // repoCostRow is a per-repo token/cost rollup (see SumUsageByRepo), the
@@ -333,6 +376,12 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	today, err := h.today(ctx)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	taskCosts, err := h.q.SumUsageByTask(ctx)
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -406,6 +455,7 @@ func (h *DashboardHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	JSON(w, http.StatusOK, dashboardResponse{
+		Today:               today,
 		LabelCounts:         counts,
 		WorkflowLabelCounts: wfCounts,
 		ActiveAgents:        activeRows,

@@ -32,6 +32,7 @@ vi.mock('../api/ws', () => ({
 }))
 
 const dashboard: Dashboard = {
+  today: { done_count: 0, verify_total: 0, verify_passed: 0, runs_started: 0 },
   label_counts: {},
   workflow_label_counts: {},
   active_agents: [],

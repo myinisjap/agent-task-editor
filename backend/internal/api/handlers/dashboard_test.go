@@ -2,6 +2,7 @@ package handlers_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -1034,5 +1035,172 @@ func TestDashboardGet_GlobalCostBudget_SurfacesStatusAndForecast(t *testing.T) {
 	}
 	if body.GlobalCostBudget.MonthlyForecastUSD == nil || *body.GlobalCostBudget.MonthlyForecastUSD < 3.50 {
 		t.Errorf("expected a monthly forecast >= this month's already-recorded spend, got %v", body.GlobalCostBudget.MonthlyForecastUSD)
+	}
+}
+
+type todayEnv struct {
+	t      *testing.T
+	db     interface{ SQL() *sql.DB }
+	q      *gen.Queries
+	wfID   string
+	repoID string
+	done   string
+}
+
+func newTodayEnv(t *testing.T) *todayEnv {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	_ = os.Unsetenv("ANTHROPIC_AUTH_TOKEN")
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	ctx := context.Background()
+	wfs, err := q.ListWorkflows(ctx)
+	if err != nil || len(wfs) == 0 {
+		t.Fatalf("list workflows: %v", err)
+	}
+	e := &todayEnv{t: t, db: db, q: q, wfID: wfs[0].ID, repoID: uuid.NewString()}
+	if err := db.SQL().QueryRow(
+		`SELECT name FROM workflow_labels WHERE workflow_id = ? AND is_terminal != 0 LIMIT 1`, e.wfID,
+	).Scan(&e.done); err != nil {
+		t.Fatalf("find terminal label: %v", err)
+	}
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{
+		ID: e.repoID, Name: "repo", Path: t.TempDir(), WorkflowID: &e.wfID,
+	}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	return e
+}
+
+func (e *todayEnv) exec(query string, args ...any) {
+	e.t.Helper()
+	if _, err := e.db.SQL().Exec(query, args...); err != nil {
+		e.t.Fatalf("exec %q: %v", query, err)
+	}
+}
+
+func (e *todayEnv) task() string {
+	e.t.Helper()
+	tk, err := e.q.CreateTask(context.Background(), gen.CreateTaskParams{
+		ID: uuid.NewString(), Title: "t", WorkflowID: e.wfID, RepoID: e.repoID, Label: e.done,
+	})
+	if err != nil {
+		e.t.Fatalf("create task: %v", err)
+	}
+	return tk.ID
+}
+
+func (e *todayEnv) history(taskID, toLabel, at string) {
+	e.t.Helper()
+	e.exec(`INSERT INTO task_label_history (id, task_id, from_label, to_label, trigger, created_at) VALUES (?, ?, NULL, ?, 'agent', ?)`,
+		uuid.NewString(), taskID, toLabel, at)
+}
+
+// run inserts an agent run with the given started_at (nil = never started).
+func (e *todayEnv) run(taskID string, startedAt any) string {
+	e.t.Helper()
+	id := uuid.NewString()
+	e.exec(`INSERT INTO agent_runs (id, task_id, status, started_at) VALUES (?, ?, 'completed', ?)`, id, taskID, startedAt)
+	return id
+}
+
+func (e *todayEnv) verify(taskID, status, at string) {
+	e.t.Helper()
+	runID := e.run(taskID, nil)
+	e.exec(`INSERT INTO run_verifications (run_id, task_id, command, status, created_at) VALUES (?, ?, 'make test', ?, ?)`,
+		runID, taskID, status, at)
+}
+
+type todayBody struct {
+	Today struct {
+		DoneCount    int64 `json:"done_count"`
+		VerifyTotal  int64 `json:"verify_total"`
+		VerifyPassed int64 `json:"verify_passed"`
+		RunsStarted  int64 `json:"runs_started"`
+	} `json:"today"`
+}
+
+func (e *todayEnv) get(now time.Time) todayBody {
+	e.t.Helper()
+	h := handlers.NewDashboardHandler(e.q, 5, nil)
+	h.SetClock(func() time.Time { return now })
+	w := httptest.NewRecorder()
+	h.Get(w, httptest.NewRequest(http.MethodGet, "/dashboard", nil))
+	if w.Code != http.StatusOK {
+		e.t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var b todayBody
+	if err := json.NewDecoder(w.Body).Decode(&b); err != nil {
+		e.t.Fatalf("decode: %v", err)
+	}
+	return b
+}
+
+// Local zone UTC+5: on 2026-03-10 local midnight is 2026-03-09 19:00:00 UTC.
+var todayNow = time.Date(2026, 3, 10, 9, 0, 0, 0, time.FixedZone("UTC+5", 5*3600))
+
+const (
+	tsBefore = "2026-03-09 18:59:59" // 1s before local midnight (still Mar 9 UTC)
+	tsStart  = "2026-03-09 19:00:00" // exactly local midnight
+	tsMid    = "2026-03-10 00:00:00"
+	tsEnd    = "2026-03-10 19:00:00" // next local midnight (excluded)
+)
+
+func TestDashboardGet_Today_MidnightBoundaries(t *testing.T) {
+	e := newTodayEnv(t)
+	for _, ts := range []string{tsStart, tsMid} {
+		e.history(e.task(), e.done, ts)
+		e.run(e.task(), ts)
+	}
+	for _, ts := range []string{tsBefore, tsEnd} {
+		e.history(e.task(), e.done, ts)
+		e.run(e.task(), ts)
+	}
+	e.run(e.task(), nil) // never started
+	// Non-terminal transition today is not "done".
+	e.history(e.task(), "work", tsMid)
+
+	e.verify(e.task(), "pass", tsStart)
+	e.verify(e.task(), "pass", tsMid)
+	e.verify(e.task(), "fail", tsMid)
+	e.verify(e.task(), "timeout", tsMid)
+	e.verify(e.task(), "pass", tsBefore) // excluded
+	e.verify(e.task(), "pass", tsEnd)    // excluded
+
+	b := e.get(todayNow)
+	if b.Today.DoneCount != 2 {
+		t.Errorf("done_count = %d, want 2", b.Today.DoneCount)
+	}
+	if b.Today.RunsStarted != 2 {
+		t.Errorf("runs_started = %d, want 2", b.Today.RunsStarted)
+	}
+	if b.Today.VerifyTotal != 4 || b.Today.VerifyPassed != 2 {
+		t.Errorf("verify = %d/%d, want 2/4", b.Today.VerifyPassed, b.Today.VerifyTotal)
+	}
+}
+
+func TestDashboardGet_Today_DoneTwiceCountsOnce(t *testing.T) {
+	e := newTodayEnv(t)
+	a := e.task()
+	e.history(a, e.done, "2026-03-09 20:00:00")
+	e.history(a, "work", "2026-03-09 21:00:00")
+	e.history(a, e.done, "2026-03-09 22:00:00")
+	if got := e.get(todayNow).Today.DoneCount; got != 1 {
+		t.Errorf("done_count = %d, want 1", got)
+	}
+	e.history(e.task(), e.done, "2026-03-09 23:00:00")
+	if got := e.get(todayNow).Today.DoneCount; got != 2 {
+		t.Errorf("done_count = %d, want 2", got)
+	}
+}
+
+func TestDashboardGet_Today_ExcludesArchived(t *testing.T) {
+	e := newTodayEnv(t)
+	archived, live := e.task(), e.task()
+	e.history(archived, e.done, "2026-03-09 20:00:00")
+	e.history(live, e.done, "2026-03-09 20:00:00")
+	e.exec(`UPDATE tasks SET archived = 1 WHERE id = ?`, archived)
+	if got := e.get(todayNow).Today.DoneCount; got != 1 {
+		t.Errorf("done_count = %d, want 1", got)
 	}
 }
