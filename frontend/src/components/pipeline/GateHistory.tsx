@@ -42,6 +42,7 @@ export default function GateHistory({
       setError(e instanceof Error ? e.message : 'Could not load history')
     }
   }, [workflowId, label])
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount/refresh
   useEffect(() => { void load() }, [load, refreshKey])
 
   const entries = useMemo<Entry[]>(() => {

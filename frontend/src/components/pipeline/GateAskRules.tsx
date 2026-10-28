@@ -30,6 +30,7 @@ export default function GateAskRules({ workflowId, label }: { workflowId: string
       setError(e instanceof Error ? e.message : 'Could not load ask rules')
     }
   }, [workflowId, label])
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount
   useEffect(() => { void load() }, [load])
 
   return (

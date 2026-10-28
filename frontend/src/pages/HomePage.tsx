@@ -23,6 +23,8 @@ import RunningNowPanel from '../components/home/RunningNowPanel'
 import TodayPanel from '../components/home/TodayPanel'
 import DispatchPill from '../components/home/DispatchPill'
 import ReviewPopup from '../components/home/ReviewPopup'
+import ShouldHaveAskedDialog from '../components/shared/ShouldHaveAskedDialog'
+import type { PolicyApprovalItem } from '../api/client'
 import { useInboxActions } from '../lib/useInboxActions'
 
 export default function HomePage() {
@@ -45,6 +47,7 @@ export default function HomePage() {
   const tasks = useTasksStore((s) => s.tasks)
   const isPhone = useIsPhone()
   const [showHelp, setShowHelp] = useState(false)
+  const [shaApproval, setShaApproval] = useState<PolicyApprovalItem | null>(null)
   const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
   const { flashing, flashKey } = useNeedsYouFlash(inboxCount(sections), needsMeLoaded && effectsLoaded && healthLoaded)
   useWakeLock()
@@ -99,7 +102,7 @@ export default function HomePage() {
   const budget = dash?.global_cost_budget
 
   const scene = workflow && counts ? <SceneBand workflow={workflow} labelCounts={counts} /> : null
-  const needsYou = <NeedsYouPanel sections={sections} onSelect={onSelect} workflows={workflows} onHold={(e) => void actions.hold(e)} onUndo={(e) => void actions.undoApproval(e)} isBusy={actions.isBusy} highlight={flashing} limit={isPhone ? 2 : undefined} />
+  const needsYou = <NeedsYouPanel sections={sections} onSelect={onSelect} workflows={workflows} onHold={(e) => void actions.hold(e)} onUndo={(e) => void actions.undoApproval(e)} onShouldHaveAsked={(e) => e.kind === 'policy_approval' && setShaApproval(e.approval)} isBusy={actions.isBusy} highlight={flashing} limit={isPhone ? 2 : undefined} />
   const running = dash ? (
     <RunningNowPanel
       agents={dash.active_agents}
@@ -139,6 +142,19 @@ export default function HomePage() {
       {flashing && !reduceMotion && (
         <div key={flashKey} aria-hidden data-testid="needs-you-flash" className="home-needs-flash pointer-events-none fixed inset-0 z-40" />
       )}
+      {shaApproval && (() => {
+        const wf = workflows.find((w) => w.id === shaApproval.workflow_id)
+        return (
+          <ShouldHaveAskedDialog
+            taskId={shaApproval.task_id}
+            taskTitle={shaApproval.task_title}
+            done={!!wf?.labels.find((l) => l.name === shaApproval.label)?.is_terminal}
+            workflow={wf}
+            onClose={() => setShaApproval(null)}
+            onDone={() => void useNeedsMeStore.getState().refresh()}
+          />
+        )
+      })()}
       {isOpen && (
         <ReviewPopup flat={flat} selectedKey={selectedKey} onMove={move} onClose={close} workflows={workflows} />
       )}

@@ -17,6 +17,22 @@ function entry(overrides: Partial<TaskLabelHistoryEntry>): TaskLabelHistoryEntry
   } as TaskLabelHistoryEntry
 }
 
+describe('LabelHistoryList should have asked', () => {
+  it('shows the button on policy entries only', () => {
+    const onSha = vi.fn()
+    render(<LabelHistoryList history={[entry({ id: 'a', actor_id: 'policy' }), entry({ id: 'b', actor_id: 'alice' })]} onShouldHaveAsked={onSha} />)
+    const btns = screen.getAllByRole('button', { name: 'Should have asked' })
+    expect(btns).toHaveLength(1)
+    fireEvent.click(btns[0])
+    expect(onSha).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides the button without a handler', () => {
+    render(<LabelHistoryList history={[entry({ actor_id: 'policy' })]} />)
+    expect(screen.queryByRole('button', { name: 'Should have asked' })).toBeNull()
+  })
+})
+
 describe('LabelHistoryList', () => {
   it('shows "by you" for a human move with no actor', () => {
     render(<LabelHistoryList history={[entry({})]} />)

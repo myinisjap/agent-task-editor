@@ -59,12 +59,15 @@ export type TaskPreviewImage = Schemas['TaskPreviewImage']
 export type ReviewBrief = Schemas['ReviewBrief']
 export type AutonomyDecision = Schemas['AutonomyDecision']
 export type AutonomyReason = Schemas['AutonomyReason']
+export type AutonomySuggestions = Schemas['AutonomySuggestions']
+export type AutonomyBacktest = Schemas['AutonomyBacktest']
+export type ShouldHaveAskedRequest = Schemas['ShouldHaveAskedRequest']
+export type ShouldHaveAskedResponse = Schemas['ShouldHaveAskedResponse']
+export type AskRuleInput = Schemas['AskRuleInput']
 export type RiskFlag = Schemas['RiskFlag']
 export type RiskFlagCode = Schemas['RiskFlagCode']
 export type LabelAutonomy = Schemas['LabelAutonomy']
-export type AutonomyBacktest = Schemas['AutonomyBacktest']
 export type AskRule = Schemas['AskRule']
-export type AskRuleInput = Schemas['AskRuleInput']
 export type AutonomyHistory = Schemas['AutonomyHistory']
 export type AutonomyChange = Schemas['AutonomyChange']
 export type AutonomyEscape = Schemas['AutonomyEscape']
@@ -564,10 +567,17 @@ export const api = {
       request<Schemas['AutonomyDecision']>(`/tasks/${taskId}/autonomy/hold`, { method: 'POST' }),
     undo: (taskId: string) =>
       request<Schemas['AutonomyUndoResponse']>(`/tasks/${taskId}/autonomy/undo`, { method: 'POST' }),
+    suggestions: (taskId: string) =>
+      request<Schemas['AutonomySuggestions']>(`/tasks/${taskId}/autonomy/suggestions`),
+    shouldHaveAsked: (taskId: string, body: Schemas['ShouldHaveAskedRequest']) =>
+      request<Schemas['ShouldHaveAskedResponse']>(`/tasks/${taskId}/autonomy/should-have-asked`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
     backtest: (
       workflowId: string,
       label: string,
-      body: { mode: LabelAutonomy['mode']; ask_on: RiskFlagCode[]; max_cost_usd: number | null; days?: number },
+      body: { mode: LabelAutonomy['mode']; ask_on?: RiskFlagCode[]; max_cost_usd?: number | null; days?: number; extra_rules?: AskRuleInput[] },
       signal?: AbortSignal,
     ) =>
       request<AutonomyBacktest>(

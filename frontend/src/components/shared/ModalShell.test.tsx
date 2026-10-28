@@ -147,4 +147,23 @@ describe('ModalShell options', () => {
     expect(dialog).toHaveAttribute('data-testid', 'my-dialog')
     expect(dialog).toHaveClass('custom-overlay')
   })
+
+  it('nested: only the topmost modal handles Escape and traps Tab', async () => {
+    const outer = vi.fn(), inner = vi.fn()
+    render(
+      <ModalShell onClose={outer} ariaLabel="Outer">
+        <button>outer-btn</button>
+        <ModalShell onClose={inner} ariaLabel="Inner">
+          <button>inner-a</button>
+          <button>inner-b</button>
+        </ModalShell>
+      </ModalShell>,
+    )
+    screen.getByText('inner-b').focus()
+    await userEvent.tab()
+    expect(screen.getByText('inner-a')).toHaveFocus()
+    await userEvent.keyboard('{Escape}')
+    expect(inner).toHaveBeenCalledTimes(1)
+    expect(outer).not.toHaveBeenCalled()
+  })
 })

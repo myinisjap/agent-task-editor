@@ -25,6 +25,8 @@ import { showError, showToast, showUndoToast } from '../stores/toast'
 import { useNeedsMeStore } from '../stores/needsMe'
 import { errMessage } from '../lib/errMessage'
 import { canHumanMove } from '../lib/humanMoves'
+import ShouldHaveAskedDialog from '../components/shared/ShouldHaveAskedDialog'
+import { lastGateExitByPolicy } from '../lib/shouldHaveAsked'
 import LabelHistoryList from '../components/task-detail/LabelHistoryList'
 import SourceUpdateNotice from '../components/task-detail/SourceUpdateNotice'
 import SourceCommentsList from '../components/task-detail/SourceCommentsList'
@@ -82,6 +84,7 @@ export default function TaskDetailPage() {
   // early-warning threshold — see GET/PUT /settings/cost-warning). Cleared
   // on label change (new lifecycle stage) so a stale warning from a prior
   // stage/run doesn't linger indefinitely.
+  const [shaOpen, setShaOpen] = useState(false)
   const [costWarning, setCostWarning] = useState<{ spentUsd: number; budgetUsd: number } | null>(null)
   const [verificationKey, setVerificationKey] = useState(0)
   // Must stay above the `if (!task) return` early return (rules of hooks).
@@ -650,6 +653,7 @@ export default function TaskDetailPage() {
               transitions={workflow?.transitions ?? []}
               onMoveLabel={handleMoveLabel}
               onDuplicate={() => setDuplicating(true)}
+              onShouldHaveAsked={lastGateExitByPolicy(labelHistory) && !task.archived ? () => setShaOpen(true) : undefined}
             />
 
             {!inReview && showBrief && <ReviewBriefCard taskId={task?.id} refreshKey={briefKey} />}
@@ -696,7 +700,7 @@ export default function TaskDetailPage() {
                 labels={workflow?.labels ?? []}
                 onMoved={(updated) => { setTask(updated); refreshRuns(); refreshLabelHistory() }}
               />
-              <LabelHistoryList history={labelHistory} labels={workflow?.labels} onRemember={canRemember ? setRememberText : undefined} />
+              <LabelHistoryList history={labelHistory} labels={workflow?.labels} onRemember={canRemember ? setRememberText : undefined} onShouldHaveAsked={() => setShaOpen(true)} />
               <SourceCommentsList comments={sourceComments} />
             </DetailsDisclosure>
     </>
@@ -869,6 +873,17 @@ export default function TaskDetailPage() {
         />
       )}
 
+      {shaOpen && (
+        <ShouldHaveAskedDialog
+          taskId={task.id}
+          taskTitle={task.title}
+          done={!!workflow?.labels.find((l) => l.name === task.label)?.is_terminal}
+          workflow={workflow ?? undefined}
+          repoName={rememberRepoName}
+          onClose={() => setShaOpen(false)}
+          onDone={(r) => { setTask(r.task); refreshLabelHistory(); refreshRuns() }}
+        />
+      )}
       {rememberText !== null && canRemember && (
         <RememberLessonModal
           repoId={task.repo_id}

@@ -4,7 +4,9 @@ import { ChevronDown, ChevronUp, X } from 'lucide-react'
 import type { Workflow } from '../../api/client'
 import ModalShell from '../shared/ModalShell'
 import InboxPreview from '../inbox/InboxPreview'
+import ShouldHaveAskedDialog from '../shared/ShouldHaveAskedDialog'
 import { Icon } from '../ui'
+import { useNeedsMeStore } from '../../stores/needsMe'
 import { useInboxActions } from '../../lib/useInboxActions'
 import { useInboxKeyboard, type InboxKeyAction } from '../../lib/inboxKeys'
 import { entryKey, entryTaskId, isCountedEntry, itemActions, neighborKey, nextAfterRemoval, type InboxEntry } from '../../lib/inbox'
@@ -92,6 +94,9 @@ export default function ReviewPopup({ flat, selectedKey, onMove, onClose, workfl
   }
   useInboxKeyboard(true, onKey, { ownDialogTestId: 'review-popup' })
 
+  const shaEntry = entry?.kind === 'policy_approval' && actions.shouldAskKey === entryKey(entry) ? entry.approval : undefined
+  const shaWorkflow = workflowOf(entry)
+
   const prev = neighborKey(flat, selectedKey, -1)
   const next = neighborKey(flat, selectedKey, 1)
 
@@ -131,6 +136,16 @@ export default function ReviewPopup({ flat, selectedKey, onMove, onClose, workfl
           <InboxPreview {...actions.previewProps(entry, workflowOf(entry), nextAfterRemoval(flat, selectedKey))} />
         )}
       </div>
+      {shaEntry && (
+        <ShouldHaveAskedDialog
+          taskId={shaEntry.task_id}
+          taskTitle={shaEntry.task_title}
+          done={!!shaWorkflow?.labels.find((l) => l.name === shaEntry.label)?.is_terminal}
+          workflow={shaWorkflow}
+          onClose={actions.closeShouldHaveAsked}
+          onDone={() => void useNeedsMeStore.getState().refresh()}
+        />
+      )}
     </ModalShell>
   )
 }
