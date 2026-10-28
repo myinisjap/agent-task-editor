@@ -73,6 +73,13 @@ type Result struct {
 	// legitimate $0 (e.g. under a Claude Max subscription) is never
 	// confused with an unpriced model.
 	CostUnknown bool
+	// SessionCostUSD is the provider's own cumulative cost for the whole
+	// session as reported at the end of this run, or 0 when not reported.
+	// Only the claude provider sets it: its total_cost_usd counts every
+	// earlier run resumed into the same session, so CostUSD above is that
+	// total minus RunInput.ResumeSessionCostUSD. Persisted so the next resume
+	// has a baseline.
+	SessionCostUSD float64
 	// SessionID is the provider-side conversation session for this run (the
 	// claude/qwen CLI stream-json envelope's session_id). Persisted on the run
 	// so a later run on the same task can resume the session with full prior
@@ -116,6 +123,13 @@ type RunInput struct {
 	// imported from (e.g. its GitHub issue thread). Untrusted external content —
 	// rendered into the prompt inside explicit delimiters, never as instructions.
 	SourceComments []SourceComment
+	// HumanDecisions are human replies to earlier waiting_human escalations on
+	// this task. Trusted human input, rendered as HUMAN DECISIONS ON THIS
+	// TASK, and loaded fresh for every run regardless of label or agent.
+	HumanDecisions []HumanDecision
+	// RepoLessons are curated per-repo/global lessons, already selected and
+	// within budget. Rendered only by buildPrompt (not the resume prompt).
+	RepoLessons []RepoLesson
 	// Absolute paths of attachment images on the server filesystem
 	AttachmentAbsPaths []string
 	// ResumeSessionID, if non-empty, asks the provider to resume this prior
@@ -123,6 +137,11 @@ type RunInput struct {
 	// `claude` provider (--resume); other providers ignore it. Providers that
 	// resume fall back to a cold start if the session no longer exists.
 	ResumeSessionID string
+	// ResumeSessionCostUSD is the cumulative session cost recorded by the
+	// latest earlier run of ResumeSessionID (see Result.SessionCostUSD), or 0
+	// when none was recorded. The claude provider subtracts it from the
+	// session total it reports so the run records only its own cost.
+	ResumeSessionCostUSD float64
 	// HumanReply is a human's textual answer to the agent's request_human
 	// question, injected into the prompt (and, when combined with
 	// ResumeSessionID, delivered as the next message of the resumed session).
@@ -131,6 +150,9 @@ type RunInput struct {
 	// that failed to merge back into this (parent) task's branch. It is injected
 	// into the prompt so the parent's work agent resolves the conflicts.
 	SubtaskConflicts *string
+	// SubtaskIntegration, when set, is the rendered integration brief for a parent
+	// whose subtasks have all finished (replaces SubtaskConflicts: it includes them).
+	SubtaskIntegration *string
 	// CostBudgetUSD is the task's effective cost budget in USD (see
 	// dispatcher.effectiveBudget — the lower nonzero of the task's and its
 	// matched agent config's max_cost_usd). 0 means no cap. Providers that
@@ -220,6 +242,8 @@ type Task struct {
 	// The pool reads it to skip pushing child branches (children merge back into
 	// the parent's branch instead) and to trigger merge-back on the parent.
 	ParentID string
+	// FileScope is this subtask's declared file globs (empty = unscoped).
+	FileScope []string
 	// RepoPath is the repo's main clone path (not the worktree). Set so the pool
 	// can drive parent worktree merges after a run.
 	RepoPath string
@@ -312,4 +336,20 @@ type AgentConfig struct {
 // Provider is the interface all agent backends must satisfy.
 type Provider interface {
 	Run(ctx context.Context, input RunInput, logCh chan<- LogEntry) (Result, error)
+}
+
+// HumanDecision is a human's answer to an earlier waiting_human escalation on this task.
+type HumanDecision struct {
+	Question  string // what the agent asked (may be empty for pre-migration rows)
+	Reply     string
+	RepliedAt string // UTC, e.g. "2006-01-02 15:04 UTC"
+	Label     string // label the task was on when asked
+	AgentName string // agent config that asked ("" if deleted)
+}
+
+// RepoLesson is a short curated lesson injected into the agent prompt.
+type RepoLesson struct {
+	ID   string
+	Kind string
+	Body string
 }

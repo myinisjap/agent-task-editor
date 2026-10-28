@@ -1,3 +1,5 @@
+import { describeSystemText, severityForSubtype, type LogSeverity } from './logEvents'
+
 /**
  * Parses raw agent log content into a structured, human-readable form.
  *
@@ -21,7 +23,7 @@ export type ParsedLog =
       toolUseId?: string
     }
   | { kind: 'assistant_text'; text: string }
-  | { kind: 'system_event'; event: string; detail?: string }
+  | { kind: 'system_event'; event: string; detail?: string; severity: LogSeverity }
   | { kind: 'hidden' }  // ponytail: debug noise (thinking_tokens etc), show when debug flag added
   | { kind: 'raw'; text: string }
 
@@ -156,6 +158,21 @@ function summariseResult(_toolName: string | undefined, text: string): { summary
 }
 
 /** Parse a Claude Code SDK message event */
+function parseSdkEvent(obj: Record<string, unknown>): ParsedLog | null {
+  if (typeof obj.type !== 'string') return null
+  if (obj.type === 'tool_progress') {
+    const name = typeof obj.tool_name === 'string' && obj.tool_name ? obj.tool_name : 'Tool'
+    const el = typeof obj.elapsed_time_seconds === 'number' ? ` · ${obj.elapsed_time_seconds}s` : ''
+    return { kind: 'system_event', event: `${name} still running${el}`, severity: 'debug' }
+  }
+  return {
+    kind: 'system_event',
+    event: humaniseSubtype(obj.type),
+    detail: JSON.stringify(obj).slice(0, 300),
+    severity: 'debug',
+  }
+}
+
 function parseMessage(obj: Record<string, unknown>): ParsedLog | null {
   const msg = obj.message as Record<string, unknown> | undefined
   if (!msg) return null
@@ -169,6 +186,7 @@ function parseMessage(obj: Record<string, unknown>): ParsedLog | null {
   // return a single ParsedLog rather than splitting a mixed message.
   if (role === 'assistant' && Array.isArray(content)) {
     const texts: string[] = []
+    const thoughts: string[] = []
     let toolBlock: Record<string, unknown> | undefined
     for (const block of content as unknown[]) {
       if (typeof block !== 'object' || block === null) continue
@@ -177,6 +195,8 @@ function parseMessage(obj: Record<string, unknown>): ParsedLog | null {
         texts.push(b.text.trim())
       } else if (b.type === 'tool_use' && !toolBlock) {
         toolBlock = b
+      } else if (b.type === 'thinking' && typeof b.thinking === 'string' && b.thinking.trim()) {
+        thoughts.push(b.thinking.trim())
       }
     }
     if (toolBlock) {
@@ -195,6 +215,17 @@ function parseMessage(obj: Record<string, unknown>): ParsedLog | null {
     if (texts.length > 0) {
       return { kind: 'assistant_text', text: texts.join('\n') }
     }
+    // Thinking-only (or empty) assistant turn: debug noise, never raw JSON.
+    const thinking = thoughts.join('\n')
+    if (thinking || content.length > 0) {
+      return {
+        kind: 'system_event',
+        event: 'Thinking',
+        detail: thinking ? truncate(thinking, 2000) : undefined,
+        severity: 'debug',
+      }
+    }
+    return { kind: 'system_event', event: 'Assistant message (no content)', severity: 'debug' }
   }
 
   // user message (tool results)
@@ -302,7 +333,7 @@ function parseSystemInit(obj: Record<string, unknown>): ParsedLog {
 
   const event = `Session started · ${parts.join(' · ')}`
   const detail = sessionId ? `session: ${sessionId}` : undefined
-  return { kind: 'system_event', event, detail }
+  return { kind: 'system_event', event, detail, severity: 'info' }
 }
 
 /** Humanise a snake_case subtype into a short, sentence-cased label. */
@@ -335,7 +366,7 @@ function parseSystemEvent(obj: Record<string, unknown>): ParsedLog {
     const detailParts: string[] = []
     if (repo) detailParts.push(`repo: ${repo}`)
     if (commit) detailParts.push(`commit: ${commit}`)
-    return { kind: 'system_event', event, detail: detailParts.length > 0 ? detailParts.join(' · ') : undefined }
+    return { kind: 'system_event', event, detail: detailParts.length > 0 ? detailParts.join(' · ') : undefined, severity: 'info' }
   }
 
   if (subtype === 'code_change_published') {
@@ -349,12 +380,12 @@ function parseSystemEvent(obj: Record<string, unknown>): ParsedLog {
     }
     const label = repo ? `${repo}${ref}` : ref || undefined
     const event = label ? `Published code change · ${label}` : 'Published code change'
-    return { kind: 'system_event', event, detail: url ?? undefined }
+    return { kind: 'system_event', event, detail: url ?? undefined, severity: 'info' }
   }
 
   // Generic fallback: never emit raw JSON for an unrecognised system subtype.
   const event = subtype ? humaniseSubtype(subtype) : 'System event'
-  return { kind: 'system_event', event }
+  return { kind: 'system_event', event, severity: severityForSubtype(subtype) }
 }
 
 /** Parse a background task lifecycle event (task_started / task_notification) */
@@ -367,7 +398,7 @@ function parseTaskLifecycle(obj: Record<string, unknown>): ParsedLog | null {
     const parts = ['Background task started']
     if (taskType) parts.push(taskType)
     if (description) parts.push(description)
-    return { kind: 'system_event', event: parts.join(' · ') }
+    return { kind: 'system_event', event: parts.join(' · '), severity: 'info' }
   }
 
   if (subtype === 'task_notification') {
@@ -376,7 +407,7 @@ function parseTaskLifecycle(obj: Record<string, unknown>): ParsedLog | null {
     const isFailure = status !== 'completed'
     const label = isFailure ? `Failed: Background task (${status})` : `Background task ${status}`
     const event = summary ? `${label}: ${summary}` : label
-    return { kind: 'system_event', event }
+    return { kind: 'system_event', event, severity: severityForSubtype(subtype, status) }
   }
 
   return null
@@ -389,9 +420,9 @@ function parseResult(obj: Record<string, unknown>): ParsedLog | null {
   const isError = obj.is_error === true
   const result = (obj.result ?? '') as string
   const errorLabel = result.trim() ? result.trim().split('\n')[0].slice(0, 120) : (subtype ?? 'error')
-  const event = isError ? `Failed: ${errorLabel}` : `Completed (${subtype ?? 'success'})`
+  const event = isError ? `Run failed: ${errorLabel}` : `Completed (${subtype ?? 'success'})`
   const detail = result.length > 200 ? result.slice(0, 200) + '…' : result || undefined
-  return { kind: 'system_event', event, detail }
+  return { kind: 'system_event', event, detail, severity: isError ? 'error' : 'info' }
 }
 
 export function parseLogContent(type: string, content: string, debug: boolean = false): ParsedLog {
@@ -418,6 +449,8 @@ export function parseLogContent(type: string, content: string, debug: boolean = 
       // Any other system subtype (known or future/unrecognised) — render as a
       // readable summary rather than falling through to raw JSON.
       if (obj.type === 'system') return parseSystemEvent(obj)
+      const sdk = parseSdkEvent(obj)
+      if (sdk) return sdk
     }
     return { kind: 'text', text: content }
   }
@@ -441,7 +474,8 @@ export function parseLogContent(type: string, content: string, debug: boolean = 
       // readable summary rather than falling through to raw JSON.
       if (obj.type === 'system') return parseSystemEvent(obj)
     }
-    return { kind: 'system_event', event: content }
+    const d = describeSystemText(content)
+    return { kind: 'system_event', event: d.message, detail: d.detail, severity: d.severity }
   }
 
   // tool_call and tool_result are typically JSON
@@ -492,6 +526,9 @@ export function parseLogContent(type: string, content: string, debug: boolean = 
   // Any other system subtype (known or future/unrecognised) — render as a
   // readable summary rather than falling through to raw JSON.
   if (obj.type === 'system') return parseSystemEvent(obj)
+
+  const sdk = parseSdkEvent(obj)
+  if (sdk) return sdk
 
   // Fallback: show content but truncated
   const truncated = content.length > 300 ? content.slice(0, 300) + '…' : content

@@ -1,3 +1,4 @@
+import { labelDisplayName, labelDisplayNameByName } from './labelDisplay'
 import type { Workflow } from '../api/client'
 
 const DEFAULT_LABEL_COLOR = '#6B7280'
@@ -24,7 +25,7 @@ export function buildChipRows(
       const ordered = [...wf.labels].sort((a, b) => a.sort_order - b.sort_order)
       const chips = ordered
         .filter((l) => (counts[l.name] ?? 0) > 0)
-        .map((l) => ({ key: l.id, name: l.name, color: l.color || DEFAULT_LABEL_COLOR, count: counts[l.name] }))
+        .map((l) => ({ key: l.id, name: labelDisplayName(l), color: l.color || DEFAULT_LABEL_COLOR, count: counts[l.name] }))
       if (chips.length > 0) rows.push({ key: wf.id, title: wf.name, chips })
     }
     return rows
@@ -33,6 +34,6 @@ export function buildChipRows(
   const wf = workflows[0]
   return [{
     key: 'all',
-    chips: Object.entries(labelCounts).map(([name, count]) => ({ key: name, name, color: colorOf(wf, name), count })),
+    chips: Object.entries(labelCounts).map(([name, count]) => ({ key: name, name: labelDisplayNameByName(name, wf?.labels), color: colorOf(wf, name), count })),
   }]
 }

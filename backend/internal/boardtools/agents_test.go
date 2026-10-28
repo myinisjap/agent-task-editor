@@ -28,7 +28,7 @@ func TestAgentTools(t *testing.T) {
 	}
 
 	n := len(*calls)
-	text, isErr = c.Call(tools, "update_agent", json.RawMessage(`{"agent_id":"a1","labels":["work","review"],"priority":2,"command_allowlist":"[]","enabled_plugins":"x"}`))
+	text, isErr = c.Call(tools, "update_agent", json.RawMessage(`{"agent_id":"a1","labels":["work","review"],"priority":2,"note":"why","command_allowlist":"[]","enabled_plugins":"x"}`))
 	if isErr || !strings.Contains(text, "Agent updated") || strings.Contains(text, "secret") {
 		t.Fatalf("update_agent: %q", text)
 	}
@@ -37,7 +37,7 @@ func TestAgentTools(t *testing.T) {
 		t.Fatalf("calls = %+v", (*calls)[n:])
 	}
 	b := put.body
-	if b["labels"] != `["work","review"]` || b["priority"] != float64(2) || b["name"] != "Coder" ||
+	if b["note"] != "why" || b["labels"] != `["work","review"]` || b["priority"] != float64(2) || b["name"] != "Coder" ||
 		b["system_prompt"] != "be good" || b["max_tokens"] != float64(4096) || b["timeout_secs"] != float64(900) || b["max_turns"] != float64(30) {
 		t.Errorf("update_agent body = %v", b)
 	}
@@ -74,5 +74,15 @@ func TestAgentTools(t *testing.T) {
 				t.Errorf("%s in full profile", name)
 			}
 		}
+	}
+}
+
+func TestGetAgentIncludesRunningExperiment(t *testing.T) {
+	c, _ := stubAPI(t, map[string]string{
+		"GET /api/v1/agents/a1": `{"id":"a1","name":"Coder","running_experiment":{"id":"e1","share_percent":30,"control_tasks":4,"candidate_tasks":2},"provider_config":{"id":"p1","env":"{}"}}`,
+	})
+	text, isErr := c.Call(Select(AdminRemoteTools), "get_agent", json.RawMessage(`{"agent_id":"a1"}`))
+	if isErr || !strings.Contains(text, `"running_experiment"`) || !strings.Contains(text, `"share_percent":30`) || strings.Contains(text, `"env"`) {
+		t.Errorf("get_agent: %q", text)
 	}
 }

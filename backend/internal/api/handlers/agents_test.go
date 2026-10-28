@@ -23,7 +23,8 @@ type agentConfigResponse struct {
 	ResumeSessions  bool `json:"resume_sessions"`
 	SubtasksEnabled bool `json:"subtasks_enabled"`
 
-	FallbackProviderConfigIDs []string `json:"fallback_provider_config_ids"`
+	FallbackProviderConfigIDs []string         `json:"fallback_provider_config_ids"`
+	EscalationLadder          []map[string]any `json:"escalation_ladder"`
 }
 
 // setupAgentsRouter returns a chi router wired with the agents routes, plus
@@ -33,7 +34,7 @@ func setupAgentsRouter(t *testing.T) (http.Handler, *gen.Queries) {
 	t.Helper()
 	db := openTestDB(t)
 	q := gen.New(db.SQL())
-	h := handlers.NewAgentsHandler(q)
+	h := handlers.NewAgentsHandler(q, db.SQL())
 
 	r := chi.NewRouter()
 	r.Post("/agents", h.Create)
@@ -41,6 +42,14 @@ func setupAgentsRouter(t *testing.T) (http.Handler, *gen.Queries) {
 	r.Get("/agents/{id}", h.Get)
 	r.Put("/agents/{id}", h.Update)
 	r.Delete("/agents/{id}", h.Delete)
+	r.Get("/agents/{id}/versions", h.ListVersions)
+	r.Get("/agents/{id}/experiments", h.ListExperiments)
+	r.Post("/agents/{id}/experiments", h.StartExperiment)
+	r.Get("/agents/{id}/experiments/{experimentId}", h.GetExperiment)
+	r.Post("/agents/{id}/experiments/{experimentId}/stop", h.StopExperiment)
+	r.Post("/agents/{id}/experiments/{experimentId}/promote", h.PromoteExperiment)
+	r.Get("/agents/{id}/versions/{version}", h.GetVersion)
+	r.Post("/agents/{id}/versions/{version}/restore", h.RestoreVersion)
 	r.Get("/agent-models", h.GetModels)
 	return r, q
 }
@@ -1204,5 +1213,62 @@ func TestAgentsFallbackProviders(t *testing.T) {
 	}
 	if len(cleared.FallbackProviderConfigIDs) != 0 {
 		t.Errorf("cleared fallbacks = %v, want []", cleared.FallbackProviderConfigIDs)
+	}
+}
+
+func TestAgentsEscalationLadder(t *testing.T) {
+	router, q := setupAgentsRouter(t)
+	primary := mkProviderConfig(t, q)
+	big := mkProviderConfig(t, q)
+
+	w := postJSON(t, router, "/agents", map[string]any{"name": "plain", "provider_config_id": primary})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	var plain agentConfigResponse
+	_ = json.NewDecoder(w.Body).Decode(&plain)
+	if plain.EscalationLadder == nil || len(plain.EscalationLadder) != 0 {
+		t.Errorf("default ladder = %#v, want []", plain.EscalationLadder)
+	}
+
+	for name, ladder := range map[string][]map[string]any{
+		"unknown provider": {{"provider_config_id": "nope"}},
+		"missing provider": {{"effort": "high"}},
+		"bad effort":       {{"provider_config_id": big, "effort": "turbo"}},
+		"bad fallback":     {{"provider_config_id": big, "fallback_provider_config_ids": []string{"nope"}}},
+		"fallback is rung": {{"provider_config_id": big, "fallback_provider_config_ids": []string{big}}},
+	} {
+		w := postJSON(t, router, "/agents", map[string]any{"name": "bad", "provider_config_id": primary, "escalation_ladder": ladder})
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: expected 400, got %d %s", name, w.Code, w.Body.String())
+		}
+	}
+
+	w = postJSON(t, router, "/agents", map[string]any{
+		"name": "ladder", "provider_config_id": primary,
+		"escalation_ladder": []map[string]any{{"provider_config_id": primary, "effort": "high"}, {"provider_config_id": big, "effort": "max"}},
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create ladder: %d %s", w.Code, w.Body.String())
+	}
+	var created agentConfigResponse
+	_ = json.NewDecoder(w.Body).Decode(&created)
+	if len(created.EscalationLadder) != 2 || created.EscalationLadder[1]["effort"] != "max" {
+		t.Fatalf("ladder = %#v", created.EscalationLadder)
+	}
+
+	// Omitted on update keeps it.
+	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{"name": "renamed", "provider_config_id": primary})
+	var kept agentConfigResponse
+	_ = json.NewDecoder(w.Body).Decode(&kept)
+	if len(kept.EscalationLadder) != 2 {
+		t.Errorf("kept ladder = %#v", kept.EscalationLadder)
+	}
+	// Explicit empty clears.
+	w = putJSON(t, router, "/agents/"+created.ID, map[string]any{"name": "renamed", "provider_config_id": primary, "escalation_ladder": []any{}})
+	var cleared agentConfigResponse
+	_ = json.NewDecoder(w.Body).Decode(&cleared)
+	if len(cleared.EscalationLadder) != 0 {
+		t.Errorf("cleared ladder = %#v", cleared.EscalationLadder)
 	}
 }

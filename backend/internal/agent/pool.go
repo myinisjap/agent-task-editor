@@ -44,6 +44,10 @@ type Job struct {
 	// Input.Runtime.WorktreeDir from the result. Nil means the worktree already
 	// exists and Input.RepoPath is final.
 	SetupWorktree func(ctx context.Context) (WorktreeResult, error)
+	// SelectLessons, when non-nil, picks the repo lessons to inject. It runs in
+	// the pool worker after SetupWorktree so git never runs in the dispatcher
+	// sweep. Nil means no lessons.
+	SelectLessons func(ctx context.Context, workDir, branch string, resuming bool) []RepoLesson
 }
 
 // WorktreeResult is what Job.SetupWorktree reports about the provisioned
@@ -55,13 +59,15 @@ type WorktreeResult struct {
 
 // Pool manages a bounded set of concurrent agent runs.
 type Pool struct {
-	maxWorkers int
-	jobs       chan Job
-	db         *sql.DB
-	q          *gen.Queries
-	engine     *workflow.Engine
-	pub        Publisher
-	wg         sync.WaitGroup
+	// memPressure throttles re-dispatch after memory-guard cancels. Zero value usable.
+	memPressure memPressureTracker
+	maxWorkers  int
+	jobs        chan Job
+	db          *sql.DB
+	q           *gen.Queries
+	engine      *workflow.Engine
+	pub         Publisher
+	wg          sync.WaitGroup
 	// RateLimits tracks per-agent-config rate-limit blocks. Optional — no-op when nil.
 	RateLimits *RateLimitRegistry
 	// ProviderPauses is the provider circuit breaker, tripped when a run is
@@ -78,6 +84,11 @@ type Pool struct {
 	// verify.go). Optional: with it nil, a repo that has a verify command
 	// configured fails closed (the task is escalated to a human).
 	Verifier Verifier
+	// Previewer captures UI screenshots for the review brief (see preview.go).
+	// Optional: nil turns the feature off.
+	Previewer PreviewCapturer
+	// UploadDir is where preview PNGs are stored (shared with attachments).
+	UploadDir string
 
 	// running tracks the cancel func for each in-flight run so a human can stop
 	// a runaway agent (see Cancel). Populated in run(), removed when it returns.
@@ -431,6 +442,9 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	if job, ok = p.setupWorktree(ctx, job, rc, log, startedAt); !ok {
 		return
 	}
+	if job.SelectLessons != nil {
+		job.Input.RepoLessons = job.SelectLessons(ctx, job.Input.RepoPath, job.Input.Task.Branch, job.Input.ResumeSessionID != "")
+	}
 
 	// Prepare the repo's pinned toolchains (mise install / uv venv), if any,
 	// here — in this run's own goroutine, under runCtx (the run's lifecycle
@@ -503,6 +517,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	finalStatus := p.persistRunResult(ctx, job, &result, startedAt, log)
 
 	p.safetyNetCommit(ctx, job, finalStatus, log)
+	p.checkFileScope(ctx, job, finalStatus, log)
 
 	// A configured repo verify command is authoritative over the agent's
 	// self-reported success: it runs after the safety-net commit (so it sees
@@ -521,6 +536,14 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		resolvedLabel = p.resolveOutcome(ctx, job.Input.Task, result.Outcome)
 	}
 
+	// A run that succeeded consumes the feedback it was handed. This must
+	// happen before applyTerminalTransition, which clears the dispatch lock
+	// and lets the next sweep copy this row's feedback. With no resolved label
+	// the run escalates to waiting_human and a reply must still see it.
+	if finalStatus == "completed" && result.Outcome == "success" && resolvedLabel != "" {
+		p.consumeInheritedFeedback(ctx, job, log)
+	}
+
 	if p.pub != nil {
 		p.pub.Publish(wsevent.TypeTaskAgentDone, wsevent.TaskAgentDone{
 			TaskID: job.Input.Task.ID,
@@ -530,6 +553,10 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	}
 
 	p.applyTerminalTransition(ctx, job, result, finalStatus, resolvedLabel, log)
+
+	if finalStatus == "completed" && result.Outcome == "success" && resolvedLabel != "" {
+		p.maybeCapturePreview(ctx, job, resolvedLabel, log)
+	}
 
 	// Clear rate-limit backoff on any non-rate-limited completion (success or normal failure).
 	// Conditional on no newer 429 having landed since this run started, so a
@@ -544,7 +571,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// merges that were deferred while this run was in flight. No-op otherwise.
 	isSubtask := job.Input.Task.ParentID != ""
 	if p.Subtasks != nil && (finalStatus == "completed" || finalStatus == "failed") && !isSubtask && job.Input.Task.RepoPath != "" {
-		p.Subtasks.AfterParentRun(ctx, job.Input.Task.ID, job.Input.Task.RepoPath, finalStatus == "completed")
+		p.Subtasks.AfterParentRun(ctx, job.Input.Task.ID, job.Input.Task.RepoPath, finalStatus == "completed", finalStatus == "completed" && result.Outcome == "success")
 	}
 
 	log.Info("pool: agent run finished", "status", finalStatus)
@@ -868,6 +895,25 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 	}); err != nil {
 		log.Error("pool: set run completed", "err", err)
 	}
+	if result.SessionCostUSD > 0 {
+		if err := p.q.SetAgentRunSessionCost(ctx, gen.SetAgentRunSessionCostParams{SessionCostUsd: &result.SessionCostUSD, ID: job.RunID}); err != nil {
+			log.Warn("pool: set run session cost", "err", err)
+		}
+	}
+	if finalStatus == "waiting_human" {
+		q := ""
+		if result.Message != nil {
+			q = *result.Message
+		}
+		if err := p.q.UpsertHumanQuestion(ctx, gen.UpsertHumanQuestionParams{
+			RunID:            job.RunID,
+			TaskID:           job.Input.Task.ID,
+			EscalationReason: string(result.EscalationReason),
+			Question:         q,
+		}); err != nil {
+			log.Warn("pool: record human question", "err", err)
+		}
+	}
 	metrics.RunTerminalTotal.WithLabelValues(finalStatus).Inc()
 	metrics.RunDurationSeconds.WithLabelValues(job.Input.AgentConfig.Provider).Observe(time.Since(startedAt).Seconds())
 	if result.CostUSD > 0 {
@@ -1112,12 +1158,14 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 				return
 			}
 			logID := uuid.NewString()
+			logSeq := NextLogSeq()
 			batch = append(batch, gen.CreateAgentLogParams{
 				ID:         logID,
 				AgentRunID: runID,
 				Timestamp:  entry.At,
 				Type:       string(entry.Type),
 				Content:    entry.Content,
+				Seq:        logSeq,
 			})
 			if len(batch) >= 50 {
 				flush(ctx)
@@ -1132,6 +1180,7 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 					TaskID: taskID,
 					Entry: wsevent.AgentLogEntry{
 						ID:      logID,
+						Seq:     logSeq,
 						Type:    string(entry.Type),
 						Content: entry.Content,
 						At:      entry.At,
@@ -1143,4 +1192,13 @@ func (p *Pool) persistLogs(ctx context.Context, runID, taskID string, logCh <-ch
 			flush(ctx)
 		}
 	}
+}
+
+// MemoryPressurePause reports whether new dispatch is globally paused after a
+// burst of memory-guard cancels, and until when. Safe on a nil Pool.
+func (p *Pool) MemoryPressurePause() (until time.Time, active bool) {
+	if p == nil {
+		return time.Time{}, false
+	}
+	return p.memPressure.pausedUntilTime()
 }

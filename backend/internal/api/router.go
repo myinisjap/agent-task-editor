@@ -9,7 +9,10 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
+	"github.com/myinisjap/agent-task-editor/backend/internal/intakehook"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
+	"github.com/myinisjap/agent-task-editor/backend/internal/reviewbrief"
+	"github.com/myinisjap/agent-task-editor/backend/internal/skills"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -53,7 +56,9 @@ type RouterDeps struct {
 	// for the api_auth health warning.
 	ListenAddr string
 	UploadDir  string
-	MCPBinary  string
+	// SkillsDir is where skill folders are stored (SKILLS_DIR).
+	SkillsDir string
+	MCPBinary string
 
 	BackupDir      string
 	BackupInterval time.Duration
@@ -84,19 +89,23 @@ func NewRouter(deps RouterDeps) http.Handler {
 	repoBaseDir, uploadDir := deps.RepoBaseDir, deps.UploadDir
 	dispatcherLiveness := deps.DispatcherLiveness
 	q := gen.New(db.SQL())
+	briefCache := reviewbrief.NewCache()
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, deps.Canceller, deps.ReplyDispatcher, deps.BlockReasons)
 	tasksH.SetPublisher(hub)
 	depsH := handlers.NewDependenciesHandler(q, db.SQL(), hub)
 	subtasksH := handlers.NewSubtasksHandler(q, db.SQL(), hub)
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
-	agentsH := handlers.NewAgentsHandler(q)
+	agentsH := handlers.NewAgentsHandler(q, db.SQL())
 	providersH := handlers.NewProviderConfigsHandler(q)
 	reposH := handlers.NewReposHandler(q, repoBaseDir, hub)
 	reviewH := handlers.NewReviewCommentsHandler(q)
 	templatesH := handlers.NewTemplatesHandler(q)
+	lessonsH := handlers.NewLessonsHandler(q)
 	schedulesH := handlers.NewSchedulesHandler(q)
 	intakeRulesH := handlers.NewIntakeRulesHandler(q)
+	intakeEndpointsH := handlers.NewIntakeEndpointsHandler(q, intakehook.NewService(db.SQL(), q, hub))
+	skillsH := handlers.NewSkillsHandler(q, db.SQL(), skills.Store{Dir: deps.SkillsDir})
 	// dispatcherLiveness may also implement GlobalCostReporter (as
 	// *agent.Dispatcher does) to supply the dashboard's global spend-ceiling
 	// snapshot/forecast — same optional-capability pattern as HealthHandler.
@@ -154,6 +163,12 @@ func NewRouter(deps RouterDeps) http.Handler {
 	// so it wins over the /api/v1 mount below.
 	webhookH := handlers.NewGitHubWebhookHandler(deps.GitHubWebhookSecret, deps.PRRefresher)
 	r.Post("/api/v1/github/webhook", webhookH.Handle)
+
+	// Intake webhook receiver - outside BearerAuth for the same reason: the
+	// sender is an external system (CI, error tracker). Authenticated by the
+	// per-endpoint HMAC-SHA256 signature in X-ATE-Signature-256; applies its
+	// own 256 KB body cap and per-endpoint rate limit.
+	r.Post("/api/v1/intake/{endpoint_id}", intakeEndpointsH.Receive)
 
 	// Prometheus scrape endpoint — mounted outside the main API's BearerAuth
 	// group (and outside /api/v1) so self-hosters don't need to hand the
@@ -213,6 +228,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Patch("/tasks/{id}/notes", tasksH.UpdateNotes)
 			r.Post("/tasks/{id}/rerun", tasksH.Rerun)
 			r.Get("/tasks/{id}/diff", tasksH.Diff)
+			r.Get("/tasks/{id}/review-brief", handlers.NewReviewBriefHandler(q, briefCache).Get)
 			r.Get("/tasks/{id}/pr-url", tasksH.PRURL)
 			r.Post("/tasks/{id}/pr", tasksH.CreatePR)
 			r.Post("/tasks/{id}/side-effects/retry", tasksH.RetrySideEffects)
@@ -239,6 +255,14 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Put("/templates/{id}", templatesH.Update)
 			r.Delete("/templates/{id}", templatesH.Delete)
 
+			// Repo lessons: curated cross-task knowledge injected into agent prompts
+			r.Get("/repos/{id}/lessons", lessonsH.ListForRepo)
+			r.Post("/repos/{id}/lessons", lessonsH.CreateForRepo)
+			r.Get("/lessons", lessonsH.ListGlobal)
+			r.Post("/lessons", lessonsH.CreateGlobal)
+			r.Patch("/lessons/{id}", lessonsH.Update)
+			r.Delete("/lessons/{id}", lessonsH.Delete)
+
 			// Task schedules — fire a template on a cron expression against a repo
 			r.Get("/schedules", schedulesH.List)
 			r.Post("/schedules", schedulesH.Create)
@@ -255,6 +279,16 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Get("/intake-rules/{id}", intakeRulesH.Get)
 			r.Put("/intake-rules/{id}", intakeRulesH.Update)
 			r.Delete("/intake-rules/{id}", intakeRulesH.Delete)
+
+			// Intake webhook endpoints CRUD (the receiver is mounted outside
+			// BearerAuth above).
+			r.Get("/intake-endpoints", intakeEndpointsH.List)
+			r.Post("/intake-endpoints", intakeEndpointsH.Create)
+			r.Get("/intake-endpoints/{id}", intakeEndpointsH.Get)
+			r.Put("/intake-endpoints/{id}", intakeEndpointsH.Update)
+			r.Delete("/intake-endpoints/{id}", intakeEndpointsH.Delete)
+			r.Post("/intake-endpoints/{id}/rotate-secret", intakeEndpointsH.RotateSecret)
+			r.Post("/intake-endpoints/{id}/test", intakeEndpointsH.Test)
 
 			// Inline diff review comments — persisted, injected into agent prompts while open
 			r.Get("/tasks/{id}/review-comments", reviewH.List)
@@ -321,6 +355,8 @@ func NewRouter(deps RouterDeps) http.Handler {
 
 			// Ingested source-issue comment thread (see tasksource.Importer)
 			r.Get("/tasks/{id}/source-comments", tasksH.ListSourceComments)
+			// Human replies to waiting_human runs (for "Remember for this repo").
+			r.Get("/tasks/{id}/human-decisions", tasksH.ListHumanDecisions)
 
 			// Mints a short-lived, single-use ticket for authenticating the
 			// WebSocket upgrade (GET /ws?ticket=...) without putting the
@@ -331,6 +367,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			// Agent runs
 			r.Get("/tasks/{id}/runs", tasksH.ListRuns)
 			r.Get("/tasks/{id}/verifications", tasksH.ListVerifications)
+			r.Get("/tasks/{id}/previews", tasksH.ListPreviews)
 			r.Get("/tasks/{id}/runs/{run_id}", tasksH.GetRun)
 			r.Get("/tasks/{id}/runs/{run_id}/logs", tasksH.GetRunLogs)
 			r.Post("/tasks/{id}/runs/{run_id}/cancel", tasksH.CancelRun)
@@ -351,6 +388,14 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Post("/agents", agentsH.Create)
 			r.Get("/agents/{id}", agentsH.Get)
 			r.Put("/agents/{id}", agentsH.Update)
+			r.Get("/agents/{id}/versions", agentsH.ListVersions)
+			r.Get("/agents/{id}/versions/{version}", agentsH.GetVersion)
+			r.Post("/agents/{id}/versions/{version}/restore", agentsH.RestoreVersion)
+			r.Get("/agents/{id}/experiments", agentsH.ListExperiments)
+			r.Post("/agents/{id}/experiments", agentsH.StartExperiment)
+			r.Get("/agents/{id}/experiments/{experimentId}", agentsH.GetExperiment)
+			r.Post("/agents/{id}/experiments/{experimentId}/stop", agentsH.StopExperiment)
+			r.Post("/agents/{id}/experiments/{experimentId}/promote", agentsH.PromoteExperiment)
 			r.Delete("/agents/{id}", agentsH.Delete)
 			r.Get("/agents/models", agentsH.GetModels)
 			r.Get("/agents/claude-options", agentsH.GetClaudeOptions)
@@ -371,8 +416,21 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Get("/repos/{id}/tree", reposH.Tree)
 			r.Post("/repos/{id}/runtime/detect", reposH.Detect)
 
+			// Skills library (admin config; deliberately absent from scopedtoken routes)
+			r.Get("/skills", skillsH.List)
+			r.Post("/skills", skillsH.Create)
+			r.Get("/skills/{id}", skillsH.Get)
+			r.Patch("/skills/{id}", skillsH.Update)
+			r.Delete("/skills/{id}", skillsH.Delete)
+			r.Get("/agents/{id}/skills", skillsH.ListForAgent)
+			r.Put("/agents/{id}/skills", skillsH.SetForAgent)
+			r.Get("/repos/{id}/skills", skillsH.ListForRepo)
+			r.Put("/repos/{id}/skills", skillsH.SetForRepo)
+
 			// Dashboard
-			r.Get("/needs-me", handlers.NewNeedsMeHandler(q).List)
+			needsMeH := handlers.NewNeedsMeHandler(q)
+			needsMeH.SetBriefCache(briefCache)
+			r.Get("/needs-me", needsMeH.List)
 			r.Get("/dashboard", dashH.Get)
 			r.Get("/dashboard/cost-by-task", dashH.CostByTask)
 			r.Get("/dashboard/outcome-quality", outcomeQualityH.Get)

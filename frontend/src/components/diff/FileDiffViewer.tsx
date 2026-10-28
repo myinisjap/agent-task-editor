@@ -1,19 +1,21 @@
+import { Check, ChevronDown, ChevronRight, CornerDownRight, MessageSquare, X } from 'lucide-react'
+import Icon from '../ui/Icon'
 import { useState } from 'react'
 import type { FileDiff, DiffLine } from '../../lib/parseDiff'
 import type { DiffComment } from '../../lib/diffComments'
 
 const LINE_BG: Record<DiffLine['type'], string> = {
-  add:     'bg-emerald-950 text-emerald-300',
-  remove:  'bg-red-950 text-red-300',
-  context: 'text-slate-400',
-  header:  'bg-slate-800 text-slate-400',
+  add:     'bg-emerald-950 text-success',
+  remove:  'bg-red-950 text-danger',
+  context: 'text-fg-muted',
+  header:  'bg-surface-sunken text-fg-muted',
 }
 
 const GUTTER_BG: Record<DiffLine['type'], string> = {
   add:     'bg-emerald-900/60 text-emerald-600',
   remove:  'bg-red-900/60 text-red-600',
-  context: 'text-slate-600',
-  header:  'bg-slate-800 text-slate-600',
+  context: 'text-fg-subtle',
+  header:  'bg-surface-sunken text-fg-subtle',
 }
 
 type LineTarget = {
@@ -86,7 +88,7 @@ function DiffLineRow({
               onOpenComment(target)
             }}
             title="Add comment"
-            className="opacity-0 group-hover:opacity-100 text-amber-400 hover:text-amber-300 leading-none w-3.5"
+            className="opacity-0 group-hover:opacity-100 text-warning hover:text-warning leading-none w-3.5"
           >
             +
           </button>
@@ -112,12 +114,12 @@ function CommentChip({ comment, onRemove, onReopen }: CommentChipProps) {
       <tr className="bg-emerald-950/30">
         <td colSpan={4} className="px-3 py-2 border-l-2 border-emerald-500/70">
           <div className="flex items-start gap-2">
-            <span className="text-emerald-400 text-xs mt-0.5">✓</span>
+            <span className="text-success mt-0.5"><Icon icon={Check} size="xs" /></span>
             <div className="flex-1 min-w-0">
-              <p className="text-xs text-slate-400 whitespace-pre-wrap break-words font-sans line-through decoration-slate-600">{comment.comment}</p>
+              <p className="text-xs text-fg-muted whitespace-pre-wrap break-words font-sans line-through decoration-slate-600">{comment.comment}</p>
               {comment.resolutionNote && (
-                <p className="text-xs text-emerald-300/90 whitespace-pre-wrap break-words font-sans mt-1">
-                  ↳ {comment.resolutionNote}
+                <p className="text-xs text-success/90 whitespace-pre-wrap break-words font-sans mt-1">
+                  <Icon icon={CornerDownRight} size="sm" className="inline -mt-0.5 mr-1" />{comment.resolutionNote}
                 </p>
               )}
             </div>
@@ -125,7 +127,7 @@ function CommentChip({ comment, onRemove, onReopen }: CommentChipProps) {
               <button
                 type="button"
                 onClick={() => onReopen(comment.id)}
-                className="text-xs text-slate-500 hover:text-amber-400 shrink-0"
+                className="text-xs text-fg-subtle hover:text-warning shrink-0"
                 title="Reopen comment"
               >
                 Reopen
@@ -134,10 +136,11 @@ function CommentChip({ comment, onRemove, onReopen }: CommentChipProps) {
             <button
               type="button"
               onClick={() => onRemove(comment.id)}
-              className="text-xs text-slate-500 hover:text-red-400 shrink-0"
+              className="text-xs text-fg-subtle hover:text-danger shrink-0"
               title="Remove comment"
+              aria-label="Remove comment"
             >
-              ✕
+              <Icon icon={X} size="sm" />
             </button>
           </div>
         </td>
@@ -148,17 +151,18 @@ function CommentChip({ comment, onRemove, onReopen }: CommentChipProps) {
     <tr className="bg-amber-950/40">
       <td colSpan={4} className="px-3 py-2 border-l-2 border-amber-400/80">
         <div className="flex items-start gap-2">
-          <span className="text-amber-400 text-xs mt-0.5">💬</span>
+          <span className="text-warning mt-0.5"><Icon icon={MessageSquare} size="xs" /></span>
           <div className="flex-1 min-w-0">
             <p className="text-xs text-amber-100 whitespace-pre-wrap break-words font-sans">{comment.comment}</p>
           </div>
           <button
             type="button"
             onClick={() => onRemove(comment.id)}
-            className="text-xs text-slate-500 hover:text-red-400 shrink-0"
+            className="text-xs text-fg-subtle hover:text-danger shrink-0"
             title="Remove comment"
+            aria-label="Remove comment"
           >
-            ✕
+            <Icon icon={X} size="sm" />
           </button>
         </div>
       </td>
@@ -175,17 +179,17 @@ type CommentEditorProps = {
 function CommentEditor({ onSave, onCancel, lineLabel }: CommentEditorProps) {
   const [text, setText] = useState('')
   return (
-    <tr className="bg-slate-800">
+    <tr className="bg-surface-sunken">
       <td colSpan={4} className="px-3 py-2">
         <div className="flex flex-col gap-2">
-          <p className="text-xs text-slate-400 font-sans">Comment on {lineLabel}</p>
+          <p className="text-xs text-fg-muted font-sans">Comment on {lineLabel}</p>
           <textarea
             autoFocus
             value={text}
             onChange={(e) => setText(e.target.value)}
             rows={2}
             placeholder="Leave feedback on this selection…"
-            className="w-full text-xs bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-slate-200 placeholder-slate-500 resize-none focus:outline-none focus:border-amber-500 font-sans"
+            className="w-full text-xs bg-surface-raised border border-border rounded px-2 py-1.5 text-fg placeholder-slate-500 resize-none focus:outline-none focus:border-amber-500 font-sans"
             onKeyDown={(e) => {
               if (e.key === 'Escape') onCancel()
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -198,7 +202,7 @@ function CommentEditor({ onSave, onCancel, lineLabel }: CommentEditorProps) {
             <button
               type="button"
               onClick={onCancel}
-              className="px-2.5 py-1 text-xs rounded bg-slate-700 hover:bg-slate-600 text-slate-300"
+              className="px-2.5 py-1 text-xs rounded bg-border hover:bg-slate-600 text-fg-muted"
             >
               Cancel
             </button>
@@ -206,7 +210,7 @@ function CommentEditor({ onSave, onCancel, lineLabel }: CommentEditorProps) {
               type="button"
               disabled={!text.trim()}
               onClick={() => onSave(text.trim())}
-              className="px-2.5 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-white disabled:opacity-50"
+              className="px-2.5 py-1 text-xs rounded bg-amber-600 hover:bg-amber-500 text-black disabled:opacity-50"
             >
               Save comment
             </button>
@@ -308,26 +312,26 @@ function FileBlock({ file, comments, onAddComment, onRemoveComment, onReopenComm
   }
 
   return (
-    <div className="border border-slate-700 rounded mb-3 overflow-hidden">
+    <div className="border border-border rounded mb-3 overflow-hidden">
       <button
         onClick={() => setCollapsed((c) => !c)}
-        className="w-full flex items-center gap-2 px-3 py-2 bg-slate-800 hover:bg-slate-750 text-left"
+        className="w-full flex items-center gap-2 px-3 py-2 bg-surface-sunken hover:bg-slate-750 text-left"
       >
-        <span className="text-slate-400 text-xs select-none">{collapsed ? '▶' : '▼'}</span>
-        <span className="text-xs text-slate-200 font-mono flex-1 truncate">{displayPath}</span>
+        <span className="text-fg-muted text-xs select-none"><Icon icon={collapsed ? ChevronRight : ChevronDown} size="sm" /></span>
+        <span className="text-xs text-fg font-mono flex-1 truncate">{displayPath}</span>
         {label && (
           <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
-            file.isNew ? 'bg-emerald-900 text-emerald-300' : 'bg-red-900 text-red-300'
+            file.isNew ? 'bg-emerald-900 text-success' : 'bg-red-900 text-danger'
           }`}>{label}</span>
         )}
         {fileComments.length > 0 && (
-          <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-amber-900/70 text-amber-300">
+          <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-amber-900/70 text-warning">
             {fileComments.length} comment{fileComments.length !== 1 ? 's' : ''}
           </span>
         )}
-        <span className="text-xs text-slate-500">{file.hunks.length} hunk{file.hunks.length !== 1 ? 's' : ''}</span>
+        <span className="text-xs text-fg-subtle">{file.hunks.length} hunk{file.hunks.length !== 1 ? 's' : ''}</span>
         {collapsed && lineCount > AUTO_COLLAPSE_LINE_THRESHOLD && (
-          <span className="text-xs text-slate-500" title="Large file — collapsed by default for performance">
+          <span className="text-xs text-fg-subtle" title="Large file — collapsed by default for performance">
             ({lineCount} lines)
           </span>
         )}
@@ -346,14 +350,14 @@ function FileBlock({ file, comments, onAddComment, onRemoveComment, onReopenComm
                 <button
                   type="button"
                   onClick={() => setSelection(null)}
-                  className="text-xs text-slate-400 hover:text-slate-200"
+                  className="text-xs text-fg-muted hover:text-fg"
                 >
                   Clear
                 </button>
                 <button
                   type="button"
                   onClick={openCommentEditorForSelection}
-                  className="text-xs px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-500 text-white"
+                  className="text-xs px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-500 text-black"
                 >
                   Comment on selection
                 </button>
@@ -461,23 +465,23 @@ type Props = {
 }
 
 export default function FileDiffViewer({ files, loading, comments = [], onAddComment, onRemoveComment, onReopenComment }: Props) {
-  if (loading) return <p className="text-xs text-slate-500">Loading diff…</p>
-  if (files.length === 0) return <p className="text-xs text-slate-600">No changes</p>
+  if (loading) return <p className="text-xs text-fg-subtle">Loading diff…</p>
+  if (files.length === 0) return <p className="text-xs text-fg-subtle">No changes</p>
 
   const openCount = comments.filter((c) => c.status !== 'resolved').length
   const resolvedCount = comments.length - openCount
 
   return (
     <div>
-      <p className="text-xs text-slate-500 mb-3">
+      <p className="text-xs text-fg-subtle mb-3">
         {files.length} file{files.length !== 1 ? 's' : ''} changed
         {openCount > 0 && (
-          <span className="ml-2 text-amber-400">
+          <span className="ml-2 text-warning">
             · {openCount} open comment{openCount !== 1 ? 's' : ''}
           </span>
         )}
         {resolvedCount > 0 && (
-          <span className="ml-2 text-emerald-400">
+          <span className="ml-2 text-success">
             · {resolvedCount} resolved
           </span>
         )}

@@ -5,7 +5,9 @@ import BottomTabBar from './components/shared/BottomTabBar'
 import ApiTokenGate from './components/shared/ApiTokenGate'
 import ErrorBoundary from './components/shared/ErrorBoundary'
 import HomeRoute from './components/shared/HomeRoute'
-import HealthWarningBanner from './components/shared/HealthWarningBanner'
+import CommandHost from './components/shared/CommandHost'
+import ToastHost from './components/shared/ToastHost'
+import { useHealthPolling } from './stores/health'
 import ProviderPausedBanner from './components/shared/ProviderPausedBanner'
 import { useHumanNeededNotifications } from './lib/useHumanNeededNotifications'
 
@@ -29,6 +31,8 @@ const InboxPage = lazy(() => import('./pages/InboxPage'))
 const HealthPage = lazy(() => import('./pages/HealthPage'))
 const PipelinePage = lazy(() => import('./pages/PipelinePage'))
 const PipelineOverviewPage = lazy(() => import('./pages/PipelineOverviewPage'))
+const LessonsSettingsPage = lazy(() => import('./pages/LessonsSettingsPage'))
+const SkillsSettingsPage = lazy(() => import('./pages/SkillsSettingsPage'))
 const SettingsPage = lazy(() => import('./pages/SettingsPage'))
 
 /** Redirect a retired path to its new home, keeping query string and hash. */
@@ -67,6 +71,8 @@ function AppRoutes() {
             <Route path="pricing"      element={<PricingSettingsPage />} />
             <Route path="intake-rules" element={<IntakeRulesPage />} />
             <Route path="templates"    element={<TemplatesPage />} />
+            <Route path="lessons"      element={<LessonsSettingsPage />} />
+            <Route path="skills"       element={<SkillsSettingsPage />} />
             <Route path="health"       element={<HealthPage />} />
           </Route>
           <Route path="/repos"                 element={<ReposPage />} />
@@ -89,6 +95,7 @@ export default function App() {
   // Registered once at the app root (not per-page) so "human needed"
   // notifications fire for the whole session regardless of route.
   useHumanNeededNotifications()
+  useHealthPolling()
   const [menuOpen, setMenuOpen] = useState(false)
 
   return (
@@ -100,12 +107,13 @@ export default function App() {
             the actually-visible height. */}
         <div className="flex h-dvh overflow-hidden">
           <NavSidebar open={menuOpen} onOpenChange={setMenuOpen} />
-          <main className="flex-1 overflow-auto bg-slate-950 pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0">
+          <main className="flex-1 min-h-0 min-w-0 flex flex-col overflow-auto bg-slate-950 pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0">
             <ProviderPausedBanner />
-            <HealthWarningBanner />
             <AppRoutes />
           </main>
           <BottomTabBar onMore={() => setMenuOpen(true)} />
+          <CommandHost />
+          <ToastHost />
         </div>
       </ApiTokenGate>
     </BrowserRouter>

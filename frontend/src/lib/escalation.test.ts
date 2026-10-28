@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { escalationInfo } from './escalation'
+import { escalationInfo, ESCALATION_REASONS } from './escalation'
 
 describe('escalationInfo', () => {
   it('replies to questions, retries failures, sends config problems to settings', () => {
@@ -18,5 +18,22 @@ describe('escalationInfo', () => {
       expect(info.action).toBe('reply')
       expect(info.label).toBe('Agent is waiting for your input')
     }
+  })
+})
+
+describe('escalation wording', () => {
+  it('every reason has full wording', () => {
+    expect(ESCALATION_REASONS.length).toBeGreaterThan(0)
+    for (const r of ESCALATION_REASONS) {
+      const i = escalationInfo(r)
+      expect(i.short).toBeTruthy()
+      expect(i.label).toBeTruthy()
+      expect(i.explanation).toBeTruthy()
+      expect(i.nextStep).toBeTruthy()
+      if (i.action === 'fix') expect(i.fix).toBeTruthy()
+    }
+    const fb = escalationInfo('nope')
+    expect(fb.explanation).toBeTruthy()
+    expect(fb.nextStep).toBeTruthy()
   })
 })

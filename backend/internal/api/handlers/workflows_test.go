@@ -853,3 +853,113 @@ transitions:
 		t.Errorf("custom without command: expected 400, got %d", w.Code)
 	}
 }
+
+func TestWorkflows_YAML_DisplayNameRoundTrips(t *testing.T) {
+	r, _ := setupWorkflowRouter(t)
+
+	yamlBody := `
+name: yaml-display-test
+labels:
+  - name: review-plan
+    display_name: "  Plan review "
+    color: "#111"
+    sort_order: 0
+  - name: work
+    color: "#222"
+    sort_order: 1
+transitions:
+  - from: review-plan
+    to: work
+    trigger: agent
+`
+	req := httptest.NewRequest(http.MethodPost, "/workflows/import", strings.NewReader(yamlBody))
+	req.Header.Set("Content-Type", "application/yaml")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body)
+	}
+	var created struct {
+		gen.Workflow
+		Labels []gen.WorkflowLabel `json:"labels"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, l := range created.Labels {
+		got[l.Name] = l.DisplayName
+	}
+	if got["review-plan"] != "Plan review" || got["work"] != "" {
+		t.Fatalf("unexpected display names: %+v", got)
+	}
+
+	ew := httptest.NewRecorder()
+	r.ServeHTTP(ew, httptest.NewRequest(http.MethodGet, "/workflows/"+created.ID+"/export.yaml", nil))
+	exported := ew.Body.String()
+	if !strings.Contains(exported, "display_name: Plan review") {
+		t.Fatalf("export missing display_name:\n%s", exported)
+	}
+	if strings.Count(exported, "display_name") != 1 {
+		t.Fatalf("display_name should only be emitted for the set label:\n%s", exported)
+	}
+
+	// Re-import under a new name.
+	re := strings.Replace(exported, "yaml-display-test", "yaml-display-test-2", 1)
+	req = httptest.NewRequest(http.MethodPost, "/workflows/import", strings.NewReader(re))
+	req.Header.Set("Content-Type", "application/yaml")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("re-import: expected 201, got %d: %s", w.Code, w.Body)
+	}
+	var again struct {
+		Labels []gen.WorkflowLabel `json:"labels"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&again); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, l := range again.Labels {
+		if l.Name == "review-plan" && l.DisplayName == "Plan review" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("display_name lost on re-import: %+v", again.Labels)
+	}
+}
+
+func TestWorkflows_Update_JSON_DisplayName(t *testing.T) {
+	r, q := setupWorkflowRouter(t)
+	wfs, _ := q.ListWorkflows(context.Background())
+	wfID := wfs[0].ID
+
+	put := func(dn string) *httptest.ResponseRecorder {
+		body := map[string]any{
+			"name": "Updated",
+			"labels": []map[string]any{
+				{"name": "work", "color": "#111", "sort_order": 0, "display_name": dn},
+			},
+		}
+		req := httptest.NewRequest(http.MethodPut, "/workflows/"+wfID, jsonBody(t, body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+	if w := put(" Doing "); w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body)
+	}
+	labels, _ := q.ListWorkflowLabels(context.Background(), wfID)
+	if len(labels) != 1 || labels[0].DisplayName != "Doing" {
+		t.Fatalf("display_name not persisted: %+v", labels)
+	}
+	if w := put(strings.Repeat("x", 65)); w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+	labels, _ = q.ListWorkflowLabels(context.Background(), wfID)
+	if len(labels) != 1 || labels[0].DisplayName != "Doing" {
+		t.Fatalf("labels changed by rejected update: %+v", labels)
+	}
+}

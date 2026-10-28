@@ -1,5 +1,8 @@
+import { ChevronDown, ChevronRight, RefreshCw } from 'lucide-react'
+import Icon from '../ui/Icon'
 import { Fragment, useState } from 'react'
-import type { AgentRun, AgentConfig } from '../../api/client'
+import { formatRunStatus } from '../../lib/format'
+import type { AgentRun, AgentConfig, ProviderConfig } from '../../api/client'
 
 // formatTokenCount renders a token count compactly (e.g. "1.2k") for the
 // per-run cost/usage badge, falling back to the plain number for small counts.
@@ -11,16 +14,16 @@ function formatTokenCount(n: number): string {
 function NotesPanel({ notes }: { notes: string }) {
   const [open, setOpen] = useState(false)
   return (
-    <div className="ml-2 border-l border-slate-700 pl-2">
+    <div className="ml-2 border-l border-border pl-2">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 w-full text-left py-0.5"
+        className="flex items-center gap-1 text-xs text-fg-subtle hover:text-fg-muted w-full text-left py-0.5"
       >
-        <span>{open ? '▾' : '▸'}</span>
+        <Icon icon={open ? ChevronDown : ChevronRight} size="sm" />
         <span>agent notes</span>
       </button>
       {open && (
-        <pre className="text-xs text-slate-300 bg-slate-800 rounded p-2 mt-1 whitespace-pre-wrap max-h-48 overflow-y-auto font-sans">
+        <pre className="text-xs text-fg-muted bg-surface-sunken rounded p-2 mt-1 whitespace-pre-wrap max-h-48 overflow-y-auto font-sans">
           {notes}
         </pre>
       )}
@@ -31,17 +34,17 @@ function NotesPanel({ notes }: { notes: string }) {
 function StoredInfoPanel({ runId, info }: { runId: string; info: string }) {
   const [open, setOpen] = useState(false)
   return (
-    <div className="ml-2 border-l border-slate-700 pl-2">
+    <div className="ml-2 border-l border-border pl-2">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-300 w-full text-left py-0.5"
+        className="flex items-center gap-1 text-xs text-fg-subtle hover:text-fg-muted w-full text-left py-0.5"
       >
-        <span>{open ? '▾' : '▸'}</span>
-        <span className="font-mono text-slate-600">{runId.slice(0, 8)}</span>
+        <Icon icon={open ? ChevronDown : ChevronRight} size="sm" />
+        <span className="font-mono text-fg-subtle">{runId.slice(0, 8)}</span>
         <span>stored info</span>
       </button>
       {open && (
-        <pre className="text-xs text-slate-300 bg-slate-800 rounded p-2 mt-1 whitespace-pre-wrap max-h-48 overflow-y-auto font-sans">
+        <pre className="text-xs text-fg-muted bg-surface-sunken rounded p-2 mt-1 whitespace-pre-wrap max-h-48 overflow-y-auto font-sans">
           {info}
         </pre>
       )}
@@ -49,9 +52,19 @@ function StoredInfoPanel({ runId, info }: { runId: string; info: string }) {
   )
 }
 
+function ladderLabel(run: AgentRun, agentConfigs: AgentConfig[], providerConfigs: ProviderConfig[]): string {
+  const rung = run.ladder_rung ?? 0
+  const agent = agentConfigs.find((a) => a.id === run.agent_config_id)
+  const pc = providerConfigs.find((p) => p.id === run.provider_config_id) ?? (run.provider_config_id === agent?.provider_config_id ? agent?.provider_config : undefined)
+  const effort = rung === 0 ? agent?.effort : (agent?.escalation_ladder?.[rung - 1]?.effort || agent?.effort)
+  const name = pc ? (pc.model || pc.name) : ''
+  return `rung ${rung}` + (name ? `: ${name}` : '') + (effort ? ` / ${effort}` : '')
+}
+
 export default function RunHistoryList({
   runs,
   agentConfigs,
+  providerConfigs = [],
   selectedRun,
   onSelectRun,
   isRunning,
@@ -62,6 +75,7 @@ export default function RunHistoryList({
 }: {
   runs: AgentRun[]
   agentConfigs: AgentConfig[]
+  providerConfigs?: ProviderConfig[]
   selectedRun: string | null
   onSelectRun: (runId: string) => void
   isRunning: boolean
@@ -76,7 +90,7 @@ export default function RunHistoryList({
     <>
       {runs.length > 0 && (
         <div>
-          <p className="text-xs text-slate-500 mb-2">Agent runs</p>
+          <p className="text-xs text-fg-subtle mb-2">Agent runs</p>
           <div className="flex flex-col gap-1">
             {runs.map((run) => (
               <Fragment key={run.id}>
@@ -84,30 +98,35 @@ export default function RunHistoryList({
                   onClick={() => onSelectRun(run.id)}
                   className={`text-left text-xs px-2 py-1.5 rounded ${
                     selectedRun === run.id
-                      ? 'bg-slate-700 text-slate-100'
-                      : 'text-slate-400 hover:bg-slate-800'
+                      ? 'bg-border text-fg'
+                      : 'text-fg-muted hover:bg-surface-sunken'
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-mono truncate">{run.id.slice(0, 8)}</span>
                     {agentConfigs.find((a) => a.id === run.agent_config_id)?.name && (
-                      <span className="text-slate-400 truncate text-xs">
+                      <span className="text-fg-muted truncate text-xs">
                         {agentConfigs.find((a) => a.id === run.agent_config_id)?.name}
                       </span>
                     )}
-                    <span className={`shrink-0 ${
-                      run.status === 'completed'     ? 'text-emerald-400' :
+                    <span title={run.status} className={`shrink-0 ${
+                      run.status === 'completed'     ? 'text-success' :
                       run.status === 'running'       ? 'text-yellow-400 animate-pulse' :
-                      run.status === 'failed'        ? 'text-red-400' :
+                      run.status === 'failed'        ? 'text-danger' :
                       run.status === 'waiting_human' ? 'text-pink-400' :
                       run.status === 'cancelled'     ? 'text-orange-400' :
                       // Interrupted by a server restart: not a failure, so neutral grey.
-                      run.status === 'interrupted'   ? 'text-slate-400' :
-                      'text-slate-500'
-                    }`}>{run.status}</span>
+                      run.status === 'interrupted'   ? 'text-fg-muted' :
+                      'text-fg-subtle'
+                    }`}>{formatRunStatus(run.status)}</span>
+                    {run.ladder_rung != null && (
+                      <span className="text-[11px] text-accent-fg" title="Escalation ladder rung (effort from current agent config)">
+                        {ladderLabel(run, agentConfigs, providerConfigs)}
+                      </span>
+                    )}
                   </div>
                   {((run.cost_usd ?? 0) > 0 || (run.input_tokens ?? 0) > 0 || (run.output_tokens ?? 0) > 0) && (
-                    <div className="text-slate-500 text-[11px] mt-0.5">
+                    <div className="text-fg-subtle text-[11px] mt-0.5">
                       {run.cost_unknown
                         // Tokens were consumed but no pricing table row (user-edited
                         // or hardcoded fallback) matched the model — surface that
@@ -155,9 +174,9 @@ export default function RunHistoryList({
         <button
           onClick={onRerun}
           disabled={actionPending}
-          className="w-full px-3 py-1.5 text-xs font-medium rounded bg-slate-700 hover:bg-slate-600 text-slate-200 disabled:opacity-50"
+          className="w-full px-3 py-1.5 text-xs font-medium rounded bg-border hover:bg-slate-600 text-fg disabled:opacity-50"
         >
-          ↻ Re-run
+          <Icon icon={RefreshCw} size="sm" className="inline -mt-0.5 mr-1" />Re-run
         </button>
       )}
     </>

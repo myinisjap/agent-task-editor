@@ -4,7 +4,7 @@ A small suite of end-to-end smoke tests that run against the real,
 built docker-compose stack (nginx-served frontend + Go backend + sqlite) —
 not against `npm run dev` and not with any mocked API calls. Kept to a
 handful of high-value flows (board load, task creation, task-detail
-navigation, WS log pane mount) plus a data-driven check that every app
+navigation, WS log pane mount, Inbox two-pane preview selection) plus a data-driven check that every app
 route loads (`pages-load.spec.ts`), so it stays fast and non-flaky; this is
 not a full E2E suite.
 
@@ -67,3 +67,15 @@ Override the frontend URL with `E2E_BASE_URL` (defaults to
 `http://localhost:5173/tasks/`) and the backend API URL used by
 `global-setup.ts` with `E2E_API_BASE_URL` (defaults to
 `http://localhost:8080/api/v1`) if your stack is exposed elsewhere.
+
+## Contrast spec
+
+`contrast.spec.ts` runs axe-core's `color-contrast` rule (via
+`@axe-core/playwright`) on Inbox, Board, Task Detail, Pipeline Overview and
+Settings → Health in both the `dark` and `light` themes (set through
+`localStorage.theme`), failing on serious/critical violations. It creates one
+task through the API (using `E2E_REPO_ID` from `global-setup.ts`) so Task
+Detail has content. The rule is never disabled; known pre-existing violations
+live in the explicit `ALLOWLIST` at the top of the spec, each with a reason and
+as narrow as possible. White text on light fills in light mode must be fixed,
+not allowlisted.

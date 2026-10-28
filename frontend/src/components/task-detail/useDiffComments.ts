@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../../api/client'
 import { fromApiComment, type DiffComment } from '../../lib/diffComments'
+import { showError } from '../../stores/toast'
+import { errMessage } from '../../lib/errMessage'
 
 // useDiffComments owns the review-comment list for a task's diff, shared
 // between the Diff tab (rendering + add/remove/reopen) and the parent's
@@ -58,7 +60,7 @@ export function useDiffComments(taskId: string | undefined) {
     } catch (e: any) {
       if (currentTaskIdRef.current !== taskId) return
       setDiffComments((prev) => prev.filter((c) => c.id !== draft.id))
-      alert(`Failed to save comment: ${e.message ?? e}`)
+      showError(`Failed to save comment: ${errMessage(e)}`)
     }
   }
 
@@ -70,7 +72,7 @@ export function useDiffComments(taskId: string | undefined) {
       setDiffComments((prev) => prev.filter((c) => c.id !== commentId))
     } catch (e: any) {
       if (currentTaskIdRef.current !== taskId) return
-      alert(`Failed to delete comment: ${e.message ?? e}`)
+      showError(`Failed to delete comment: ${errMessage(e)}`)
     }
   }
 
@@ -82,7 +84,7 @@ export function useDiffComments(taskId: string | undefined) {
       setDiffComments((prev) => prev.map((c) => (c.id === commentId ? fromApiComment(updated) : c)))
     } catch (e: any) {
       if (currentTaskIdRef.current !== taskId) return
-      alert(`Failed to reopen comment: ${e.message ?? e}`)
+      showError(`Failed to reopen comment: ${errMessage(e)}`)
     }
   }
 

@@ -1,3 +1,4 @@
+import { labelDisplayName } from '../../lib/labelDisplay'
 import { useRef, useState } from 'react'
 import { api } from '../../api/client'
 import type { Task, WorkflowLabel } from '../../api/client'
@@ -5,7 +6,7 @@ import ModalShell from '../shared/ModalShell'
 import { forceMoveTargets } from '../../lib/forceMove'
 
 // ForceMoveControl is the Task Detail escape hatch for a wedged task: a
-// danger-styled "Force move…" button that opens a dialog to move the task to
+// neutral link-style "Force move…" button that opens a dialog to move the task to
 // ANY label of its workflow, bypassing the workflow's transition rules. It is
 // intentionally separate from the normal "Move to…" control, which only offers
 // legal targets. Errors (e.g. 409 while a run is live) render inline.
@@ -34,7 +35,7 @@ export default function ForceMoveControl({
     setError(null)
   }
 
-  async function confirm() {
+  async function confirmMove() {
     if (!target) return
     setPending(true)
     setError(null)
@@ -54,7 +55,7 @@ export default function ForceMoveControl({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="text-xs px-2 py-1 rounded border border-red-900/70 text-red-300 hover:bg-red-950/50"
+        className="text-xs text-slate-400 hover:text-slate-200 underline-offset-2 hover:underline"
       >
         Force move…
       </button>
@@ -79,7 +80,7 @@ export default function ForceMoveControl({
             >
               <option value="">Select a label…</option>
               {targets.map((l) => (
-                <option key={l.name} value={l.name}>{l.name}</option>
+                <option key={l.name} value={l.name}>{labelDisplayName(l)}</option>
               ))}
             </select>
           </label>
@@ -99,9 +100,9 @@ export default function ForceMoveControl({
             </button>
             <button
               type="button"
-              onClick={confirm}
+              onClick={confirmMove}
               disabled={!target || pending}
-              className="text-xs px-3 py-1.5 rounded bg-red-700 text-white hover:bg-red-600 disabled:opacity-50"
+              className="text-xs px-3 py-1.5 rounded bg-red-600 text-white hover:bg-red-500 disabled:opacity-50"
             >
               {pending ? 'Moving…' : 'Force move'}
             </button>

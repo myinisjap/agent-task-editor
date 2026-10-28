@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Button, PageFrame } from '../components/ui'
 import { api, authedRawFetch, type ProviderCheck, type ProviderCheckStatus } from '../api/client'
 import HelpModal from '../components/shared/HelpModal'
-import HelpButton from '../components/shared/HelpButton'
 import { HealthHelp } from '../components/shared/pageHelp'
+import { useHealthStore } from '../stores/health'
+import { healthTier, isSnoozable, visibleIssues } from '../lib/healthTiers'
 
 const STATUS_META: Record<ProviderCheckStatus, { dot: string; label: string; labelCls: string }> = {
   ok: { dot: 'bg-green-500', label: 'Ready', labelCls: 'text-green-400' },
   warn: { dot: 'bg-yellow-500', label: 'Warning', labelCls: 'text-yellow-400' },
-  error: { dot: 'bg-red-500', label: 'Not ready', labelCls: 'text-red-400' },
+  error: { dot: 'bg-red-500', label: 'Not ready', labelCls: 'text-danger' },
 }
 
 // MIN_INTERVAL_SECONDS mirrors the backend's floor (backup.MinInterval /
@@ -47,6 +49,8 @@ export default function HealthPage() {
   const [backupLoading, setBackupLoading] = useState(false)
   const [backupError, setBackupError] = useState('')
   const [showHelp, setShowHelp] = useState(false)
+  const snoozed = useHealthStore((s) => s.snoozed)
+  const setSnoozed = useHealthStore((s) => s.setSnoozed)
 
   // Backup schedule settings (interval/retention count) — see docs/backup.md.
   // intervalMinutes is the form's editable unit (minutes); the API works in
@@ -75,7 +79,10 @@ export default function HealthPage() {
     setLoading(true)
     setError('')
     api.health.providers()
-      .then((r) => setChecks(r.checks ?? []))
+      .then((r) => {
+        setChecks(r.checks ?? [])
+        void useHealthStore.getState().fetch()
+      })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false))
   }, [])
@@ -188,27 +195,15 @@ export default function HealthPage() {
     }
   }, [])
 
-  const problems = (checks ?? []).filter((c) => c.status !== 'ok').length
+  const problems = visibleIssues(checks ?? [], snoozed).length
 
   return (
-    <div className="p-6 max-w-3xl">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <h1 className="text-xl font-semibold text-slate-100">Provider Health</h1>
-          <HelpButton onClick={() => setShowHelp(true)} title="About provider health" />
-        </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="px-3 py-1.5 text-sm bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 rounded-lg transition-colors"
-        >
-          {loading ? 'Checking…' : 'Refresh'}
-        </button>
-      </div>
-      <p className="text-sm text-slate-400 mb-6">
-        Readiness of the agent providers and supporting infrastructure. Fix any red or
-        yellow row before running your first task to avoid a failed run.
-      </p>
+    <PageFrame
+      title="Provider Health"
+      help={{ onClick: () => setShowHelp(true), title: 'About provider health' }}
+      description="Readiness of the agent providers and supporting infrastructure. Fix any red or yellow row before running your first task to avoid a failed run."
+      actions={<Button size="sm" loading={loading} onClick={load}>{loading ? 'Checking…' : 'Refresh'}</Button>}
+    >
 
       {showHelp && (
         <HelpModal title="About Provider Health" onClose={() => setShowHelp(false)}>
@@ -223,7 +218,7 @@ export default function HealthPage() {
       )}
 
       {checks && !error && (
-        <div className="mb-4 text-sm text-slate-400">
+        <div className="mb-4 text-sm text-fg-muted">
           {problems === 0
             ? <span className="text-green-400">All checks passing.</span>
             : <span>{problems} {problems === 1 ? 'item needs' : 'items need'} attention.</span>}
@@ -232,27 +227,46 @@ export default function HealthPage() {
 
       <div className="flex flex-col gap-2">
         {loading && !checks && (
-          <div className="text-sm text-slate-500">Running checks…</div>
+          <div className="text-sm text-fg-subtle">Running checks…</div>
         )}
 
         {(checks ?? []).map((c) => {
           const meta = STATUS_META[c.status]
+          const tier = healthTier(c)
+          const isSnoozed = isSnoozable(c) && snoozed.includes(c.id)
           return (
             <div
               key={c.id}
-              className="bg-slate-900 border border-slate-700 rounded-xl p-4 flex items-start gap-3"
+              className={`bg-surface-raised border border-border rounded-xl p-4 flex items-start gap-3 ${isSnoozed ? 'opacity-60' : ''}`}
             >
               <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${meta.dot}`} aria-hidden />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-medium text-slate-100">{c.name}</span>
-                  <span className={`text-xs font-medium ${meta.labelCls}`}>{meta.label}</span>
+                  <span className="text-sm font-medium text-fg">{c.name}</span>
+                  <span className={`text-xs font-medium ${meta.labelCls}`}>
+                    {tier && (
+                      <span className="mr-2 rounded bg-surface-sunken px-1.5 py-0.5 text-fg-muted">
+                        {isSnoozed ? 'Snoozed' : tier === 'advice' ? 'Advice' : 'Needs attention'}
+                      </span>
+                    )}
+                    {meta.label}
+                  </span>
                 </div>
-                <div className="text-xs text-slate-400 mt-0.5 break-words">{c.detail}</div>
+                <div className="text-xs text-fg-muted mt-0.5 break-words">{c.detail}</div>
                 {c.hint && c.status !== 'ok' && (
-                  <div className="text-xs text-slate-500 mt-1.5 break-words">
-                    <span className="text-slate-400">Fix:</span> {c.hint}
+                  <div className="text-xs text-fg-subtle mt-1.5 break-words">
+                    <span className="text-fg-muted">Fix:</span> {c.hint}
                   </div>
+                )}
+                {isSnoozable(c) && (
+                  <label className="mt-2 flex items-center gap-1.5 text-xs text-fg-muted">
+                    <input
+                      type="checkbox"
+                      checked={isSnoozed}
+                      onChange={(e) => setSnoozed(c.id, e.target.checked)}
+                    />
+                    Don&apos;t remind me
+                  </label>
                 )}
               </div>
             </div>
@@ -260,11 +274,11 @@ export default function HealthPage() {
         })}
       </div>
 
-      <div className="mt-8 pt-6 border-t border-slate-800">
-        <h2 className="text-base font-semibold text-slate-100 mb-1">Backup</h2>
-        <p className="text-sm text-slate-400 mb-3">
+      <div className="mt-8 pt-6 border-t border-border">
+        <h2 className="text-base font-semibold text-fg mb-1">Backup</h2>
+        <p className="text-sm text-fg-muted mb-3">
           Download a consistent point-in-time snapshot of the database. Safe to run while
-          the app is in use. See <code className="text-slate-300">docs/backup.md</code> for
+          the app is in use. See <code className="text-fg-muted">docs/backup.md</code> for
           the restore procedure and automatic/scheduled backup options.
         </p>
 
@@ -277,19 +291,19 @@ export default function HealthPage() {
         <button
           onClick={downloadBackup}
           disabled={backupLoading}
-          className="px-3 py-1.5 text-sm bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 rounded-lg transition-colors"
+          className="px-3 py-1.5 text-sm bg-surface-sunken hover:bg-border disabled:opacity-50 text-fg rounded-lg transition-colors"
         >
           {backupLoading ? 'Preparing backup…' : 'Download backup'}
         </button>
       </div>
 
-      <div className="mt-8 pt-6 border-t border-slate-800">
-        <h2 className="text-base font-semibold text-slate-100 mb-1">Automatic backup schedule</h2>
-        <p className="text-sm text-slate-400 mb-3">
+      <div className="mt-8 pt-6 border-t border-border">
+        <h2 className="text-base font-semibold text-fg mb-1">Automatic backup schedule</h2>
+        <p className="text-sm text-fg-muted mb-3">
           How often the built-in scheduler writes a snapshot, and how many of the most
           recent snapshots to keep before pruning older ones. Only takes effect if automatic
-          backups are enabled (<code className="text-slate-300">BACKUP_DIR</code> set) — see
-          the "Automatic local backups" check above and <code className="text-slate-300">docs/backup.md</code>.
+          backups are enabled (<code className="text-fg-muted">BACKUP_DIR</code> set) — see
+          the "Automatic local backups" check above and <code className="text-fg-muted">docs/backup.md</code>.
           Defaults to once a day, keeping the newest 7 snapshots.
         </p>
 
@@ -305,7 +319,7 @@ export default function HealthPage() {
         )}
 
         <div className="flex flex-wrap items-end gap-4 mb-3">
-          <label className="flex flex-col gap-1 text-sm text-slate-300">
+          <label className="flex flex-col gap-1 text-sm text-fg-muted">
             Backup frequency (minutes)
             <input
               type="number"
@@ -314,12 +328,12 @@ export default function HealthPage() {
               value={intervalMinutes}
               onChange={(e) => setIntervalMinutes(e.target.value)}
               disabled={settingsLoading || settingsSaving}
-              className="w-40 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 disabled:opacity-50"
+              className="w-40 px-2 py-1.5 bg-surface-sunken border border-border rounded-lg text-fg disabled:opacity-50"
             />
-            <span className="text-xs text-slate-500">Minimum 10 minutes.</span>
+            <span className="text-xs text-fg-subtle">Minimum 10 minutes.</span>
           </label>
 
-          <label className="flex flex-col gap-1 text-sm text-slate-300">
+          <label className="flex flex-col gap-1 text-sm text-fg-muted">
             Backups to keep
             <input
               type="number"
@@ -328,29 +342,29 @@ export default function HealthPage() {
               value={keep}
               onChange={(e) => setKeep(e.target.value)}
               disabled={settingsLoading || settingsSaving}
-              className="w-40 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 disabled:opacity-50"
+              className="w-40 px-2 py-1.5 bg-surface-sunken border border-border rounded-lg text-fg disabled:opacity-50"
             />
-            <span className="text-xs text-slate-500">Minimum 1.</span>
+            <span className="text-xs text-fg-subtle">Minimum 1.</span>
           </label>
 
           <button
             onClick={saveSettings}
             disabled={settingsLoading || settingsSaving}
-            className="px-3 py-1.5 text-sm bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 rounded-lg transition-colors"
+            className="px-3 py-1.5 text-sm bg-surface-sunken hover:bg-border disabled:opacity-50 text-fg rounded-lg transition-colors"
           >
             {settingsSaving ? 'Saving…' : 'Save backup settings'}
           </button>
         </div>
       </div>
 
-      <div className="mt-8 pt-6 border-t border-slate-800">
-        <h2 className="text-base font-semibold text-slate-100 mb-1">Agent log cleanup</h2>
-        <p className="text-sm text-slate-400 mb-3">
+      <div className="mt-8 pt-6 border-t border-border">
+        <h2 className="text-base font-semibold text-fg mb-1">Agent log cleanup</h2>
+        <p className="text-sm text-fg-muted mb-3">
           Automatically deletes stored logs for completed, failed, and waiting-on-human runs
           once they're older than the configured number of days, bounding database growth on
           long-lived boards. Logs for still-running runs are never touched. Set retention days
           to 0 to disable cleanup and keep logs forever. Changes take effect without a
-          restart — see <code className="text-slate-300">docs/backup.md</code>.
+          restart — see <code className="text-fg-muted">docs/backup.md</code>.
         </p>
 
         {logRetentionError && (
@@ -365,7 +379,7 @@ export default function HealthPage() {
         )}
 
         <div className="flex flex-wrap items-end gap-4 mb-3">
-          <label className="flex flex-col gap-1 text-sm text-slate-300">
+          <label className="flex flex-col gap-1 text-sm text-fg-muted">
             Delete logs older than (days)
             <input
               type="number"
@@ -374,12 +388,12 @@ export default function HealthPage() {
               value={logRetentionDays}
               onChange={(e) => setLogRetentionDays(e.target.value)}
               disabled={logRetentionLoading || logRetentionSaving}
-              className="w-40 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 disabled:opacity-50"
+              className="w-40 px-2 py-1.5 bg-surface-sunken border border-border rounded-lg text-fg disabled:opacity-50"
             />
-            <span className="text-xs text-slate-500">0 disables cleanup — logs are kept forever.</span>
+            <span className="text-xs text-fg-subtle">0 disables cleanup — logs are kept forever.</span>
           </label>
 
-          <label className="flex flex-col gap-1 text-sm text-slate-300">
+          <label className="flex flex-col gap-1 text-sm text-fg-muted">
             Cleanup frequency (minutes)
             <input
               type="number"
@@ -388,20 +402,20 @@ export default function HealthPage() {
               value={logRetentionIntervalMinutes}
               onChange={(e) => setLogRetentionIntervalMinutes(e.target.value)}
               disabled={logRetentionLoading || logRetentionSaving}
-              className="w-40 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 disabled:opacity-50"
+              className="w-40 px-2 py-1.5 bg-surface-sunken border border-border rounded-lg text-fg disabled:opacity-50"
             />
-            <span className="text-xs text-slate-500">Minimum 1 minute.</span>
+            <span className="text-xs text-fg-subtle">Minimum 1 minute.</span>
           </label>
 
           <button
             onClick={saveLogRetentionSettings}
             disabled={logRetentionLoading || logRetentionSaving}
-            className="px-3 py-1.5 text-sm bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 rounded-lg transition-colors"
+            className="px-3 py-1.5 text-sm bg-surface-sunken hover:bg-border disabled:opacity-50 text-fg rounded-lg transition-colors"
           >
             {logRetentionSaving ? 'Saving…' : 'Save log cleanup settings'}
           </button>
         </div>
       </div>
-    </div>
+    </PageFrame>
   )
 }

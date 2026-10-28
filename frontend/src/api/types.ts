@@ -568,6 +568,8 @@ export interface paths {
                         description?: string;
                         /** @enum {string} */
                         type?: "feature" | "bug" | "chore" | "spike";
+                        /** @description Optional repo-relative globs the subtask may change (max 20, 256 chars each, no leading "/" or ".." segments). Siblings with overlapping scopes are serialized via dependency edges. */
+                        file_scope?: string[];
                         /** @description Optional landing label; must be an agent_ignore (human-gate) label. Defaults to the workflow's first agent_ignore label. */
                         label?: string;
                     };
@@ -579,7 +581,14 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["Task"];
+                        "application/json": components["schemas"]["Task"] & {
+                            /** @description Siblings this subtask now depends on because their file scopes overlap. */
+                            overlap_dependencies?: {
+                                task_id?: string;
+                                title?: string;
+                                globs?: string[];
+                            }[];
+                        };
                     };
                 };
                 /** @description Depth limit exceeded */
@@ -1559,6 +1568,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/human-decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a task's human replies to waiting_human runs
+         * @description Replied decisions only (question-only rows are excluded), oldest first. These are the same replies shown to later runs under HUMAN DECISIONS ON THIS TASK.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskHumanDecision"][];
+                    };
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/runs": {
         parameters: {
             query?: never;
@@ -1604,6 +1660,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/previews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Latest preview screenshot capture for a task
+         * @description Screenshots of the repo's preview routes at desktop (1280x800) and phone (390x844) width, captured when a run succeeded into a human gate and the diff touched UI files. capture is null when none was taken. Failures never block the task; they appear as status failed.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            capture: components["schemas"]["TaskPreviewCapture"] | null;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/verifications": {
         parameters: {
             query?: never;
@@ -1633,6 +1731,54 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["RunVerification"][];
                     };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/review-brief": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Review brief for a task
+         * @description Deterministic risk flags, change summary, latest verification, run/rework/cost totals and the latest agent summary. Diff-derived parts are cached per branch head. Advisory only; no LLM calls.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The review brief. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReviewBrief"];
+                    };
+                };
+                /** @description Task not found. */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
                 };
             };
         };
@@ -2054,6 +2200,633 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{id}/lessons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** List a repo's own lessons (global lessons excluded) */
+        get: {
+            parameters: {
+                query?: {
+                    status?: "proposed" | "active" | "stale" | "retired";
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoLesson"][];
+                    };
+                };
+                /** @description Invalid status filter */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Create a lesson for a repo */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RepoLessonCreate"];
+                };
+            };
+            responses: {
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoLesson"];
+                    };
+                };
+                /** @description Invalid kind/status/source */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lessons": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List global lessons (repo_id null) */
+        get: {
+            parameters: {
+                query?: {
+                    status?: "proposed" | "active" | "stale" | "retired";
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoLesson"][];
+                    };
+                };
+                /** @description Invalid status filter */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /** Create a global lesson */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RepoLessonCreate"];
+                };
+            };
+            responses: {
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoLesson"];
+                    };
+                };
+                /** @description Invalid kind/status/source */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lessons/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a lesson */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Lesson not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /** Update a lesson (repo or global) */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RepoLessonUpdate"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoLesson"];
+                    };
+                };
+                /** @description Invalid field value */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Lesson not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List skills */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Skills sorted by name */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Skill"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Create a skill from a SKILL.md body or a zip of a skill folder
+         * @description Send JSON `{skill_md}` or an `application/zip` body (max 1 MB, at most 200 files; SKILL.md at the root or in a single top-level folder). Zips with path traversal, absolute paths or symlinks are rejected.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        skill_md: string;
+                    };
+                    "application/zip": string;
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Skill"];
+                    };
+                };
+                /** @description Invalid SKILL.md frontmatter or unsafe zip */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description A skill with that name already exists */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/skills/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get a skill with its SKILL.md and file list */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The skill */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Skill"];
+                    };
+                };
+                /** @description Skill not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Delete a skill (also detaches it everywhere) */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Skill not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Enable/disable a skill and/or replace its content
+         * @description JSON `{enabled?, skill_md?}` or an `application/zip` body replacing the content. Replacement content must keep the skill's name.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        enabled?: boolean;
+                        skill_md?: string;
+                    };
+                    "application/zip": string;
+                };
+            };
+            responses: {
+                /** @description Updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Skill"];
+                    };
+                };
+                /** @description Invalid content or name mismatch */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Skill not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/agents/{id}/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** List skills attached to an agent config */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Attached skills */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Skill"][];
+                    };
+                };
+                /** @description Agent config not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        /** Replace the set of skills attached to an agent config */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SkillIDs"];
+                };
+            };
+            responses: {
+                /** @description The new attached set */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Skill"][];
+                    };
+                };
+                /** @description Unknown skill id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Agent config not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{id}/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** List skills attached to a repo */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Attached skills */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Skill"][];
+                    };
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        /** Replace the set of skills attached to a repo */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SkillIDs"];
+                };
+            };
+            responses: {
+                /** @description The new attached set */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Skill"][];
+                    };
+                };
+                /** @description Unknown skill id */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/schedules": {
         parameters: {
             query?: never;
@@ -2293,7 +3066,7 @@ export interface paths {
                         /** @default 0 */
                         sort_order?: number;
                         /** @enum {string} */
-                        match_source?: "" | "manual" | "issue" | "schedule" | "subtask";
+                        match_source?: "" | "manual" | "issue" | "schedule" | "webhook" | "subtask";
                         match_repo_id?: string | null;
                         match_labels?: string[];
                         match_title_pattern?: string;
@@ -2472,7 +3245,7 @@ export interface paths {
                         /** @default 0 */
                         sort_order?: number;
                         /** @enum {string} */
-                        match_source?: "" | "manual" | "issue" | "schedule" | "subtask";
+                        match_source?: "" | "manual" | "issue" | "schedule" | "webhook" | "subtask";
                         match_repo_id?: string | null;
                         match_labels?: string[];
                         match_title_pattern?: string;
@@ -2986,6 +3759,440 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/{id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** List an agent config's version history (newest first, with snapshots) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentConfigVersion"][];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        /** Get one version snapshot */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    version: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentConfigVersion"];
+                    };
+                };
+                /** @description Non-integer version */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/versions/{version}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restore a version as a new version
+         * @description Applies the snapshot onto the current config (name, labels, enabled and priority are kept) and records a new version, unless the result is identical to the current config. Provider configs referenced by the snapshot are re-validated.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    version: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        note?: string;
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentConfig"];
+                    };
+                };
+                /** @description Snapshot references a deleted provider config or is otherwise invalid */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/experiments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** List an agent config's A/B experiments (newest first, without results) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentExperiment"][];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Start an A/B experiment
+         * @description Runs the candidate snapshot on a deterministic share of tasks that first reach this agent's label; the rest keep the current config. At most one experiment runs per agent config.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AgentExperimentStart"];
+                };
+            };
+            responses: {
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentExperiment"];
+                    };
+                };
+                /** @description Invalid share */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description An experiment is already running for this agent */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/experiments/{experimentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                experimentId: string;
+            };
+            cookie?: never;
+        };
+        /** Get one experiment with per-arm results */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    experimentId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentExperiment"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/experiments/{experimentId}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                experimentId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop a running experiment (all later runs use the current config) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    experimentId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentExperiment"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Experiment is not running */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/experiments/{experimentId}/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                experimentId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Promote the candidate to the agent's new version
+         * @description Applies the candidate onto the current config (like a version restore), records a new version, marks the experiment promoted and tags the candidate-arm runs with the new version.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    experimentId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        note?: string;
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentExperimentPromoteResponse"];
+                    };
+                };
+                /** @description Candidate references a deleted provider config or is otherwise invalid */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Experiment is not running */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/models": {
         parameters: {
             query?: never;
@@ -3298,7 +4505,7 @@ export interface paths {
         put?: never;
         /**
          * Register a repo
-         * @description The body also accepts verify_command (string) and verify_timeout_seconds (integer, 1-3600); see the Repo schema.
+         * @description The body also accepts verify_command (string) and verify_timeout_seconds (integer, 1-3600); see the Repo schema. It also accepts preview_command, preview_routes and preview_paths_glob (strings).
          */
         post: {
             parameters: {
@@ -3418,6 +4625,12 @@ export interface paths {
                         verify_command?: string;
                         /** @description Replaces the verify timeout. Omit to leave unchanged. */
                         verify_timeout_seconds?: number;
+                        /** @description Replaces the preview command; empty string disables previews. Omit to leave unchanged. */
+                        preview_command?: string;
+                        /** @description Replaces the newline-separated preview routes. Omit to leave unchanged. */
+                        preview_routes?: string;
+                        /** @description Replaces the newline-separated UI path globs (empty = defaults). Omit to leave unchanged. */
+                        preview_paths_glob?: string;
                     };
                 };
             };
@@ -3662,13 +4875,15 @@ export interface paths {
         };
         /**
          * Per-agent-config outcome-quality analytics (rework, cost-to-done, review burden, human-touch, escalation)
-         * @description Returns the OutcomeQuality analytics table: per-agent-config rework rate, cost-to-done, review burden, human-touch rate, and escalation rate — metrics that answer "did the work stick", which Dashboard.agent_config_stats' success_rate_percent cannot. Computed from a full scan of task_label_history and agent_runs, so results are cached for a short TTL rather than being live — see docs/api.md#dashboard. Optionally scoped to a single repo via ?repo_id=, since aggregate cross-repo numbers can hide a config that is excellent on one codebase and poor on another.
+         * @description Returns the OutcomeQuality analytics table: per-agent-config rework rate, cost-to-done, review burden, human-touch rate, and escalation rate — metrics that answer "did the work stick", which Dashboard.agent_config_stats' success_rate_percent cannot. Computed from a full scan of task_label_history and agent_runs, so results are cached for a short TTL rather than being live — see docs/api.md#dashboard. Optionally scoped to a single repo via ?repo_id=, since aggregate cross-repo numbers can hide a config that is excellent on one codebase and poor on another. Use ?group_by= to break rows down by version, provider config, repo or task type (default: config).
          */
         get: {
             parameters: {
                 query?: {
                     /** @description When set, every metric is recomputed over only the tasks belonging to this repo instead of the cached all-repos snapshot. */
                     repo_id?: string;
+                    /** @description Break rows down by this dimension. Invalid values return 400. */
+                    group_by?: "config" | "version" | "provider_config" | "repo" | "task_type";
                 };
                 header?: never;
                 path?: never;
@@ -3773,6 +4988,427 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intake-endpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List intake webhook endpoints */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Endpoints (secrets omitted) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntakeEndpoint"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Create an intake webhook endpoint
+         * @description The response includes the generated HMAC `secret`; it is not retrievable again.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["IntakeEndpointBody"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntakeEndpointCreated"];
+                    };
+                };
+                /** @description Validation error */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intake-endpoints/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** Get an intake webhook endpoint */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The endpoint (secret omitted) */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntakeEndpoint"];
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        /**
+         * Update an intake webhook endpoint
+         * @description Does not change the secret; use rotate-secret.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["IntakeEndpointBody"];
+                };
+            };
+            responses: {
+                /** @description Updated */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntakeEndpoint"];
+                    };
+                };
+                /** @description Validation error */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        /** Delete an intake webhook endpoint */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intake-endpoints/{id}/rotate-secret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rotate an endpoint's HMAC secret
+         * @description The old secret stops working immediately. The new one is shown only in this response.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description New secret */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            secret: string;
+                        };
+                    };
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intake-endpoints/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview how a sample payload would be turned into a task
+         * @description Renders the templates and runs intake rules. Creates nothing.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["IntakeEndpointTestRequest"];
+                };
+            };
+            responses: {
+                /** @description Rendered preview */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntakeEndpointTestResponse"];
+                    };
+                };
+                /** @description Missing or invalid payload */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No workflow resolvable */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/intake/{endpoint_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deliver a signed event to an intake endpoint
+         * @description NOT behind bearer auth; authenticated by the HMAC-SHA256 of the raw body, keyed with the endpoint secret, sent as `X-ATE-Signature-256: sha256=<hex>` (constant-time compare). Body is capped at 256 KB, must be a JSON object, and each endpoint accepts at most 30 authenticated requests per minute. Creates a task (source `webhook`, on the workflow's gate label unless the endpoint sets a target label), or, when the dedupe key matches an open task, appends the event as an untrusted source comment to it. See docs/task-sources.md.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header: {
+                    "X-ATE-Signature-256": string;
+                };
+                path: {
+                    endpoint_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            responses: {
+                /** @description Deduplicated into an existing open task */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            task_id?: string;
+                            deduped?: boolean;
+                        };
+                    };
+                };
+                /** @description Task created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            task_id?: string;
+                            created?: boolean;
+                        };
+                    };
+                };
+                /** @description Unreadable body */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Missing or invalid signature */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Endpoint disabled */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Unknown endpoint */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Body larger than 256 KB */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Content type is not application/json */
+                415: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No workflow resolvable for the endpoint */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Rate limit exceeded */
+                429: {
+                    headers: {
+                        "Retry-After"?: number;
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -4685,6 +6321,97 @@ export interface components {
              * @description When the task started needing a human; the list is sorted by this ascending.
              */
             since: string;
+            /** @description Review-brief flag codes; present only for human_gate items whose branch diff could be computed and raised at least one flag. */
+            risk_flags?: components["schemas"]["RiskFlagCode"][];
+            /** @description One-line agent summary from the review brief. human_gate items only, when the brief could be built and an agent summary exists. */
+            summary?: string;
+            /** @description Diff size. human_gate items only, when the branch diff could be computed. */
+            changed?: {
+                files: number;
+                additions: number;
+                deletions: number;
+            };
+            /**
+             * Format: double
+             * @description Cost so far across the task's runs. human_gate items only, when the review brief could be built.
+             */
+            cost_usd?: number;
+            /** @description True when some run had unknown cost. human_gate items only, when the review brief could be built. */
+            cost_unknown?: boolean;
+            /**
+             * @description Latest verify result. human_gate items only, when the review brief could be built.
+             * @enum {string}
+             */
+            verification?: "pass" | "fail" | "timeout" | "error" | "not_run";
+            /** @description Images in the latest preview capture. human_gate items only, when the review brief could be built; omitted when 0. */
+            preview_count?: number;
+        };
+        /**
+         * @description Deterministic, advisory risk flag computed from the task's branch diff. migration - a migrations/ path, a .sql file named like schema, or DDL (CREATE/ALTER/DROP TABLE|INDEX|VIEW|TRIGGER) in a .sql file. auth_or_security - path contains auth, oauth, token, secret, middleware, crypto, password, credential, jwt, csrf, cors, permission, security or session, or a .env* file. dependencies - manifests/lockfiles (go.mod, package.json, requirements*.txt, Cargo.*, ...) or a Dockerfile FROM change. tests_removed - a test file deleted, net test functions removed, or skip/only markers added. ci_config - .github/workflows, .gitea/workflows or .gitlab-ci.yml. large_change - more than 800 changed lines (lockfiles/generated excluded) or more than 25 files. outside_plan_scope - the plan in agent_notes lists files and the diff touches others (skipped when the plan has no file list).
+         * @enum {string}
+         */
+        RiskFlagCode: "migration" | "auth_or_security" | "dependencies" | "tests_removed" | "ci_config" | "large_change" | "outside_plan_scope";
+        RiskFlag: {
+            code: components["schemas"]["RiskFlagCode"];
+            /** @description Human-readable explanation of why the flag fired. */
+            reason: string;
+            /** @description Offending files (at most 10); empty for large_change. */
+            files: string[];
+        };
+        /** @description Deterministic summary shown above the diff when a task is waiting on a human. No LLM is involved; flags are advisory and never approve anything. */
+        ReviewBrief: {
+            /** @description Whether the task's label is currently a human gate. */
+            human_gate: boolean;
+            changed: {
+                files: number;
+                additions: number;
+                deletions: number;
+                /** @description Up to 10 files with the most churn. */
+                top_files: {
+                    path: string;
+                    /** @enum {string} */
+                    status: "added" | "modified" | "deleted" | "renamed";
+                    additions: number;
+                    deletions: number;
+                }[];
+            };
+            risk_flags: components["schemas"]["RiskFlag"][];
+            /** @description Latest verify-command result; null when none ran. */
+            verification: {
+                status: string;
+                command: string;
+                exit_code: number | null;
+                duration_ms: number;
+                /** @description Last ~20 lines (at most 2000 chars) of output. */
+                output_tail: string;
+                truncated: boolean;
+                /** Format: date-time */
+                created_at: string;
+            } | null;
+            runs: {
+                total: number;
+                failed: number;
+                /** @description Transitions into a label the task already visited. */
+                rework_loops: number;
+                cost_usd: number;
+                /** @description True when some run's cost could not be priced. */
+                cost_unknown: boolean;
+            };
+            /** @description Latest store_info from a run (first 1500 chars), else the tail of agent_notes; null when both are empty. */
+            agent_summary: {
+                /** @enum {string} */
+                source: "stored_info" | "agent_notes";
+                run_id: string;
+                agent_name: string;
+                text: string;
+                truncated: boolean;
+            } | null;
+            /** @description False when the task has no branch or it cannot be resolved. */
+            diff_available: boolean;
+            /** @description The diff exceeded the size limit; numbers are best effort. */
+            truncated: boolean;
+            /** Format: date-time */
+            computed_at: string;
         };
         /** @description The provider/model/API-key (env vars) triple, split out of AgentConfig so it can be shared/reused by chat sessions and agent configs alike. */
         ProviderConfig: {
@@ -4752,7 +6479,7 @@ export interface components {
              * @description If set, the task is in a backed-off auto-retry state and will not be picked up by the dispatcher again until this time.
              */
             next_retry_at?: string | null;
-            /** @description Where the task was imported from ("github" for the GitHub Issues importer, "gitea" for the Gitea Issues importer against a self-hosted instance). Empty for manually created tasks. */
+            /** @description Where the task was imported from ("github" for the GitHub Issues importer, "gitea" for the Gitea Issues importer against a self-hosted instance, "webhook" for an intake webhook endpoint). Empty for manually created tasks. */
             source?: string;
             /** @description External item the task was imported from, unique within source (e.g. "owner/repo#123"). Empty for manually created tasks. */
             source_ref?: string;
@@ -4770,7 +6497,7 @@ export interface components {
             matched_rule_id?: string | null;
             /** @description Display name of the intake rule referenced by matched_rule_id, resolved at read time. Only populated on GET /tasks/{id} (not on list responses). Absent/null when matched_rule_id is null or the rule was since deleted. */
             matched_rule_name?: string | null;
-            /** @description Derived (read-time) count of this task's dependency blockers whose edges are still unsatisfied. A task with any unsatisfied blocker is never picked up by the dispatcher. A blocker is satisfied once it reaches a terminal label or is archived. Zero when the task has no unsatisfied blockers. */
+            /** @description Derived (read-time) count of this task's dependency blockers whose edges are still unsatisfied. A task with any unsatisfied blocker is never picked up by the dispatcher. A blocker is satisfied once it reaches a terminal label or is archived; a blocker that is a subtask must also have finished merging back into its parent (merge_status merged or merge_conflict). Zero when the task has no unsatisfied blockers. */
             blocked_by_count?: number;
             /** @description Derived (read-time) count of tasks that depend on this task (i.e. this task is a blocker for that many other tasks). */
             blocking_count?: number;
@@ -4789,6 +6516,13 @@ export interface components {
             subtask_done?: number;
             /** @description Derived: children whose merge-back is in conflict. */
             subtask_conflicts?: number;
+            /** @description A subtask's declared file globs (repo-relative); empty when unscoped. Used for the sibling overlap guard and a post-run out-of-scope warning. */
+            file_scope?: string[];
+            /**
+             * @description A parent's integration state: pending once every subtask finished and merged back (the parent's agent then runs an integration pass), done after that run succeeds. Empty otherwise.
+             * @enum {string}
+             */
+            integration_status?: "" | "pending" | "done";
             /**
              * Format: double
              * @description Advisory per-task cost budget cap in USD, checked by the dispatcher before each sweep-dispatch against the task's cumulative recorded run cost (across every run, any status). 0 disables the cap (unlimited). If the matched agent config also has a nonzero max_cost_usd, the effective budget is the lower of the two. On providers with a mid-run cost watchdog (claude, qwen_code — see AgentConfig.max_cost_usd), this cap is also enforced as a kill switch against an in-flight run, not just the next dispatch. See docs/agents.md#cost-budgets.
@@ -4876,7 +6610,7 @@ export interface components {
             title: string;
             label: string;
             archived: boolean;
-            /** @description For a blocker: whether the edge is satisfied (the blocker is terminal or archived). Not meaningful for dependents (always false there). */
+            /** @description For a blocker: whether the edge is satisfied (the blocker is terminal or archived; a subtask blocker must also be merged/merge_conflict). Not meaningful for dependents (always false there). */
             satisfied: boolean;
         };
         /** @description Both directions of a task's dependency edges. */
@@ -4889,6 +6623,30 @@ export interface components {
             blocked_by_count: number;
             /** @description Count of dependents */
             blocking_count: number;
+        };
+        /** @description An Agent Skills folder (SKILL.md with name + description frontmatter, plus optional files) in the provider-neutral skills library. Trusted admin config: only the normal API token can read or write it, never an MCP sidecar scoped token. Enabled skills attached to an agent config or its repo are copied into the run's worktree. */
+        Skill: {
+            id: string;
+            /** @description Unique slug from the SKILL.md frontmatter */
+            name: string;
+            /** @description From the SKILL.md frontmatter */
+            description: string;
+            enabled: boolean;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** @description SKILL.md contents (GET /skills/{id} only) */
+            skill_md?: string;
+            /** @description Relative file paths (GET /skills/{id} only) */
+            files?: string[];
+            /** @description Attached agent config ids (GET /skills list only) */
+            agent_config_ids?: string[];
+            /** @description Attached repo ids (GET /skills list only) */
+            repo_ids?: string[];
+        };
+        SkillIDs: {
+            skill_ids: string[];
         };
         /** @description Reusable pre-filled title/description/type for recurring shapes of work (e.g. "upgrade dependency X", "fix flaky test"). Applied in the new-task form; creating a task from a template just pre-fills fields. */
         TaskTemplate: {
@@ -4903,6 +6661,63 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /** @description Short curated lesson injected into agent prompts (REPO LESSONS section). repo_id null means the lesson applies to every repo. Only status=active lessons are injected, filtered by stages (empty = all agents) and path_globs (empty = always; otherwise matched against the files the task branch changed vs base). */
+        RepoLesson: {
+            id: string;
+            repo_id: string | null;
+            /** @enum {string} */
+            kind: "convention" | "trap" | "command" | "decision" | "preference";
+            body: string;
+            path_globs: string[];
+            stages: string[];
+            /** @description Reserved for citation checks in a later phase. */
+            citations: unknown[];
+            /** @enum {string} */
+            source: "human" | "agent" | "distiller";
+            source_task_id: string | null;
+            /** @enum {string} */
+            status: "proposed" | "active" | "stale" | "retired";
+            injected_count: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            last_checked_at: string | null;
+        };
+        RepoLessonCreate: {
+            /** @enum {string} */
+            kind: "convention" | "trap" | "command" | "decision" | "preference";
+            body: string;
+            path_globs?: string[];
+            stages?: string[];
+            citations?: unknown[];
+            /**
+             * @default active
+             * @enum {string}
+             */
+            status: "proposed" | "active" | "stale" | "retired";
+            /**
+             * @default human
+             * @enum {string}
+             */
+            source: "human" | "agent" | "distiller";
+            source_task_id?: string;
+        };
+        /** @description Partial update; omitted fields are kept. repo_id cannot change. */
+        RepoLessonUpdate: {
+            /** @enum {string} */
+            kind?: "convention" | "trap" | "command" | "decision" | "preference";
+            body?: string;
+            path_globs?: string[];
+            stages?: string[];
+            citations?: unknown[];
+            /** @enum {string} */
+            status?: "proposed" | "active" | "stale" | "retired";
+            /** @enum {string} */
+            source?: "human" | "agent" | "distiller";
+            source_task_id?: string;
         };
         /** @description Recurring instantiation of a task_template against a repo on a cron expression. A sweep fires due, enabled schedules and creates a task (source="schedule"), skipping firing while an open task from a prior firing of the same schedule still exists. target_label defaults to the repo workflow's human-gate label — the lowest sort_order agent_ignore label, or the first label if none ("not_ready" in the default workflow) — so a human promotes the created task; setting it to a live agent label instead makes the schedule fully unattended — pair with a cost budget on the template's agent config as a safety net. */
         TaskSchedule: {
@@ -4929,10 +6744,10 @@ export interface components {
             /** @description Lower sorts first; first-match-wins evaluation order among enabled rules. */
             sort_order: number;
             /**
-             * @description Empty = any. Only 'issue' and 'schedule' are currently evaluated by any code path.
+             * @description Empty = any. Only 'issue', 'schedule' and 'webhook' are currently evaluated by any code path.
              * @enum {string}
              */
-            match_source: "" | "manual" | "issue" | "schedule" | "subtask";
+            match_source: "" | "manual" | "issue" | "schedule" | "webhook" | "subtask";
             /** @description Null = any repo. */
             match_repo_id?: string | null;
             /** @description ANY-of, case-insensitive. Empty = any. */
@@ -4962,6 +6777,66 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /** @description A signed inbound webhook endpoint that creates tasks (see docs/task-sources.md). The HMAC secret is never included here; it is returned only by create and rotate-secret. */
+        IntakeEndpoint: {
+            id: string;
+            name: string;
+            repo_id: string;
+            /** @description Null = the repo's workflow. */
+            workflow_id: string | null;
+            /** @description Empty = the workflow's human-gate label. A non-gate label starts tasks without human review. */
+            target_label: string;
+            enabled: boolean;
+            title_template: string;
+            /** @description Empty = the payload pretty-printed as JSON. */
+            description_template: string;
+            /** @description Empty = never dedupe. */
+            dedupe_key_template: string;
+            /** Format: date-time */
+            last_received_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            secret_set: boolean;
+            /** @example /api/v1/intake/<id> */
+            url_path: string;
+        };
+        IntakeEndpointCreated: components["schemas"]["IntakeEndpoint"] & {
+            /** @description HMAC secret. Shown only once. */
+            secret: string;
+        };
+        IntakeEndpointBody: {
+            name: string;
+            repo_id: string;
+            workflow_id?: string | null;
+            target_label?: string;
+            /** @description Default true. */
+            enabled?: boolean;
+            title_template: string;
+            description_template?: string;
+            dedupe_key_template?: string;
+        };
+        /** @description Sample payload plus optional unsaved template overrides. */
+        IntakeEndpointTestRequest: {
+            payload: {
+                [key: string]: unknown;
+            };
+            title_template?: string;
+            description_template?: string;
+            dedupe_key_template?: string;
+        };
+        IntakeEndpointTestResponse: {
+            title: string;
+            description: string;
+            dedupe_key: string;
+            label: string;
+            workflow_id: string;
+            priority: number;
+            matched_rule_id: string | null;
+            /** @description Open task a real delivery would append a comment to. */
+            existing_task_id: string | null;
         };
         /** @description DB-backed settings for the automatic local-backup scheduler (see docs/backup.md). Changes take effect on the scheduler's next scheduled run without a restart. Whether the scheduler is enabled at all remains a deploy-time-only choice (BACKUP_DIR). */
         BackupSettings: {
@@ -5022,6 +6897,8 @@ export interface components {
             id: string;
             workflow_id: string;
             name: string;
+            /** @description Optional human-readable title shown in the UI (column headers, chips). Empty/absent = UI derives one from name (separators to spaces, sentence case). name stays the API/URL identifier. */
+            display_name?: string;
             /** @description Hex color (#rgb/#rrggbb/#rrggbbaa) used by the UI, including the dashboard's factory visualization. Empty string is allowed (falls back to a UI default); anything else that isn't a hex literal is rejected with 400 on write. */
             color: string;
             sort_order: number;
@@ -5066,7 +6943,131 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        /** @description Behaviour-relevant fields of an agent config at one version. name, labels, enabled and priority are not versioned. */
+        AgentConfigSnapshot: {
+            system_prompt?: string;
+            provider_config_id?: string;
+            fallback_provider_config_ids?: string[];
+            escalation_ladder?: components["schemas"]["EscalationRung"][];
+            effort?: string;
+            permission_mode?: string;
+            max_turns?: number;
+            max_tokens?: number;
+            timeout_secs?: number;
+            /** Format: double */
+            max_cost_usd?: number;
+            max_retries?: number;
+            retry_backoff_secs?: number;
+            resume_sessions?: boolean;
+            subtasks_enabled?: boolean;
+            max_subtasks?: number;
+            enabled_plugins?: string[];
+            enabled_mcp_servers?: string[];
+            command_allowlist?: string[];
+            command_denylist?: string[];
+        };
+        AgentConfigVersion: {
+            id: string;
+            agent_config_id: string;
+            /** @description 1-based, increasing per agent config. */
+            version: number;
+            snapshot: components["schemas"]["AgentConfigSnapshot"];
+            actor_id?: string | null;
+            note?: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        AgentExperimentArmStats: {
+            /** @description Assigned, non-archived tasks. */
+            tasks: number;
+            /** @description Assigned tasks whose current label is terminal. */
+            tasks_done: number;
+            /**
+             * Format: double
+             * @description Of done tasks, share where the agent had exactly one run and it completed.
+             */
+            first_pass_success_rate_percent: number;
+            /**
+             * Format: double
+             * @description Of done tasks, share with a transition into an already-visited label.
+             */
+            rework_rate_percent: number;
+            /**
+             * Format: double
+             * @description Of done tasks, share with any human-triggered transition.
+             */
+            human_touch_rate_percent: number;
+            /**
+             * Format: double
+             * @description Mean total cost of all runs on each done task.
+             */
+            avg_cost_to_done_usd: number;
+            /**
+             * Format: double
+             * @description Mean duration of the agent's finished runs in this arm.
+             */
+            avg_duration_secs: number;
+            /** @description True when tasks_done is below min_tasks_per_arm. */
+            not_enough_data: boolean;
+        };
+        AgentExperimentResults: {
+            control: components["schemas"]["AgentExperimentArmStats"];
+            candidate: components["schemas"]["AgentExperimentArmStats"];
+            min_tasks_per_arm: number;
+        };
+        AgentExperiment: {
+            id: string;
+            agent_config_id: string;
+            candidate_snapshot: components["schemas"]["AgentConfigSnapshot"];
+            /** @description Latest version when the experiment started (informational). */
+            base_version?: number | null;
+            share_percent: number;
+            /** @enum {string} */
+            status: "running" | "stopped" | "promoted";
+            note?: string | null;
+            actor_id?: string | null;
+            promoted_version?: number | null;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            stopped_at?: string | null;
+            results?: components["schemas"]["AgentExperimentResults"];
+        };
+        AgentExperimentStart: {
+            candidate: components["schemas"]["AgentConfigSnapshot"];
+            /** @description Percent of newly arriving tasks assigned to the candidate arm. */
+            share_percent: number;
+            note?: string;
+        };
+        AgentExperimentPromoteResponse: {
+            experiment: components["schemas"]["AgentExperiment"];
+            config: components["schemas"]["AgentConfig"];
+        };
+        RunningExperimentSummary: {
+            id: string;
+            share_percent: number;
+            /** Format: date-time */
+            started_at: string;
+            note?: string | null;
+            control_tasks: number;
+            candidate_tasks: number;
+        };
+        EscalationRung: {
+            /** @description Existing provider config used on this rung. */
+            provider_config_id: string;
+            /**
+             * @description Effort for this rung; empty inherits the agent config's effort.
+             * @enum {string}
+             */
+            effort?: "" | "low" | "medium" | "high" | "xhigh" | "max";
+            /** @description Tried after the rung provider when it is rate-limited or paused, before the agent's own provider list. */
+            fallback_provider_config_ids?: string[];
+        };
         AgentConfig: {
+            /** @description Latest version number in the config's version history (null when it has none yet). Create/update bodies accept an optional `note` recorded on the new version. */
+            current_version?: number | null;
+            /** @description Summary of the running A/B experiment; populated on GET /agents/{id} only (null otherwise). */
+            running_experiment?: components["schemas"]["RunningExperimentSummary"] | null;
             id: string;
             name: string;
             /** @description References a ProviderConfig (provider/model/env), which is created and managed separately via /provider-configs and may be shared with other agent configs or chat sessions. */
@@ -5075,6 +7076,8 @@ export interface components {
             readonly provider_config?: components["schemas"]["ProviderConfig"];
             /** @description Ordered fallback providers, tried after provider_config_id when an earlier one's account is rate-limited (or its provider is paused). Each must be an existing provider config, distinct, and not the primary. Optional on write: omitted on create means none; omitted on update keeps the stored list (minus a fallback promoted to primary). Runs record which one they used in AgentRun.provider_config_id. */
             fallback_provider_config_ids?: string[];
+            /** @description Escalate on failure. Rung 0 is implicit (this config's own provider_config_id/effort); entry i is rung i+1. At dispatch the rung is the number of failed attempts on this agent's stage (consecutive failures plus review/test bounce-backs into the label), capped at the last rung; it resets when the stage is freshly entered or a human acts. Max 10 rungs. Rate-limit fallbacks still apply on top. Optional on write: omitted on create means none; omitted on update keeps the stored ladder. Runs record the rung in AgentRun.ladder_rung. */
+            escalation_ladder?: components["schemas"]["EscalationRung"][];
             /** @description Whether the dispatcher considers this config for its labels. Sent as a boolean on responses (the stored 0/1 is normalized); accepted as boolean or 0/1 on write. Absent from create request bodies (new configs start enabled unless a label conflict disables them). */
             enabled: boolean;
             system_prompt: string;
@@ -5186,6 +7189,12 @@ export interface components {
             verify_command?: string;
             /** @description Timeout for verify_command in seconds (1-3600, default 600). */
             verify_timeout_seconds?: number;
+            /** @description Shell command that starts the app's dev server in the task's worktree (run as the agent user, `$PORT` is a free port, bind 127.0.0.1). Empty (the default) disables preview screenshots. See docs/workflows.md#preview-screenshots. */
+            preview_command?: string;
+            /** @description Newline-separated paths to screenshot (each starts with /, at most 20). */
+            preview_routes?: string;
+            /** @description Newline-separated globs deciding when a diff counts as a UI change. Empty = frontend/**, web/**, src/**\/*.{tsx,jsx,vue,svelte,css}. */
+            preview_paths_glob?: string;
             /** Format: date-time */
             created_at: string;
         };
@@ -5209,6 +7218,32 @@ export interface components {
             duration_ms: number;
             /** Format: date-time */
             created_at: string;
+        };
+        TaskPreviewImage: {
+            id: string;
+            route: string;
+            /**
+             * @description Only after is produced today.
+             * @enum {string}
+             */
+            variant: "after" | "before";
+            width: number;
+            height: number;
+            /** @description Served by GET /uploads/{task_id}/{filename}. */
+            url: string;
+        };
+        /** @description One preview screenshot capture for a task. */
+        TaskPreviewCapture: {
+            id: string;
+            /** @enum {string} */
+            status: "running" | "ok" | "failed";
+            /** @description Short failure reason; for status ok it lists routes that failed (partial success). */
+            error: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            finished_at: string | null;
+            images: components["schemas"]["TaskPreviewImage"][];
         };
         /** @description One toolchain pin in a repo's runtime_languages array (the wire shape used by POST /repos, PATCH /repos/{id}, and the runtime/detect suggestions — the DB column itself stores this array serialized to JSON text). */
         RuntimeLanguagePin: {
@@ -5261,6 +7296,20 @@ export interface components {
              */
             created_at: string;
         };
+        /** @description A human reply to a waiting_human run, shown to later runs under HUMAN DECISIONS ON THIS TASK. Only replied rows are returned. */
+        TaskHumanDecision: {
+            run_id: string;
+            label: string;
+            escalation_reason: string;
+            question: string;
+            reply: string | null;
+            /** Format: date-time */
+            replied_at: string | null;
+            /** Format: date-time */
+            asked_at: string;
+            /** @description Empty when the agent config was deleted */
+            agent_name: string;
+        };
         AgentRun: {
             id: string;
             task_id: string;
@@ -5268,6 +7317,17 @@ export interface components {
             agent_config_id: string | null;
             /** @description Provider config the run used (the agent config's primary or one of its fallbacks); null for runs from before provider fallbacks. */
             provider_config_id?: string | null;
+            /** @description Escalation ladder rung the run used (0 = the agent config's own provider/effort); null when the agent config had no ladder. */
+            ladder_rung?: number | null;
+            /** @description Agent config version the run was dispatched with; null for runs from before version history. */
+            agent_config_version?: number | null;
+            /** @description A/B experiment the run belonged to; null when none. */
+            experiment_id?: string | null;
+            /**
+             * @description Experiment arm; candidate runs have a null agent_config_version until the experiment is promoted.
+             * @enum {string|null}
+             */
+            experiment_arm?: "control" | "candidate" | null;
             /** @enum {string} */
             status: "pending" | "running" | "completed" | "failed" | "waiting_human" | "cancelled" | "interrupted";
             feedback?: string | null;
@@ -5292,9 +7352,14 @@ export interface components {
             output_tokens?: number;
             /**
              * Format: double
-             * @description USD cost of the run. For the `claude`/`qwen_code`/`opencode` providers this is the CLI's own authoritative reported cost (which may legitimately be 0, e.g. under a Claude Max subscription); for the codex_cli provider it is *estimated* by computing input/output tokens against the user-editable pricing table (see GET/PUT /settings/pricing), falling back to an internal, approximate pricing table for models with no matching row. 0 if unknown/unreported — see cost_unknown to distinguish that from a genuinely free run.
+             * @description USD cost of the run. For the `claude`/`qwen_code`/`opencode` providers this is the CLI's own authoritative reported cost (which may legitimately be 0, e.g. under a Claude Max subscription); for the codex_cli provider it is *estimated* by computing input/output tokens against the user-editable pricing table (see GET/PUT /settings/pricing), falling back to an internal, approximate pricing table for models with no matching row. 0 if unknown/unreported — see cost_unknown to distinguish that from a genuinely free run. For a claude run that resumed an earlier session it is that run's own share: the CLI's session total minus session_cost_usd of the session's previous run.
              */
             cost_usd?: number;
+            /**
+             * Format: double
+             * @description The provider's own cumulative cost for the run's whole session, as reported when the run ended (claude only; it includes earlier runs resumed into the same session). Null when not reported. Used as the baseline for the next resumed run's cost_usd; sum cost_usd, not this, for spend totals.
+             */
+            session_cost_usd?: number | null;
             /** @description 1 if tokens were consumed but no price entry (user-edited or hardcoded fallback) matched the model, so cost_usd was left at 0 as a placeholder rather than a computed figure — add a row for this model at /settings/pricing to get a real estimate. Only applies to the codex_cli estimation path described under cost_usd. 0 otherwise, including for claude/qwen_code/opencode (which never set this; their cost_usd, including a legitimate 0 under a Claude Max subscription, is always authoritative). */
             cost_unknown?: number;
             /** @description Provider-side conversation session recorded for this run (the claude/qwen CLI stream-json session_id). A later run on the same task under the same agent config resumes it (claude provider only, unless the config's resume_sessions is off). Empty for providers/runs without a session. */
@@ -5324,6 +7389,11 @@ export interface components {
             /** @enum {string} */
             type: "stdout" | "stderr" | "system" | "tool_call" | "tool_result";
             content: string;
+            /**
+             * Format: int64
+             * @description Monotonic per-entry sequence; tiebreak for entries with the same (second-resolution) timestamp.
+             */
+            seq?: number;
         };
         Dashboard: {
             /** @description Non-archived task counts by label name, summed across all workflows. */
@@ -5487,8 +7557,23 @@ export interface components {
         };
         /** @description Per-agent-config outcome-quality analytics: did the work stick, not just did the run exit cleanly. See [docs/api.md#dashboard](../docs/api.md#dashboard) for full metric definitions, attribution rules, and caveats. */
         OutcomeQuality: {
+            /**
+             * @description Dimension the rows are broken down by.
+             * @enum {string}
+             */
+            group_by?: "config" | "version" | "provider_config" | "repo" | "task_type";
             configs: {
                 agent_config_id: string;
+                /** @description Unique row id (config id + dimension value). */
+                group_key?: string;
+                /** @description Display label of the dimension value (v3, unversioned, provider config name, repo name, task type); absent for group_by=config. */
+                group_value?: string;
+                version?: number | null;
+                provider_config_id?: string;
+                repo_id?: string;
+                task_type?: string;
+                /** @description true when tasks_done is below 5. */
+                low_sample?: boolean;
                 agent_name: string;
                 provider: string;
                 /** @description Number of tasks whose last run was under this config and which reached a terminal label. Shared denominator for avg_cost_to_done_usd, rework_rate_percent, human_touch_rate_percent, and avg_review_comments. */
@@ -5530,6 +7615,13 @@ export interface components {
                 escalation_rate_percent: number;
                 /** @description true when runs_finished is below 10. */
                 low_sample_escalation: boolean;
+                /** @description Present only for configs whose runs carry a ladder_rung. Per finishing rung (the rung of the config's last laddered run on each terminal task): tasks finished and average total task cost. Independent of the last-run attribution of tasks_done. */
+                ladder_rungs?: {
+                    rung: number;
+                    tasks_done: number;
+                    /** Format: double */
+                    avg_cost_to_done_usd: number;
+                }[];
             }[];
         };
         /** @description A single provider/onboarding readiness row. */
@@ -5561,7 +7653,7 @@ export interface components {
             error: string;
         };
         /** @description Envelope of every message the server pushes on the /ws socket (and the locally synthesised `resync` after a reconnect). Discriminated by `type`. */
-        WsEvent: components["schemas"]["WsTaskLabelChangedEvent"] | components["schemas"]["WsTaskUpdatedEvent"] | components["schemas"]["WsTaskSideEffectEvent"] | components["schemas"]["WsTaskAgentStartedEvent"] | components["schemas"]["WsTaskAgentDoneEvent"] | components["schemas"]["WsTaskNeedsHumanEvent"] | components["schemas"]["WsTaskCostWarningEvent"] | components["schemas"]["WsSystemCostBudgetTrippedEvent"] | components["schemas"]["WsTaskReviewCommentsChangedEvent"] | components["schemas"]["WsTaskVerificationEvent"] | components["schemas"]["WsTaskRateLimitedEvent"] | components["schemas"]["WsProviderPauseChangedEvent"] | components["schemas"]["WsTaskGitStateChangedEvent"] | components["schemas"]["WsTaskPrMergeableChangedEvent"] | components["schemas"]["WsTaskReviewCommentAddedEvent"] | components["schemas"]["WsTaskSubtaskConflictEvent"] | components["schemas"]["WsTaskSourceCommentAddedEvent"] | components["schemas"]["WsTaskCreatedEvent"] | components["schemas"]["WsTaskCreatedBulkEvent"] | components["schemas"]["WsRepoCloneDoneEvent"] | components["schemas"]["WsRepoCloneFailedEvent"] | components["schemas"]["WsAgentLogEvent"] | components["schemas"]["WsAgentLogReplayEvent"] | components["schemas"]["WsResyncEvent"];
+        WsEvent: components["schemas"]["WsTaskLabelChangedEvent"] | components["schemas"]["WsTaskUpdatedEvent"] | components["schemas"]["WsTaskSideEffectEvent"] | components["schemas"]["WsTaskAgentStartedEvent"] | components["schemas"]["WsTaskAgentDoneEvent"] | components["schemas"]["WsTaskNeedsHumanEvent"] | components["schemas"]["WsTaskCostWarningEvent"] | components["schemas"]["WsSystemCostBudgetTrippedEvent"] | components["schemas"]["WsTaskReviewCommentsChangedEvent"] | components["schemas"]["WsTaskVerificationEvent"] | components["schemas"]["WsTaskPreviewEvent"] | components["schemas"]["WsTaskRateLimitedEvent"] | components["schemas"]["WsProviderPauseChangedEvent"] | components["schemas"]["WsTaskGitStateChangedEvent"] | components["schemas"]["WsTaskPrMergeableChangedEvent"] | components["schemas"]["WsTaskReviewCommentAddedEvent"] | components["schemas"]["WsTaskSubtaskConflictEvent"] | components["schemas"]["WsTaskSourceCommentAddedEvent"] | components["schemas"]["WsTaskCreatedEvent"] | components["schemas"]["WsTaskCreatedBulkEvent"] | components["schemas"]["WsRepoCloneDoneEvent"] | components["schemas"]["WsRepoCloneFailedEvent"] | components["schemas"]["WsAgentLogEvent"] | components["schemas"]["WsAgentLogReplayEvent"] | components["schemas"]["WsResyncEvent"];
         WsTaskLabelChangedEvent: {
             /**
              * @description discriminator enum property added by openapi-typescript
@@ -5721,6 +7813,21 @@ export interface components {
             run_id: string;
             /** @enum {string} */
             status: "pass" | "fail" | "timeout" | "error";
+        };
+        WsTaskPreviewEvent: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "task.preview";
+            payload: components["schemas"]["WsTaskPreviewPayload"];
+        };
+        /** @description A preview screenshot capture started or finished (refetch GET /tasks/{id}/previews). */
+        WsTaskPreviewPayload: {
+            task_id: string;
+            capture_id: string;
+            /** @enum {string} */
+            status: "running" | "ok" | "failed";
         };
         WsTaskRateLimitedEvent: {
             /**
@@ -5890,6 +7997,11 @@ export interface components {
             content: string;
             /** Format: date-time */
             at: string;
+            /**
+             * Format: int64
+             * @description Monotonic per-entry sequence; tiebreak for entries with the same timestamp.
+             */
+            seq?: number;
         };
         WsAgentLogEvent: {
             /**

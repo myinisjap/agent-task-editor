@@ -150,6 +150,9 @@ With `issue_sync_update_policy: always`, an edit to the source issue made *after
 ### `DELETE /tasks/{id}/source-update`
 Discards the held source-issue edit without applying it. The same upstream text is not held again; a further edit to the issue is. Returns the task. `404` / `409` as above.
 
+### `GET /tasks/{id}/human-decisions`
+Returns the human replies to the task's `waiting_human` runs, oldest first (replied rows only; unanswered questions are excluded). Each item has `run_id`, `label`, `escalation_reason`, `question`, `reply`, `replied_at`, `asked_at` and `agent_name` (empty if the agent config was deleted). `404` if the task does not exist.
+
 ### `GET /tasks/{id}/label-history`
 Returns the task's label-transition audit trail (`task_label_history`), oldest first:
 
@@ -214,6 +217,19 @@ Returns `204 No Content`.
 Get the task's accumulated changes — the diff of its per-task branch against the merge-base with the ref it forked from.
 
 Returns `{ "branch": "...", "diff": "..." }`. `diff` is empty until an agent has been dispatched and a branch provisioned. When the task reaches a terminal label and the worktree is torn down, the diff is computed against the main repo clone (branch is preserved).
+
+### `GET /tasks/{id}/review-brief`
+Deterministic review brief for a task waiting on a human (see
+[workflows.md § Review brief](workflows.md#review-brief)). Returns `human_gate`,
+`changed` (`files`, `additions`, `deletions`, `top_files`), `risk_flags`
+(`[{code, reason, files}]`; codes `migration`, `auth_or_security`,
+`dependencies`, `tests_removed`, `ci_config`, `large_change`,
+`outside_plan_scope`), `verification` (latest verify result with `output_tail`,
+or `null`), `runs` (`total`, `failed`, `rework_loops`, `cost_usd`,
+`cost_unknown`), `agent_summary` (latest `store_info`, else the tail of
+`agent_notes`; or `null`), `diff_available` (false without a resolvable
+branch), `truncated` and `computed_at`. Works for any task, `404` if unknown.
+No LLM calls; flags are advisory.
 
 ### `GET /tasks/{id}/review-comments`
 List all inline diff review comments on the task (open and resolved), ordered oldest-first.
@@ -390,7 +406,8 @@ Create a child task under the parent named in the path.
   "title": "string (required)",
   "description": "string",
   "type": "feature | bug | ...",
-  "label": "optional agent_ignore label override"
+  "label": "optional agent_ignore label override",
+  "file_scope": ["repo-relative/globs/**"]
 }
 ```
 
@@ -403,12 +420,20 @@ Create a child task under the parent named in the path.
   `max_subtasks` if the config that produced the parent's active run has
   `subtasks_enabled` and sets `max_subtasks` (`403` if `subtasks_enabled` is
   off for that config). Returns `422` if the cap is already reached.
+- `file_scope` (optional): up to 20 repo-relative globs, 256 chars each, no newlines,
+  no leading `/`, no `..` segments (`400` otherwise). If it overlaps the scope of a
+  live (non-terminal, non-archived) scoped sibling, the new child gets a dependency
+  on that sibling so they run sequentially. Unscoped subtasks get no overlap check.
+  Creating a child resets the parent's `integration_status`.
 - Auto-creates a parent→child dependency edge (see Task Dependencies above) so
   the parent can't be dispatched again until every child finishes.
 - Publishes `task.created` (with `parent_id`) and `task.updated` (for the
   parent) — see [websocket.md](websocket.md).
 
-Returns `201` with the created task object (same shape as `POST /tasks`).
+Returns `201` with the created task object (same shape as `POST /tasks`) plus
+`overlap_dependencies: [{task_id, title, globs}]` (empty when none). Task objects
+carry `file_scope` (always an array) and, for parents, `integration_status`
+(`""`, `pending` or `done`).
 
 ---
 
@@ -438,6 +463,71 @@ Update a template (same body as create). `404` if missing, `409` on name conflic
 
 ### `DELETE /templates/{id}`
 Delete a template. Returns `204`.
+
+---
+
+## Skills
+
+Provider-neutral Agent Skills library (see [skills.md](skills.md)). Admin-only:
+the MCP sidecar's scoped tokens are rejected with 403 on every route here.
+
+### `GET /skills`
+List skills: `[{id, name, description, enabled, created_at, updated_at, agent_config_ids, repo_ids}]`.
+`agent_config_ids` / `repo_ids` (list only, omitted when empty) are the ids the skill is attached to.
+
+### `POST /skills`
+Create from JSON `{"skill_md": "---\nname: x\ndescription: y\n---\n..."}` or an
+`application/zip` body (max 1 MB; path traversal, absolute paths and symlinks
+are rejected). `201` with the skill; `400` for invalid frontmatter/zip; `409`
+if the name exists.
+
+### `GET /skills/{id}`
+The skill plus `skill_md` and `files`.
+
+### `PATCH /skills/{id}`
+`{"enabled"?: bool, "skill_md"?: string}` or a zip body to replace content (the
+frontmatter `name` must stay the same).
+
+### `DELETE /skills/{id}`
+Deletes the skill and its folder; detaches it from all agents and repos.
+
+### `GET /agents/{id}/skills`, `PUT /agents/{id}/skills`
+### `GET /repos/{id}/skills`, `PUT /repos/{id}/skills`
+`PUT` replaces the attached set: `{"skill_ids": ["..."]}`; `400` on an unknown
+id. At run start the union of the agent's and repo's enabled skills is copied
+into the worktree.
+
+## Repo Lessons
+
+Short curated lessons injected into agent prompts; see [lessons.md](lessons.md).
+A lesson has `repo_id` (null = global), `kind`
+(`convention|trap|command|decision|preference`), `body` (max 300 characters),
+`path_globs[]`, `stages[]`, `citations[]`, `source` (`human|agent|distiller`),
+`source_task_id`, `status` (`proposed|active|stale|retired`), `injected_count`,
+`created_at`, `updated_at`, `last_checked_at`. Lists are not paginated.
+
+### `GET /repos/{id}/lessons`
+List the repo's own lessons (not global ones), newest first. Optional `?status=`.
+`404` if the repo is missing, `400` for an invalid status.
+
+### `POST /repos/{id}/lessons`
+Create a repo lesson. `kind` and `body` are required; `status` defaults to
+`active`, `source` to `human`, `citations` to `[]`. Returns `201`; `400` for an
+invalid kind/status/source, empty or over-long body, non-array citations, or
+globs/stages containing commas or newlines; `404` if the repo is missing.
+
+### `GET /lessons`
+List global lessons (`repo_id` null). Optional `?status=`.
+
+### `POST /lessons`
+Create a global lesson (same body as above). Returns `201`.
+
+### `PATCH /lessons/{id}`
+Partial update: omitted fields are kept. `repo_id` cannot change. `404` if
+missing, `400` on invalid values.
+
+### `DELETE /lessons/{id}`
+Returns `204`, or `404` if missing.
 
 ---
 
@@ -558,7 +648,7 @@ using the same matcher the importer/scheduler call at runtime.
 | `task_id` | UUID | Associated task |
 | `agent_config_id` | UUID | Agent config used for this run |
 | `status` | string | `pending`, `running`, `completed`, `failed`, `waiting_human`, `cancelled` |
-| `feedback` | string? | Feedback set on rejection (injected into the next run's prompt) |
+| `feedback` | string? | Feedback pending for the next run (failure summary, verify failure, PR review / rejection note); a run's inherited feedback is cleared once it succeeds |
 | `stored_info` | string? | Info stored by the agent via `store_info`; visible in the task UI |
 | `created_at` | RFC3339 | When the run was created |
 | `started_at` | RFC3339? | When the run started executing |
@@ -599,7 +689,18 @@ process exited on its own), `output` (tail of combined stdout/stderr, max
 16 KiB), `truncated`, `duration_ms`, `created_at`. See
 [workflows.md § Verify commands](workflows.md#verify-commands). Repos carry
 `verify_command` and `verify_timeout_seconds`; workflow labels carry
-`verify_mode` and `verify_command`.
+`verify_mode` and `verify_command`; they also carry an optional `display_name` (UI title, max 64 chars).
+
+### `GET /tasks/{id}/previews`
+The latest preview screenshot capture, `{"capture": null}` when none.
+`capture` has `id`, `status` (`running`, `ok`, `failed`), `error` (the failure
+reason; for `ok` it lists routes that failed), `created_at`, `finished_at` and
+`images` (`id`, `route`, `variant` = `after`, `width`, `height`, `url` served by
+`GET /uploads/{task_id}/{filename}`). See
+[workflows.md § Preview screenshots](workflows.md#preview-screenshots). Repos
+carry `preview_command`, `preview_routes` (newline-separated paths, max 20) and
+`preview_paths_glob` (newline-separated, empty = defaults); all three are
+accepted on `POST`/`PATCH /repos`.
 
 ### `POST /tasks/{id}/runs/{run_id}/cancel`
 Stop a running agent run (kill switch). The pool cancels the run's context —
@@ -635,6 +736,10 @@ the worker pool is saturated.
 Get a page of a run's persisted log entries, in chronological order (oldest
 first). A long verbose run can produce tens of thousands of entries, so the
 endpoint is paginated.
+
+Entries are ordered by `(timestamp, seq)`. Timestamps have one-second
+resolution, so each entry carries a monotonic int64 `seq` that gives a stable
+order within the same second.
 
 Query params:
 
@@ -743,6 +848,22 @@ their usage limit or paused (see
 distinct and differ from `provider_config_id` (`400` otherwise). On update,
 omitting it keeps the stored list (minus a fallback promoted to primary); `[]`
 clears it.
+
+`escalation_ladder` (optional, default `[]`) is an array of `{provider_config_id, effort?, fallback_provider_config_ids?}` rungs; see [agents.md#escalation-ladder](agents.md#escalation-ladder). Unknown provider ids or invalid effort return `400`; omitted on update keeps the stored ladder. Runs carry `ladder_rung` (null when the config has no ladder).
+
+`note` (optional string on create/update) is recorded on the config's new version. Responses carry `current_version` (latest version number, null if none). Behavioural edits write a version (see [agents.md#version-history](agents.md#version-history)); runs carry `agent_config_version` (null for runs from before version history).
+
+- `GET /agents/{id}/versions` — version history, newest first, each with its `snapshot`, `actor_id`, `note`, `created_at`.
+- `GET /agents/{id}/versions/{version}` — one version (`400` non-integer, `404` unknown).
+- `POST /agents/{id}/versions/{version}/restore` — body `{note?}`; applies the snapshot as a new version and returns the updated config (`400` if it references a deleted provider config).
+
+`GET /agents/{id}` also carries `running_experiment` (`{id, share_percent, started_at, note, control_tasks, candidate_tasks}` or null). A/B experiments (see [agents.md#experiments-ab](agents.md#experiments-ab)); runs carry `experiment_id` / `experiment_arm`:
+
+- `GET /agents/{id}/experiments` — newest first, without results.
+- `POST /agents/{id}/experiments` — body `{candidate: AgentConfigSnapshot, share_percent: 1-90, note?}`; `201` with the experiment (`400` invalid share/candidate or identical to the current config, `404`, `409` one already running).
+- `GET /agents/{id}/experiments/{experimentId}` — the experiment with per-arm `results`.
+- `POST /agents/{id}/experiments/{experimentId}/stop` — `409` unless running.
+- `POST /agents/{id}/experiments/{experimentId}/promote` — body `{note?}`; writes the candidate as a new version, returns `{experiment, config}` (`400` if it references a deleted provider config, `409` unless running).
 
 `max_retries`/`retry_backoff_secs` configure auto-retry for *transient*
 provider errors (rate limits, network blips, upstream 5xx) — see
@@ -1096,6 +1217,13 @@ primary `reason`; precedence is `waiting_human` > `pr_conflict` > `human_gate`.
   outbound transition and at least one human transition (same rule as
   `workflow.IsHumanGateLabel`), with no pending/running run. `agent_ignore`
   backlog labels (e.g. `not_ready`) are not gates here.
+  Gate items may carry `risk_flags` (an array of review-brief flag codes, see
+  [`GET /tasks/{id}/review-brief`](#get-tasksidreview-brief)); it is omitted when
+  the branch diff is unavailable or no flag fired. Gate items also carry best-effort
+  decision context built from the same cached review brief: `summary` (one line of the
+  agent summary), `changed` (`files`, `additions`, `deletions`; only with a diff),
+  `cost_usd` / `cost_unknown`, `verification` (`pass`/`fail`/`timeout`/`error`/`not_run`)
+  and `preview_count`. They are omitted for non-gate items and when the brief cannot be built.
 
 Archived tasks are excluded; paused tasks are excluded except for
 `waiting_human`. The Dashboard queue, the board's "Needs you" badge and the
@@ -1175,6 +1303,9 @@ One row per agent config still present in the database:
   noisy (2 tasks at 100% is not more reliable than 200 tasks at 85%); the
   frontend greys these out rather than hiding them, since the raw number
   and its `n` are still informative together.
+- `ladder_rungs` — only for configs whose runs carry a `ladder_rung`: per finishing rung (the rung of the config's last laddered run on each terminal task) `{rung, tasks_done, avg_cost_to_done_usd}`. Independent of the last-run attribution used by `tasks_done`.
+
+**Breakdown.** `?group_by=` accepts `config` (default), `version`, `provider_config`, `repo` or `task_type` (`400` otherwise). Rows are then per (agent config, dimension) and carry `group_key`, `group_value` (`v3` / `unversioned`, provider config or repo name, task type) plus `version` / `provider_config_id` / `repo_id` / `task_type`. Version and provider config come from the run (`agent_runs.agent_config_version`; provider falls back to the config's primary for older runs); repo and task type come from the task. Task-level metrics follow the task's last run, rework follows the run preceding the backward transition, escalation follows each run. Non-config modes only emit groups that have data. Every row has `low_sample` (`tasks_done < 5`).
 
 Computed from a full scan of `task_label_history` and `agent_runs` — both
 grow without bound (log retention prunes `agent_logs`, not these) — so
@@ -1321,6 +1452,9 @@ In addition to the standard Go runtime/process collectors (`go_*`,
 
 **Dispatcher / pool**
 - `ate_dispatch_eligible_tasks` (gauge) — tasks eligible for pickup on the most recent sweep.
+- `ate_memguard_cancels_total` (counter) — runs cancelled by the memory guard for low container memory.
+- `ate_dispatch_memory_pauses_total` (counter) — times new dispatch was paused after a burst of memory-guard cancels.
+- `ate_dispatch_memory_pause_active` (gauge) — 1 while that global pause is active, else 0.
 - `ate_dispatched_runs_total` (counter) — runs successfully started by the dispatcher.
 - `ate_pool_queue_depth` (gauge) — jobs currently queued in the worker pool.
 - `ate_pool_busy_workers` (gauge) — workers currently running a job.
@@ -1462,3 +1596,35 @@ with `ws://host/ws?ticket=<ticket>` before it expires; a replayed or expired
 ticket is rejected with `401`. See [websocket.md](websocket.md) for the full
 connection flow. The former `?token=<API_TOKEN>` query-string fallback has
 been removed; `/ws?token=...` now returns `401`.
+
+---
+
+## Intake webhooks
+
+Signed inbound events that create tasks; see
+[task-sources.md](task-sources.md#intake-webhooks-signed-inbound-events).
+
+### `POST /intake/{endpoint_id}` (no bearer token)
+Authenticated by `X-ATE-Signature-256: sha256=<hex>` (HMAC-SHA256 of the raw
+body with the endpoint secret). Max 256 KB, JSON object, 30/min per endpoint.
+`201 {task_id, created}` / `200 {task_id, deduped}` / `400` / `401` / `403`
+(disabled) / `404` / `413` / `415` / `422` / `429`.
+
+### `GET /intake-endpoints`, `GET /intake-endpoints/{id}`
+Endpoints without the secret (`secret_set` and `url_path` are included).
+
+### `POST /intake-endpoints`
+Body: `name`, `repo_id`, `title_template` (required); `workflow_id`,
+`target_label`, `enabled`, `description_template`, `dedupe_key_template`.
+`201` returns the endpoint plus `secret` (the only time it is shown).
+
+### `PUT /intake-endpoints/{id}`
+Same body/validation; does not change the secret. `DELETE` returns `204`.
+
+### `POST /intake-endpoints/{id}/rotate-secret`
+Returns `{secret}`; the old secret stops working.
+
+### `POST /intake-endpoints/{id}/test`
+Body `{payload, title_template?, description_template?, dedupe_key_template?}`.
+Returns the rendered `title`, `description`, `dedupe_key`, resolved `label`,
+`workflow_id`, `priority`, `matched_rule_id`, `existing_task_id`. Creates nothing.

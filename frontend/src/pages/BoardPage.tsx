@@ -1,23 +1,29 @@
+import { Archive, ArchiveRestore, ChevronDown, Layers, LayoutGrid, Pause, Play, Rows3, Search, SlidersHorizontal } from 'lucide-react'
+import { labelDisplayName } from '../lib/labelDisplay'
 import { useAgentsStore } from '../stores/agents'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useTasksStore } from '../stores/tasks'
+import { showUndoToast } from '../stores/toast'
+import { errMessage } from '../lib/errMessage'
 import { useWorkflowStore } from '../stores/workflow'
 import { useReposStore } from '../stores/repos'
 import TaskBoard from '../components/board/TaskBoard'
+import BoardFilterSheet, { TASK_TYPES, GIT_STATES } from '../components/board/BoardFilterSheet'
 import NewTaskModal from '../components/board/NewTaskModal'
 import OnboardingChecklist from '../components/board/OnboardingChecklist'
-import { api, type BulkAction, type Task, type TaskCost } from '../api/client'
+import { api, type BulkAction, type BulkResult, type Task, type TaskCost } from '../api/client'
 import { wsClient } from '../api/ws'
 import HelpModal from '../components/shared/HelpModal'
-import HelpButton from '../components/shared/HelpButton'
+import { Button, Icon, PageFrame } from '../components/ui'
 import { BoardHelp } from '../components/shared/pageHelp'
 import { useDebouncedCallback } from '../lib/useDebouncedCallback'
+import { useIsMobile } from '../lib/useIsMobile'
+import { shortcutHint } from '../lib/shortcuts'
+import { useCommandPaletteStore } from '../stores/commandPalette'
 
 const CONDENSED_STORAGE_KEY = 'board.condensed'
 
-const TASK_TYPES = ['feature', 'bug', 'chore', 'spike']
-const GIT_STATES = ['pushed', 'pr_open', 'pr_merged', 'pr_closed']
 
 // Trailing debounce window for coalescing WS-driven REST refetches (per-task
 // `GET /tasks/{id}` fan-out and the cost rollup) — see task.label_changed /
@@ -38,6 +44,7 @@ export default function BoardPage() {
   const upsert = useTasksStore((s) => s.upsert)
   const { workflows, fetch: fetchWorkflows, setSelectedId, active } = useWorkflowStore()
   const { repos, fetch: fetchRepos } = useReposStore()
+  const isMobile = useIsMobile()
   const [runningTaskIds, setRunningTaskIds] = useState(() => new Set<string>())
   // Per-task cumulative cost ($), keyed by task id — powers the "Filtered
   // cost" badge below. Fetched once on mount and refreshed on agent-done
@@ -50,6 +57,17 @@ export default function BoardPage() {
   // run/lifecycle stage) or on task.updated (in case cost_warned resets server-side).
   const [costWarnedTaskIds, setCostWarnedTaskIds] = useState(() => new Set<string>())
   const [showNewTask, setShowNewTask] = useState(false)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const [showFilterSheet, setShowFilterSheet] = useState(false)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const focusRequested = useCommandPaletteStore((s) => s.boardSearchFocusRequested)
+  useEffect(() => {
+    if (focusRequested > 0) {
+      setSearchOpen(true)
+      searchRef.current?.focus()
+      useCommandPaletteStore.setState({ boardSearchFocusRequested: 0 })
+    }
+  }, [focusRequested])
   // Source task for the "Duplicate" flow — when set, the New Task modal opens
   // pre-filled from this task instead of blank. Mutually exclusive with
   // showNewTask so only one modal instance is ever mounted at a time.
@@ -77,6 +95,9 @@ export default function BoardPage() {
   const rawGitState = searchParams.get('git_state') ?? ''
   const filterGitState = GIT_STATES.includes(rawGitState) ? rawGitState : ''
   const showArchived = searchParams.get('archived') === '1'
+
+  // View option (not a filter): swimlanes per repo. Kept in the URL, but not cleared by "Clear filters".
+  const groupByRepo = searchParams.get('group') === 'repo'
 
   const setFilterParam = (key: string, value: string) => {
     setSearchParams(
@@ -347,6 +368,10 @@ export default function BoardPage() {
     [filteredTasks, costByTask]
   )
 
+  const searchExpanded = searchOpen || search !== ''
+  const activeFilterCount = [filterRepo, filterType, filterGitState].filter(Boolean).length + (showArchived ? 1 : 0)
+  const showMobileCost = isMobile && hasFilters && filteredCost > 0
+
   const clearFilters = () => {
     setSearchParams(
       (prev) => {
@@ -382,32 +407,144 @@ export default function BoardPage() {
     if (selectedIds.size === 0) return
     setBulkBusy(true)
     setBulkError('')
+    const refresh = () => fetchTasks(showArchived ? { archived: 'all' } : undefined)
+    // Capture the previous state now so Undo restores exactly what was there.
+    const prev = new Map(
+      useTasksStore
+        .getState()
+        .tasks.filter((t) => selectedIds.has(t.id))
+        .map((t) => [t.id, { label: t.label }] as const),
+    )
     try {
       const { results } = await api.tasks.bulk([...selectedIds], action, toLabel ? { to_label: toLabel } : undefined)
       const failed = results.filter((r) => !r.ok)
+      const okIds = results.filter((r) => r.ok).map((r) => r.id)
       if (failed.length > 0) {
         setBulkError(`${failed.length} of ${results.length} failed: ${failed[0].error}`)
       } else {
         setSelectedIds(new Set())
       }
-      await fetchTasks(showArchived ? { archived: 'all' } : undefined)
+      await refresh()
+      if (okIds.length > 0) {
+        const verb = { move: 'Moved', pause: 'Paused', resume: 'Resumed', archive: 'Archived', unarchive: 'Unarchived' }[action]
+        const inverse = { pause: 'resume', resume: 'pause', archive: 'unarchive', unarchive: 'archive' } as const
+        showUndoToast(`${verb} ${okIds.length} task${okIds.length === 1 ? '' : 's'}`, async () => {
+          const calls: Promise<{ results: BulkResult[] }>[] = []
+          if (action === 'move') {
+            const byLabel = new Map<string, string[]>()
+            for (const id of okIds) {
+              const l = prev.get(id)?.label
+              if (!l) continue
+              byLabel.set(l, [...(byLabel.get(l) ?? []), id])
+            }
+            for (const [l, ids] of byLabel) calls.push(api.tasks.bulk(ids, 'move', { to_label: l, note: 'Undo bulk move' }))
+          } else {
+            calls.push(api.tasks.bulk(okIds, inverse[action]))
+          }
+          const all = (await Promise.all(calls)).flatMap((r) => r.results)
+          await refresh()
+          const bad = all.filter((r) => !r.ok)
+          if (bad.length > 0) {
+            throw new Error(`${bad.length} of ${all.length} could not be undone: ${bad[0].error}`)
+          }
+        })
+      }
     } catch (e) {
-      setBulkError(String(e))
+      setBulkError(errMessage(e))
     } finally {
       setBulkBusy(false)
     }
   }
 
-  const selectCls = 'bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer'
+  const selectCls = 'bg-surface-sunken border border-border rounded px-2 py-1 text-xs text-fg-muted focus:outline-none focus:ring-1 focus:ring-accent cursor-pointer'
 
   return (
-    <div className="p-6 h-full flex flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-4">
-        <h1 className="text-xl font-semibold text-slate-100">Board</h1>
+    <PageFrame
+      title={isMobile && workflows.length > 0 ? <span className="sr-only">Board</span> : 'Board'}
+      titleAdornment={
+        isMobile && workflows.length > 0 ? (
+          <span className="relative inline-flex items-center min-w-0">
+            <select
+              aria-label="Workflow"
+              value={workflow?.id ?? ''}
+              onChange={(e) => setSelectedId(e.target.value)}
+              className="appearance-none bg-transparent text-xl font-semibold text-fg pr-5 truncate max-w-[45vw] focus:outline-none focus-visible:ring-1 focus-visible:ring-accent rounded cursor-pointer"
+            >
+              {workflows.map((wf) => (
+                <option key={wf.id} value={wf.id}>
+                  {wf.name}
+                </option>
+              ))}
+            </select>
+            <Icon icon={ChevronDown} size="sm" className="pointer-events-none absolute right-0" aria-hidden />
+          </span>
+        ) : undefined
+      }
+      width="full"
+      fill
+      headerClassName={isMobile ? 'mb-2 flex-nowrap' : 'mb-4'}
+      help={{ onClick: () => setShowHelp(true), title: 'About the board' }}
+      actions={
+        isMobile ? (
+          <div className="flex items-center gap-1.5 min-w-0">
+            {searchExpanded ? (
+              <input
+                ref={searchRef}
+                autoFocus
+                aria-label="Search tasks"
+                title={shortcutHint('focus-search')}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                onBlur={() => {
+                  if (!search) setSearchOpen(false)
+                }}
+                placeholder="Search tasks…"
+                className="bg-surface-sunken border border-border rounded px-2.5 py-1 text-xs text-fg placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-accent w-32 min-w-0 flex-1"
+              />
+            ) : (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="!px-2"
+                aria-label="Search tasks"
+                title={shortcutHint('focus-search')}
+                onClick={() => setSearchOpen(true)}
+              >
+                <Icon icon={Search} size="sm" />
+              </Button>
+            )}
+            <Button
+              size="sm"
+              className={`!px-2 ${activeFilterCount ? '!bg-accent/15 !border-accent !text-accent-fg' : ''}`}
+              aria-label={activeFilterCount ? `Filters, ${activeFilterCount} active` : 'Filters'}
+              aria-haspopup="dialog"
+              aria-expanded={showFilterSheet}
+              title="Filters"
+              onClick={() => setShowFilterSheet(true)}
+            >
+              <Icon icon={SlidersHorizontal} size="sm" />
+              {activeFilterCount > 0 && (
+                <span data-testid="filter-count-badge" className="text-[10px] leading-none">
+                  {activeFilterCount}
+                </span>
+              )}
+            </Button>
+            <Button
+              size="sm"
+              onClick={toggleCondensed}
+              aria-pressed={condensed}
+              aria-label={condensed ? 'Switch to expanded view' : 'Switch to condensed view'}
+              title={condensed ? 'Switch to expanded view' : 'Switch to condensed view'}
+              className={`!px-2 ${condensed ? '!bg-accent/15 !border-accent !text-accent-fg' : ''}`}
+            >
+              <Icon icon={condensed ? Rows3 : LayoutGrid} size="sm" />
+            </Button>
+          </div>
+        ) : (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           {workflows.length > 0 && (
             <div className="flex items-center gap-1.5">
-              <span className="text-xs text-slate-500 whitespace-nowrap">Workflow:</span>
+              <span className="text-xs text-fg-subtle whitespace-nowrap">Workflow:</span>
               <select
                 value={workflow?.id ?? ''}
                 onChange={(e) => setSelectedId(e.target.value)}
@@ -421,22 +558,32 @@ export default function BoardPage() {
               </select>
             </div>
           )}
-          <button
+          <Button
+            size="sm"
             onClick={toggleCondensed}
+            aria-pressed={condensed}
             title={condensed ? 'Switch to expanded view' : 'Switch to condensed view'}
-            className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md border transition-colors ${
-              condensed
-                ? 'bg-indigo-700 border-indigo-500 text-indigo-100 hover:bg-indigo-600'
-                : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
-            }`}
+            className={condensed ? '!bg-accent/15 !border-accent !text-accent-fg' : ''}
           >
-            <span>{condensed ? '⊟' : '⊞'}</span>
-            <span>{condensed ? 'Expanded' : 'Condensed'}</span>
-          </button>
-          <HelpButton onClick={() => setShowHelp(true)} title="About the board" />
+            <Icon icon={condensed ? Rows3 : LayoutGrid} size="sm" />
+            {condensed ? 'Expanded' : 'Condensed'}
+          </Button>
+          {!isMobile && (
+            <Button
+              size="sm"
+              onClick={() => setFilterParam('group', groupByRepo ? '' : 'repo')}
+              aria-pressed={groupByRepo}
+              title={groupByRepo ? 'Show a single board' : 'Group the board into one swimlane per repo'}
+              className={groupByRepo ? '!bg-accent/15 !border-accent !text-accent-fg' : ''}
+            >
+              <Icon icon={Layers} size="sm" />
+              Group by repo
+            </Button>
+          )}
         </div>
-      </div>
-
+        )
+      }
+    >
       {showHelp && (
         <HelpModal title="About the Board" onClose={() => setShowHelp(false)}>
           <BoardHelp />
@@ -446,12 +593,16 @@ export default function BoardPage() {
       <OnboardingChecklist />
 
       {/* Filter bar */}
+      {!isMobile && (
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <input
+          ref={searchRef}
+          aria-label="Search tasks"
+          title={shortcutHint("focus-search")}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search tasks…"
-          className="bg-slate-800 border border-slate-700 rounded px-2.5 py-1 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-indigo-500 w-48"
+          className="bg-surface-sunken border border-border rounded px-2.5 py-1 text-xs text-fg placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-accent w-48"
         />
         <select value={filterRepo} onChange={(e) => setFilterRepo(e.target.value)} className={selectCls}>
           <option value="">All repos</option>
@@ -471,39 +622,57 @@ export default function BoardPage() {
             <option key={s} value={s}>{s}</option>
           ))}
         </select>
-        <button
+        <Button
+          size="sm"
           onClick={() => setShowArchived(!showArchived)}
-          className={`text-xs px-2.5 py-1 rounded border transition-colors ${
-            showArchived
-              ? 'bg-indigo-700 border-indigo-500 text-indigo-100 hover:bg-indigo-600'
-              : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-500 hover:text-slate-200'
-          }`}
+          aria-pressed={showArchived}
+          className={showArchived ? '!bg-accent/15 !border-accent !text-accent-fg' : ''}
           title="Show archived tasks on the board"
         >
-          🗄 Archived
-        </button>
+          <Icon icon={Archive} size="sm" />
+          Archived
+        </Button>
         {hasFilters && (
           <button
             onClick={clearFilters}
-            className="text-xs px-2 py-1 text-slate-500 hover:text-slate-300 transition-colors"
+            className="text-xs px-2 py-1 text-fg-subtle hover:text-fg-muted transition-colors"
           >
             Clear filters
           </button>
         )}
         {filteredCost > 0 && (
           <span
-            className="text-xs px-2.5 py-1 rounded border border-slate-700 bg-slate-800 text-slate-300"
+            className="text-xs px-2.5 py-1 rounded border border-border bg-surface-sunken text-fg-muted"
             title="Sum of recorded run cost across the currently-visible (filtered) tasks"
           >
             Filtered cost: ${filteredCost.toFixed(2)}
           </span>
         )}
       </div>
+      )}
+
+      {isMobile && showFilterSheet && (
+        <BoardFilterSheet
+          repos={repos}
+          filterRepo={filterRepo}
+          filterType={filterType}
+          filterGitState={filterGitState}
+          showArchived={showArchived}
+          setFilterRepo={setFilterRepo}
+          setFilterType={setFilterType}
+          setFilterGitState={setFilterGitState}
+          setShowArchived={setShowArchived}
+          hasFilters={hasFilters}
+          onClear={clearFilters}
+          filteredCost={filteredCost}
+          onClose={() => setShowFilterSheet(false)}
+        />
+      )}
 
       {/* Bulk action toolbar — appears while cards are selected */}
       {selectedIds.size > 0 && (
-        <div className="flex flex-wrap items-center gap-2 mb-4 px-3 py-2 bg-slate-800/80 border border-slate-700 rounded-lg">
-          <span className="text-xs font-medium text-slate-300">{selectedIds.size} selected</span>
+        <div className="flex flex-wrap items-center gap-2 mb-4 px-3 py-2 bg-surface-sunken/80 border border-border rounded-lg">
+          <span className="text-xs font-medium text-fg-muted">{selectedIds.size} selected</span>
           <select
             defaultValue=""
             disabled={bulkBusy}
@@ -517,23 +686,23 @@ export default function BoardPage() {
           >
             <option value="" disabled>Move to…</option>
             {[...labels].sort((a, b) => a.sort_order - b.sort_order).map((l) => (
-              <option key={l.id} value={l.name}>{l.name}</option>
+              <option key={l.id} value={l.name}>{labelDisplayName(l)}</option>
             ))}
           </select>
-          <button disabled={bulkBusy} onClick={() => runBulk('pause')} className="text-xs px-2.5 py-1 rounded border bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-500 disabled:opacity-50 transition-colors">⏸ Pause</button>
-          <button disabled={bulkBusy} onClick={() => runBulk('resume')} className="text-xs px-2.5 py-1 rounded border bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-500 disabled:opacity-50 transition-colors">▶ Resume</button>
-          <button disabled={bulkBusy} onClick={() => runBulk('archive')} className="text-xs px-2.5 py-1 rounded border bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-500 disabled:opacity-50 transition-colors">🗄 Archive</button>
+          <Button size="sm" disabled={bulkBusy} onClick={() => runBulk('pause')}><Icon icon={Pause} size="sm" />Pause</Button>
+          <Button size="sm" disabled={bulkBusy} onClick={() => runBulk('resume')}><Icon icon={Play} size="sm" />Resume</Button>
+          <Button size="sm" disabled={bulkBusy} onClick={() => runBulk('archive')}><Icon icon={Archive} size="sm" />Archive</Button>
           {showArchived && (
-            <button disabled={bulkBusy} onClick={() => runBulk('unarchive')} className="text-xs px-2.5 py-1 rounded border bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-500 disabled:opacity-50 transition-colors">↩ Unarchive</button>
+            <Button size="sm" disabled={bulkBusy} onClick={() => runBulk('unarchive')}><Icon icon={ArchiveRestore} size="sm" />Unarchive</Button>
           )}
           <button
             disabled={bulkBusy}
             onClick={() => { setSelectedIds(new Set()); setBulkError('') }}
-            className="text-xs px-2 py-1 text-slate-500 hover:text-slate-300 transition-colors ml-auto"
+            className="text-xs px-2 py-1 text-fg-subtle hover:text-fg-muted transition-colors ml-auto"
           >
             Clear selection
           </button>
-          {bulkError && <span className="text-xs text-red-400 w-full">{bulkError}</span>}
+          {bulkError && <span className="text-xs text-danger w-full">{bulkError}</span>}
         </div>
       )}
 
@@ -550,9 +719,9 @@ export default function BoardPage() {
       )}
 
       {loading ? (
-        <div className="text-slate-400 text-sm">Loading…</div>
+        <div className="text-fg-muted text-sm">Loading…</div>
       ) : labels.length === 0 ? (
-        <div className="text-slate-500 text-sm">
+        <div className="text-fg-subtle text-sm">
           No workflow configured. Add a repo and workflow first.
         </div>
       ) : (
@@ -569,9 +738,22 @@ export default function BoardPage() {
             transitions={transitions}
             selectedIds={selectedIds}
             onToggleSelect={toggleSelect}
+            workflowId={workflow?.id}
+            groupByRepo={groupByRepo}
+            repos={repos}
+            mobileNavFooter={
+              showMobileCost ? (
+                <p
+                  className="text-[11px] text-fg-subtle mt-0.5"
+                  title="Sum of recorded run cost across the currently-visible (filtered) tasks"
+                >
+                  Filtered cost: ${filteredCost.toFixed(2)}
+                </p>
+              ) : undefined
+            }
           />
         </div>
       )}
-    </div>
+    </PageFrame>
   )
 }

@@ -26,6 +26,7 @@ export type Capability =
   | 'subtasks'
   | 'effort'
   | 'permissionMode'
+  | 'skills'
 
 export type Support = 'full' | 'partial' | 'none'
 
@@ -78,6 +79,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
       support: 'full',
       note: 'Passed as --permission-mode. Leave as Default (unset) to keep today\'s behavior (no flag — the CLI\'s own "auto" classifier). command_denylist is still enforced even under bypassPermissions (verified empirically).',
     },
+    skills: { support: 'full', note: 'Skills library entries are copied into .claude/skills/<name>/ in the worktree (git-excluded).' },
   },
   qwen_code: {
     taskEditorTools: { support: 'full', note: 'All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled).' },
@@ -111,6 +113,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     subtasks: { support: 'full', note: 'create_subtask MCP tool available.' },
     effort: { support: 'none', note: 'No reasoning-effort flag on the qwen CLI — the field is ignored for this provider.' },
     permissionMode: { support: 'none', note: 'qwen_code always runs in --approval-mode yolo (full auto-approve) — always full bypass, not configurable per agent config.' },
+    skills: { support: 'full', note: 'Skills library entries are copied into .qwen/skills/<name>/ in the worktree (git-excluded).' },
   },
   codex_cli: {
     taskEditorTools: { support: 'full', note: 'All 6 task-editor tools via the MCP sidecar (7 with create_subtask when subtasks are enabled).' },
@@ -147,6 +150,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
       note: 'Mapped to the model_reasoning_effort config override (minimal/low/medium/high). Codex has no xhigh/max tier, so those clamp down to high.',
     },
     permissionMode: { support: 'none', note: 'codex_cli always runs with --dangerously-bypass-approvals-and-sandbox — always full bypass, not configurable per agent config.' },
+    skills: { support: 'full', note: 'Skills library entries are copied into .agents/skills/<name>/ in the worktree (git-excluded).' },
   },
   opencode: {
     taskEditorTools: {
@@ -160,11 +164,11 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
     },
     commandAllowlist: {
       support: 'partial',
-      note: 'Mapped to opencode\'s "permission.bash" config: listed patterns get "allow" plus a catch-all "*": "deny" default. opencode\'s pattern-matching semantics (most-specific-wins vs. first-match, and whether "*" is treated as a wildcard default) have not been verified live.',
+      note: 'Mapped to opencode\'s "permission.bash" config: listed patterns get "allow" after a catch-all "*": "deny" default. Rules are emitted in opencode\'s last-match-wins order (https://opencode.ai/docs/permissions/): "*" first, allow entries next, deny entries last.',
     },
     commandDenylist: {
       support: 'partial',
-      note: 'Mapped to opencode\'s "permission.bash" config as "deny" entries (wins over an overlapping allowlist entry). opencode run auto-rejects "ask" permissions headless since --auto is deliberately never passed, so a deny entry genuinely blocks the pattern — but opencode\'s pattern-matching semantics have not been verified live.',
+      note: 'Mapped to opencode\'s "permission.bash" config as "deny" entries emitted last, so under opencode\'s last-match-wins evaluation they always win over an overlapping allowlist entry. opencode run auto-rejects "ask" permissions headless since --auto is deliberately never passed, so a deny entry genuinely blocks the pattern.',
     },
     costTracking: {
       support: 'full',
@@ -189,6 +193,7 @@ export const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
       note: 'Passed as opencode run --variant. The value is forwarded to the model provider as-is (low/medium/high/xhigh/max); a model that doesn\'t define that variant may ignore or reject it.',
     },
     permissionMode: { support: 'none', note: 'No permission-mode flag on the opencode CLI — the field is ignored for this provider.' },
+    skills: { support: 'full', note: 'Skills library entries are copied into .opencode/skills/<name>/ in the worktree (git-excluded).' },
   },
 }
 

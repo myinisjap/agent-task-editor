@@ -322,3 +322,107 @@ func TestOutcomeQualityGet_RepoFilter(t *testing.T) {
 		t.Errorf("expected avg_cost_to_done_usd ~1.0 for repoA filter, got %v", body.Configs[0].AvgCostToDoneUSD)
 	}
 }
+
+func TestOutcomeQualityGet_GroupByVersionAndValidation(t *testing.T) {
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	ctx := context.Background()
+
+	wfs, _ := q.ListWorkflows(ctx)
+	wfID := wfs[0].ID
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{ID: repoID, Name: "repo", Path: t.TempDir(), WorkflowID: &wfID}); err != nil {
+		t.Fatal(err)
+	}
+	pc, err := q.CreateProviderConfig(ctx, gen.CreateProviderConfigParams{
+		ID: uuid.NewString(), Name: "prov", Provider: "claude", Model: "sonnet", Env: "{}",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
+		ID: uuid.NewString(), Name: "worker", ProviderConfigID: pc.ID,
+		Labels: `["work"]`, MaxTokens: 8192, TimeoutSecs: 600, MaxTurns: 50,
+		EnabledPlugins: "[]", EnabledMcpServers: "[]", CommandAllowlist: "[]", CommandDenylist: "[]",
+		MaxRetries: 3, RetryBackoffSecs: 30, ResumeSessions: 1, MaxSubtasks: 10,
+		FallbackProviderConfigIds: "[]", EscalationLadder: "[]",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// done task with a run per version: v1 x2 tasks, v2 x1 task.
+	mkDone := func(version *int64, arm ...string) {
+		task, err := q.CreateTask(ctx, gen.CreateTaskParams{ID: uuid.NewString(), Title: "t", WorkflowID: wfID, RepoID: repoID, Label: "work"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		run, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: uuid.NewString(), TaskID: task.ID, AgentConfigID: &cfg.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.SQL().ExecContext(ctx, `UPDATE agent_runs SET agent_config_version = ?, status = 'completed' WHERE id = ?`, version, run.ID); err != nil {
+			t.Fatal(err)
+		}
+		if len(arm) > 0 {
+			if _, err := db.SQL().ExecContext(ctx, `UPDATE agent_runs SET experiment_id = 'e', experiment_arm = ? WHERE id = ?`, arm[0], run.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := q.UpdateTaskLabel(ctx, gen.UpdateTaskLabelParams{Label: "done", CurrentAgentRunID: &run.ID, ID: task.ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	one, two := int64(1), int64(2)
+	mkDone(&one)
+	mkDone(&one)
+	mkDone(&two)
+	mkDone(nil)
+	mkDone(nil, "candidate")
+
+	h := handlers.NewOutcomeQualityHandler(q)
+	get := func(qs string) (*httptest.ResponseRecorder, []map[string]any) {
+		w := httptest.NewRecorder()
+		h.Get(w, httptest.NewRequest(http.MethodGet, "/dashboard/outcome-quality"+qs, nil))
+		var body struct {
+			GroupBy string           `json:"group_by"`
+			Configs []map[string]any `json:"configs"`
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &body)
+		return w, body.Configs
+	}
+
+	if w, _ := get("?group_by=bogus"); w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+
+	_, rows := get("?group_by=version")
+	if len(rows) != 4 {
+		t.Fatalf("expected 3 rows, got %+v", rows)
+	}
+	// v2, v1, unversioned (version desc, unversioned last).
+	wantVals := []string{"v2", "v1", "candidate (experiment)", "unversioned"}
+	wantDone := []float64{1, 2, 1, 1}
+	for i, r := range rows {
+		if r["group_value"] != wantVals[i] || r["tasks_done"] != wantDone[i] || r["low_sample"] != true {
+			t.Errorf("row %d = %+v", i, r)
+		}
+	}
+
+	_, rows = get("?group_by=provider_config")
+	if len(rows) != 1 || rows[0]["group_value"] != "prov" || rows[0]["tasks_done"] != float64(5) {
+		t.Fatalf("provider_config rows: %+v", rows)
+	}
+	_, rows = get("?group_by=repo")
+	if len(rows) != 1 || rows[0]["group_value"] != "repo" {
+		t.Fatalf("repo rows: %+v", rows)
+	}
+	_, rows = get("?group_by=task_type")
+	if len(rows) != 1 || rows[0]["tasks_done"] != float64(5) {
+		t.Fatalf("task_type rows: %+v", rows)
+	}
+	_, rows = get("")
+	if len(rows) != 1 || rows[0]["tasks_done"] != float64(5) {
+		t.Fatalf("default rows: %+v", rows)
+	}
+}

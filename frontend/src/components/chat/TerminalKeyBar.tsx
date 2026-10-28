@@ -47,7 +47,7 @@ export default function TerminalKeyBar({ onKey, onToggleCtrl, ctrlArmed, promptL
             onPointerDown={keepFocus}
             onClick={() => onKey(a.seq)}
             aria-label={`Answer ${a.label}`}
-            className={`${key} ${promptLike ? 'bg-indigo-700 border-indigo-500 text-white' : 'bg-slate-800 text-slate-200'} active:bg-slate-700`}
+            className={`${key} ${promptLike ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-slate-800 text-slate-200'} active:bg-slate-700`}
           >
             {a.label}
           </button>

@@ -1,3 +1,4 @@
+import { Archive, ArchiveRestore, Ban, Check, CircleDollarSign, Copy, CornerDownRight, Hourglass, ListTree, Lock, Pause, Pencil, Play, RefreshCw, Trash2, TriangleAlert } from 'lucide-react'
 import { memo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useDraggable } from '@dnd-kit/core'
@@ -5,7 +6,10 @@ import { CSS } from '@dnd-kit/utilities'
 import type { Task } from '../../api/client'
 import { api } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
+import { showError, showUndoToast } from '../../stores/toast'
+import { errMessage } from '../../lib/errMessage'
 import { useReposStore } from '../../stores/repos'
+import { Badge, Icon } from '../ui'
 import GitStateBadge from './GitStateBadge'
 import SideEffectBadge from '../shared/SideEffectBadge'
 import { PRIORITY_LEVELS, priorityLabel, toPriority, type PriorityValue } from '../../lib/priority'
@@ -17,8 +21,8 @@ import { formatRelativeCountdown } from '../../lib/format'
 
 const TYPE_COLORS: Record<string, string> = {
   feature: 'bg-blue-900 text-blue-300',
-  bug:     'bg-red-900 text-red-300',
-  chore:   'bg-slate-700 text-slate-300',
+  bug:     'bg-red-900 text-danger',
+  chore:   'bg-border text-fg-muted',
   spike:   'bg-purple-900 text-purple-300',
 }
 
@@ -41,7 +45,7 @@ function TaskCard({
   rateLimitedUntil?: string
   /** True once this task has crossed the cost early-warning threshold (see task.cost_warning WS event) */
   costWarned?: boolean
-  onDelete?: (taskId: string) => void
+  onDelete?: (task: Task) => void
   /** When set, renders a "Duplicate task" button that opens a pre-filled New Task modal for this task. */
   onDuplicate?: (task: Task) => void
   isEditable?: boolean
@@ -143,7 +147,7 @@ function TaskCard({
       <div
         ref={setNodeRef}
         style={{ ...style, cursor: 'default' }}
-        className="group bg-slate-800 border border-indigo-500 rounded-lg p-3 transition-colors select-none"
+        className="group bg-surface-sunken border border-indigo-500 rounded-lg p-3 transition-colors select-none"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex flex-col gap-2">
@@ -154,7 +158,7 @@ function TaskCard({
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
             placeholder="Task title"
-            className="w-full text-sm bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-400"
+            className="w-full text-sm bg-border border border-border rounded px-2 py-1.5 text-fg placeholder-slate-500 focus:outline-none focus:border-indigo-400"
           />
           <textarea
             value={editDesc}
@@ -163,14 +167,14 @@ function TaskCard({
             onClick={(e) => e.stopPropagation()}
             placeholder="Description (optional)"
             rows={3}
-            className="w-full text-xs bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-400 resize-none"
+            className="w-full text-xs bg-border border border-border rounded px-2 py-1.5 text-fg placeholder-slate-500 focus:outline-none focus:border-indigo-400 resize-none"
           />
           <select
             value={editType}
             onChange={(e) => setEditType(e.target.value as Task['type'])}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
-            className="w-full text-xs bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-slate-100 focus:outline-none focus:border-indigo-400"
+            className="w-full text-xs bg-border border border-border rounded px-2 py-1.5 text-fg focus:outline-none focus:border-indigo-400"
           >
             {TASK_TYPES.map((t) => (
               <option key={t} value={t}>{t}</option>
@@ -181,7 +185,7 @@ function TaskCard({
             onChange={(e) => setEditPriority(toPriority(e.target.value))}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
-            className="w-full text-xs bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-slate-100 focus:outline-none focus:border-indigo-400"
+            className="w-full text-xs bg-border border border-border rounded px-2 py-1.5 text-fg focus:outline-none focus:border-indigo-400"
           >
             {PRIORITY_LEVELS.map((p) => (
               <option key={p.value} value={p.value}>{p.label}</option>
@@ -189,7 +193,7 @@ function TaskCard({
           </select>
 
           {saveError && (
-            <p className="text-xs text-red-400">{saveError}</p>
+            <p className="text-xs text-danger">{saveError}</p>
           )}
 
           <div className="flex gap-2 justify-end mt-1">
@@ -197,7 +201,7 @@ function TaskCard({
               onClick={handleCancel}
               onPointerDown={(e) => e.stopPropagation()}
               disabled={saving}
-              className="px-3 py-1 text-xs rounded bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-50 transition-colors"
+              className="px-3 py-1 text-xs rounded bg-border hover:bg-slate-600 text-fg-muted disabled:opacity-50 transition-colors"
             >
               Cancel
             </button>
@@ -270,12 +274,11 @@ function TaskCard({
         // Tab into them.
         if (!e.currentTarget.contains(e.relatedTarget)) setCardActive(false)
       }}
-      className={`group bg-slate-800 border rounded-lg p-3 hover:border-slate-500 transition-colors select-none ${
-        selected ? 'border-indigo-500' : blocked ? 'border-amber-700/60' : 'border-slate-700'
+      className={`group bg-surface-sunken border rounded-lg p-3 hover:border-slate-500 transition-colors select-none ${
+        selected ? 'border-indigo-500' : blocked ? 'border-amber-700/60' : 'border-border'
       } ${task.archived || blocked ? 'opacity-60' : ''}`}
     >
-      <div className="flex items-start justify-between gap-2 mb-2">
-        <div className="flex items-start gap-2 min-w-0">
+      <div className="flex items-start gap-2 mb-1.5">
           {onToggleSelect && (
             <input
               type="checkbox"
@@ -292,155 +295,26 @@ function TaskCard({
               title="Select for bulk actions"
             />
           )}
-          <span className="text-sm text-slate-100 font-medium leading-snug">{task.title}</span>
-        </div>
-        <div className="flex items-center gap-1.5 shrink-0">
-          {isChild && (
-            <button
-              onClick={(e) => { e.stopPropagation(); navigate(`/tasks/${task.parent_task_id}`) }}
-              onPointerDown={(e) => e.stopPropagation()}
-              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-indigo-900/60 text-indigo-300 font-semibold hover:bg-indigo-800"
-              title="Subtask — click to open its parent"
-            >
-              ↳ subtask
-            </button>
-          )}
-          {isChild && task.merge_status === 'merge_conflict' && (
-            <span
-              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-red-900/70 text-red-300 font-semibold"
-              title="Merge-back into the parent's branch conflicted — the parent's agent will resolve it"
-            >
-              ⚠ conflict
-            </span>
-          )}
-          {isChild && task.merge_status === 'merged' && (
-            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-emerald-900/60 text-emerald-300 font-semibold" title="Merged back into the parent's branch">
-              ✓ merged
-            </span>
-          )}
-          {subtaskTotal > 0 && (
-            <span
-              className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold ${subtaskConflicts > 0 ? 'bg-red-900/60 text-red-300' : 'bg-slate-700 text-slate-300'}`}
-              title={`${task.subtask_done ?? 0} of ${subtaskTotal} subtasks done${subtaskConflicts > 0 ? `, ${subtaskConflicts} in conflict` : ''}`}
-            >
-              ⑃ {task.subtask_done ?? 0}/{subtaskTotal}{subtaskConflicts > 0 ? ' ⚠' : ''}
-            </span>
-          )}
-          {blocked && (
-            <span
-              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-semibold"
-              title={`Waiting on ${task.blocked_by_count} unfinished dependency${(task.blocked_by_count ?? 0) === 1 ? '' : ' tasks'} — not dispatched until they finish`}
-            >
-              🔒 Blocked by {task.blocked_by_count}
-            </span>
-          )}
-          {!!task.priority && (
-            <span
-              className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
-                task.priority >= 2
-                  ? 'bg-red-900/70 text-red-300'
-                  : task.priority === 1
-                    ? 'bg-orange-900/60 text-orange-300'
-                    : 'bg-slate-700 text-slate-400'
-              }`}
-              title={`Dispatch priority: ${priorityLabel(task.priority)}`}
-            >
-              {priorityLabel(task.priority)}
-            </span>
-          )}
-          {task.block_reason ? (
-            <span
-              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-red-900/60 text-red-300 font-semibold"
-              title={
-                task.block_reason.message +
-                (task.block_reason.clears_at && isTransientBlockReason(task.block_reason)
-                  ? ` — clears ${formatRelativeCountdown(task.block_reason.clears_at)}`
-                  : '')
-              }
-            >
-              🚫 {blockReasonLabel(task.block_reason)}
-              {task.block_reason.clears_at && isTransientBlockReason(task.block_reason)
-                ? ` (${formatRelativeCountdown(task.block_reason.clears_at)})`
-                : ''}
-            </span>
-          ) : (
-            task.queue_position != null && (
-              <span
-                className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 font-medium"
-                title="Position in the current agent-pickup queue (priority order), waiting for a free worker"
-              >
-                #{task.queue_position + 1} in queue
-              </span>
-            )
-          )}
-          {task.archived && (
-            <span
-              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 font-semibold"
-              title="Task is archived — hidden from the default board view"
-            >
-              🗄 Archived
-            </span>
-          )}
-          {task.paused && (
-            <span
-              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/70 text-amber-300 font-semibold"
-              title="Task is paused — will not be picked up by an agent"
-            >
-              ⏸ Paused
-            </span>
-          )}
-          {needsMe && (
-            <span
-              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-pink-900/70 text-pink-200 font-semibold"
-              title={needsMeReasonLabel(needsMe.reason, needsMe.escalation_reason)}
-            >
-              {needsMe.escalation_reason ? escalationInfo(needsMe.escalation_reason).short : 'Needs you'}
-            </span>
-          )}
-          {isRunning && !needsMe && (
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse mt-1" title="Agent running" />
-          )}
-          {!isRunning && task.active_run_status === 'waiting_human' && (
-            <span
-              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-medium"
-              title="The agent is waiting for a human to respond"
-            >
-              Needs you
-            </span>
-          )}
-          {rateLimitedUntil && !isRunning && (
-            <span
-              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-medium"
-              title={`Rate limited by API. Retrying after ${new Date(rateLimitedUntil).toLocaleTimeString()}`}
-            >
-              ⏸ API limit
-            </span>
-          )}
-          <SideEffectBadge effects={task.side_effects} />
-          {costWarned && (
-            <span
-              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-medium"
-              title="Cumulative cost has crossed the early-warning threshold of its budget. See GET/PUT /settings/cost-warning for the threshold."
-            >
-              💰 Budget warning
-            </span>
-          )}
-          {task.next_retry_at && !isRunning && (
-            <span
-              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-900/60 text-amber-300 font-medium"
-              title={`Auto-retrying after a transient error (attempt ${task.transient_retry_count ?? '?'}). Next attempt ~${new Date(task.next_retry_at).toLocaleTimeString()}`}
-            >
-              ↻ Retrying ({task.transient_retry_count ?? '?'})
-            </span>
-          )}
+          <span
+            data-testid="task-card-title"
+            className="flex-1 min-w-0 text-sm text-fg font-medium leading-snug line-clamp-3 break-words"
+            title={task.title}
+          >
+            {task.title}
+          </span>
+          <div className="flex items-center gap-1.5 shrink-0">
           <button
             onClick={async (e) => {
               e.stopPropagation()
               try {
-                const updated = await api.tasks.setPaused(task.id, !task.paused)
+                const prev = !!task.paused
+                const updated = await api.tasks.setPaused(task.id, !prev)
                 upsert(updated)
+                showUndoToast(`${prev ? 'Resumed' : 'Paused'} "${task.title}"`, async () =>
+                  upsert(await api.tasks.setPaused(task.id, prev)),
+                )
               } catch (err) {
-                alert(String(err))
+                showError(errMessage(err))
               }
             }}
             onPointerDown={(e) => e.stopPropagation()}
@@ -451,37 +325,44 @@ function TaskCard({
             // button stays reachable via keyboard once the card is focused,
             // instead of being unreachable outright (see issue #350).
             tabIndex={actionTabIndex}
-            className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-amber-400 transition-opacity leading-none`}
+            className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-fg-subtle hover:text-warning transition-opacity leading-none`}
             title={task.paused ? 'Resume task' : 'Pause task'}
+            aria-label={task.paused ? 'Resume task' : 'Pause task'}
           >
-            {task.paused ? '▶' : '⏸'}
+            <Icon icon={task.paused ? Play : Pause} size="md" />
           </button>
           <button
             onClick={async (e) => {
               e.stopPropagation()
               try {
-                const updated = await api.tasks.setArchived(task.id, !task.archived)
+                const prev = !!task.archived
+                const updated = await api.tasks.setArchived(task.id, !prev)
                 upsert(updated)
+                showUndoToast(`${prev ? 'Unarchived' : 'Archived'} "${task.title}"`, async () =>
+                  upsert(await api.tasks.setArchived(task.id, prev)),
+                )
               } catch (err) {
-                alert(String(err))
+                showError(errMessage(err))
               }
             }}
             onPointerDown={(e) => e.stopPropagation()}
             tabIndex={actionTabIndex}
-            className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none`}
+            className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-fg-subtle hover:text-accent-fg transition-opacity leading-none`}
             title={task.archived ? 'Unarchive task' : 'Archive task — hide from the board'}
+            aria-label={task.archived ? 'Unarchive task' : 'Archive task — hide from the board'}
           >
-            {task.archived ? '↩' : '🗄'}
+            <Icon icon={task.archived ? ArchiveRestore : Archive} size="md" />
           </button>
           {isEditable && (
             <button
               onClick={handleEditClick}
               onPointerDown={(e) => e.stopPropagation()}
               tabIndex={actionTabIndex}
-              className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none`}
+              className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-fg-subtle hover:text-accent-fg transition-opacity leading-none`}
               title="Edit task"
+              aria-label="Edit task"
             >
-              ✎
+              <Icon icon={Pencil} size="md" />
             </button>
           )}
           {onDuplicate && (
@@ -492,31 +373,179 @@ function TaskCard({
               }}
               onPointerDown={(e) => e.stopPropagation()}
               tabIndex={actionTabIndex}
-              className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-indigo-400 transition-opacity leading-none`}
+              className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-fg-subtle hover:text-accent-fg transition-opacity leading-none`}
               title="Duplicate task"
+              aria-label="Duplicate task"
             >
-              ⧉
+              <Icon icon={Copy} size="md" />
             </button>
           )}
           {onDelete && (
             <button
               onClick={(e) => {
                 e.stopPropagation()
-                if (window.confirm('Delete this task?')) onDelete(task.id)
+                onDelete(task)
               }}
               onPointerDown={(e) => e.stopPropagation()}
               tabIndex={actionTabIndex}
-              className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-slate-500 hover:text-red-400 transition-opacity leading-none`}
+              className={`${controlsVisible ? 'opacity-100' : 'opacity-0'} group-hover:opacity-100 no-hover:opacity-100 text-fg-subtle hover:text-danger transition-opacity leading-none`}
               title="Delete task"
+              aria-label="Delete task"
             >
-              ✕
+              <Icon icon={Trash2} size="md" />
             </button>
           )}
-        </div>
+          </div>
+      </div>
+      <div data-testid="task-card-badges" className="flex flex-wrap items-center gap-1.5 mb-2 empty:hidden">
+          {isChild && (
+            <button
+              onClick={(e) => { e.stopPropagation(); navigate(`/tasks/${task.parent_task_id}`) }}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-accent/30 bg-accent/15 text-accent-fg font-medium hover:bg-accent/25"
+              title="Subtask — click to open its parent"
+            >
+              <Icon icon={CornerDownRight} size="xs" />subtask
+            </button>
+          )}
+          {isChild && task.merge_status === 'merge_conflict' && (
+            <Badge size="xs"
+              tone="danger"
+              title="Merge-back into the parent's branch conflicted — the parent's agent will resolve it"
+            >
+              <Icon icon={TriangleAlert} size="xs" />conflict
+            </Badge>
+          )}
+          {isChild && task.merge_status === 'merged' && (
+            <Badge size="xs" tone="success" title="Merged back into the parent's branch">
+              <Icon icon={Check} size="xs" />merged
+            </Badge>
+          )}
+          {subtaskTotal > 0 && (
+            <span
+              className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold ${subtaskConflicts > 0 ? 'bg-danger-soft text-danger' : 'bg-surface-sunken text-fg-muted'}`}
+              title={`${task.subtask_done ?? 0} of ${subtaskTotal} subtasks done${subtaskConflicts > 0 ? `, ${subtaskConflicts} in conflict` : ''}`}
+            >
+              <Icon icon={ListTree} size="xs" />{task.subtask_done ?? 0}/{subtaskTotal}{subtaskConflicts > 0 && <Icon icon={TriangleAlert} size="xs" />}
+            </span>
+          )}
+          {blocked && (
+            <Badge size="xs"
+              tone="warning"
+              title={`Waiting on ${task.blocked_by_count} unfinished dependency${(task.blocked_by_count ?? 0) === 1 ? '' : ' tasks'} — not dispatched until they finish`}
+            >
+              <Icon icon={Lock} size="xs" />Blocked by {task.blocked_by_count}
+            </Badge>
+          )}
+          {!!task.priority && (
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                task.priority >= 2
+                  ? 'bg-danger-soft text-danger'
+                  : task.priority === 1
+                    ? 'bg-warning-soft text-warning'
+                    : 'bg-border text-fg-muted'
+              }`}
+              title={`Dispatch priority: ${priorityLabel(task.priority)}`}
+            >
+              {priorityLabel(task.priority)}
+            </span>
+          )}
+          {task.block_reason ? (
+            <Badge size="xs"
+              tone="danger"
+              title={
+                task.block_reason.message +
+                (task.block_reason.clears_at && isTransientBlockReason(task.block_reason)
+                  ? ` — clears ${formatRelativeCountdown(task.block_reason.clears_at)}`
+                  : '')
+              }
+            >
+              <Icon icon={Ban} size="xs" />{blockReasonLabel(task.block_reason)}
+              {task.block_reason.clears_at && isTransientBlockReason(task.block_reason)
+                ? ` (${formatRelativeCountdown(task.block_reason.clears_at)})`
+                : ''}
+            </Badge>
+          ) : (
+            task.queue_position != null && (
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded bg-border text-fg-muted font-medium"
+                title="Position in the current agent-pickup queue (priority order), waiting for a free worker"
+              >
+                #{task.queue_position + 1} in queue
+              </span>
+            )
+          )}
+          {task.archived && (
+            <span
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-border text-fg-muted font-semibold"
+              title="Task is archived — hidden from the default board view"
+            >
+              <Icon icon={Archive} size="xs" />Archived
+            </span>
+          )}
+          {task.paused && (
+            <Badge size="xs"
+              tone="warning"
+              title="Task is paused — will not be picked up by an agent"
+            >
+              <Icon icon={Pause} size="xs" />Paused
+            </Badge>
+          )}
+          {needsMe && (
+            <Badge size="xs"
+              tone="accent"
+              title={needsMeReasonLabel(needsMe.reason, needsMe.escalation_reason)}
+            >
+              {needsMe.escalation_reason ? escalationInfo(needsMe.escalation_reason).short : 'Needs you'}
+            </Badge>
+          )}
+          {isRunning && !needsMe && (
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="Agent running" />
+          )}
+          {/* The needs-me entry already carries the reason; this is the fallback
+              for when the needs-me store hasn't loaded or has no entry. */}
+          {!isRunning && !needsMe && task.active_run_status === 'waiting_human' && (
+            <Badge size="xs"
+              tone="warning"
+              title="The agent is waiting for a human to respond"
+            >
+              Needs you
+            </Badge>
+          )}
+          {rateLimitedUntil && !isRunning && (
+            <Badge size="xs"
+              tone="warning"
+              title={`Rate limited by API. Retrying after ${new Date(rateLimitedUntil).toLocaleTimeString()}`}
+            >
+              <Icon icon={Pause} size="xs" />API limit
+            </Badge>
+          )}
+          <SideEffectBadge effects={task.side_effects} />
+          {costWarned && (
+            <Badge size="xs"
+              tone="warning"
+              title="Cumulative cost has crossed the early-warning threshold of its budget. See GET/PUT /settings/cost-warning for the threshold."
+            >
+              <Icon icon={CircleDollarSign} size="xs" />Budget warning
+            </Badge>
+          )}
+          {task.next_retry_at && !isRunning && (
+            <Badge size="xs"
+              tone="warning"
+              title={
+                task.transient_retry_count
+                  ? `Auto-retrying after a transient error (attempt ${task.transient_retry_count}). Next attempt ~${new Date(task.next_retry_at).toLocaleTimeString()}`
+                  : `Run was stopped for low memory; next attempt ~${new Date(task.next_retry_at).toLocaleTimeString()}`
+              }
+            >
+              {task.transient_retry_count ? <><Icon icon={RefreshCw} size="xs" />Retrying ({task.transient_retry_count})</> : <><Icon icon={Hourglass} size="xs" />Cooling down</>}
+            </Badge>
+          )}
       </div>
       {showColumnLabel && (
         <div className="mb-1.5">
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400 font-medium tracking-wide">
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-border text-fg-muted font-medium tracking-wide">
             {showColumnLabel}
           </span>
         </div>
@@ -525,10 +554,10 @@ function TaskCard({
         <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${TYPE_COLORS[task.type] ?? TYPE_COLORS.feature}`}>
           {task.type}
         </span>
-        <span className="text-xs text-slate-500 truncate">{task.id.slice(0, 8)}</span>
+        <span className="text-xs text-fg-subtle truncate">{task.id.slice(0, 8)}</span>
         <GitStateBadge branch={task.branch} gitState={task.git_state} prMergeable={task.pr_mergeable} />
         {repoName && (
-          <span className="text-xs text-slate-400 truncate max-w-[80px] ml-auto" title={repoName}>
+          <span className="text-xs text-fg-muted truncate max-w-[80px] ml-auto" title={repoName}>
             {repoName}
           </span>
         )}

@@ -1,6 +1,8 @@
+import { labelDisplayName } from '../lib/labelDisplay'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, type AgentConfig, type Workflow } from '../api/client'
+import ConfirmDialog from '../components/shared/ConfirmDialog'
 import WorkflowGraphEditor from '../components/shared/WorkflowGraphEditor'
 import { useTasksStore } from '../stores/tasks'
 import {
@@ -13,6 +15,8 @@ import {
   type WorkflowDraft,
 } from '../lib/workflowEdit'
 import { validateWorkflow } from '../lib/validateWorkflow'
+import { Button, Icon, PageFrame, controlClasses } from '../components/ui'
+import { X } from 'lucide-react'
 import WorkflowFlowchart from '../components/shared/WorkflowFlowchart'
 import { useAgentsStore } from '../stores/agents'
 import { useWorkflowStore } from '../stores/workflow'
@@ -103,7 +107,9 @@ export default function PipelineOverviewPage() {
     setSavedNote(false)
     void fetchTasks()
   }
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
   const discard = () => {
+    setConfirmDiscard(false)
     setEditing(false)
     setDraft(null)
     setBaseline(null)
@@ -170,86 +176,83 @@ export default function PipelineOverviewPage() {
   }
 
   return (
-    <div data-testid="pipeline-overview" className="flex flex-col h-full min-h-0 p-4 gap-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-lg font-semibold text-slate-100">Pipeline</h1>
-        {workflows.length > 1 && (
-          <select
-            aria-label="Workflow"
-            value={workflow?.id ?? ''}
-            onChange={(e) => {
-              setSelectedId(e.target.value)
-              setSelectedLabel(null)
-              setSavedNote(false)
-            }}
-            disabled={editing}
-            className="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-sm text-slate-200"
-          >
-            {workflows.map((w) => (
-              <option key={w.id} value={w.id}>{w.name}</option>
-            ))}
-          </select>
-        )}
-        <span className="text-xs text-slate-500">
-          {editing
-            ? 'Editing: changes are staged until you save.'
-            : 'Who works each stage. Click a stage to assign agents. Prefer YAML? Use the '}
-          {!editing && (
-            <>
-              <Link to="/pipeline/workflow" className="text-indigo-400 hover:text-indigo-300">Workflow</Link> tab (Advanced).
-            </>
+    <PageFrame
+      title="Pipeline"
+      width="full"
+      fill
+      testId="pipeline-overview"
+      headerClassName="mb-4"
+      description={
+        <>
+            {editing
+              ? 'Editing: changes are staged until you save.'
+              : 'Who works each stage. Click a stage to assign agents. Prefer YAML? Use the '}
+            {!editing && (
+              <>
+                <Link to="/pipeline/workflow" className="text-accent-fg hover:text-accent-fg">Workflow</Link> tab (Advanced).
+              </>
+            )}
+        </>
+      }
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          {workflows.length > 1 && (
+            <select
+              aria-label="Workflow"
+              value={workflow?.id ?? ''}
+              onChange={(e) => {
+                setSelectedId(e.target.value)
+                setSelectedLabel(null)
+                setSavedNote(false)
+              }}
+              disabled={editing}
+              className={`${controlClasses} !w-auto !py-1`}
+            >
+              {workflows.map((w) => (
+                <option key={w.id} value={w.id}>{w.name}</option>
+              ))}
+            </select>
           )}
-        </span>
-        <div className="ml-auto flex items-center gap-2">
-          {savedNote && !editing && <span role="status" className="text-xs text-green-400">Saved</span>}
-          {editing && dirty && <span data-testid="dirty-indicator" className="text-xs text-amber-300">Unsaved changes</span>}
+          {savedNote && !editing && <span role="status" className="text-xs text-success">Saved</span>}
+          {editing && dirty && <span data-testid="dirty-indicator" className="text-xs text-warning">Unsaved changes</span>}
           {!editing && workflow && (
-            <button type="button" onClick={startEdit}
-              className="px-3 py-1 text-sm rounded bg-slate-700 hover:bg-slate-600 text-slate-100">
-              Edit workflow
-            </button>
+            <Button size="sm" onClick={startEdit}>Edit workflow</Button>
           )}
           {editing && (
             <>
-              <button type="button" onClick={discard} disabled={saving}
-                className="px-3 py-1 text-sm rounded bg-slate-700 hover:bg-slate-600 text-slate-100 disabled:opacity-50">
-                {dirty ? 'Discard' : 'Cancel'}
-              </button>
-              <button type="button" onClick={() => void save()} disabled={!dirty || saving || errors.length > 0}
-                className="px-3 py-1 text-sm rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50">
+              <Button size="sm" onClick={() => (dirty ? setConfirmDiscard(true) : discard())} disabled={saving}>{dirty ? 'Discard' : 'Cancel'}</Button>
+              <Button size="sm" variant="primary" onClick={() => void save()} disabled={!dirty || saving || errors.length > 0}>
                 {saving ? 'Saving…' : 'Save'}
-              </button>
+              </Button>
             </>
           )}
-        </div>
-      </div>
 
+        </div>
+      }
+    >
+      <div className="flex flex-col flex-1 min-h-0 gap-3">
       {editing && (
         <div className="space-y-1">
           {conflict && (
-            <div role="alert" className="rounded border border-amber-600 bg-amber-900/30 p-2 text-sm text-amber-200 flex flex-wrap items-center gap-2">
+            <div role="alert" className="rounded border border-warning/40 bg-warning-soft p-2 text-sm text-warning flex flex-wrap items-center gap-2">
               <span>This workflow was changed on the server after you started editing.</span>
-              <button type="button" onClick={() => void reloadFromServer()} className="px-2 py-1 text-xs rounded bg-slate-700 hover:bg-slate-600 text-slate-100">
-                Reload and discard my edits
-              </button>
-              <button type="button" onClick={() => void save(true)} className="px-2 py-1 text-xs rounded bg-amber-700 hover:bg-amber-600 text-white">
-                Overwrite with my edits
-              </button>
+              <Button size="sm" onClick={() => void reloadFromServer()}>Reload and discard my edits</Button>
+              <Button size="sm" variant="danger" onClick={() => void save(true)}>Overwrite with my edits</Button>
             </div>
           )}
-          {saveError && <p role="alert" className="text-sm text-red-300">{saveError}</p>}
+          {saveError && <p role="alert" className="text-sm text-danger">{saveError}</p>}
           {errors.length > 0 && (
-            <ul aria-label="Validation errors" className="text-xs text-red-300 list-disc pl-5">
+            <ul aria-label="Validation errors" className="text-xs text-danger list-disc pl-5">
               {errors.map((e, i) => <li key={i}>{e.message}</li>)}
             </ul>
           )}
           {warnings.length > 0 && (
-            <ul aria-label="Warnings" className="text-xs text-amber-300 list-disc pl-5">
+            <ul aria-label="Warnings" className="text-xs text-warning list-disc pl-5">
               {warnings.map((w, i) => <li key={i}>{w.message}</li>)}
             </ul>
           )}
           {draft?.transitions.some((t) => t.agent_config_id) && (
-            <p className="text-xs text-amber-300">
+            <p className="text-xs text-warning">
               Some transitions name a specific agent config. Saving from the graph editor (like the YAML tab) does not keep that per-transition assignment; assign agents to labels instead.
             </p>
           )}
@@ -257,12 +260,12 @@ export default function PipelineOverviewPage() {
       )}
 
       {!workflow ? (
-        <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">
+        <div className="flex-1 flex items-center justify-center text-fg-subtle text-sm">
           No workflows. Create one in the Workflow tab to get started.
         </div>
       ) : (
         <div className="flex-1 min-h-0 flex flex-col md:flex-row gap-3">
-          <div className="flex-1 min-w-0 min-h-[50vh] md:min-h-0 rounded border border-slate-700 overflow-hidden bg-slate-950">
+          <div className="flex-1 min-w-0 min-h-[50vh] md:min-h-0 rounded border border-border overflow-hidden bg-surface">
             <WorkflowFlowchart
               workflow={draftWorkflow ?? workflow}
               staffing={draftStaffing ?? staffing}
@@ -285,29 +288,29 @@ export default function PipelineOverviewPage() {
           )}
           {!editing && label && (
             <aside
-              aria-label={`Assign agents to ${label.name}`}
-              className="md:w-72 shrink-0 rounded border border-slate-700 bg-slate-900 p-3 space-y-2 overflow-auto"
+              aria-label={`Assign agents to ${labelDisplayName(label)}`}
+              className="md:w-72 shrink-0 rounded border border-border bg-surface-raised p-3 space-y-2 overflow-auto"
             >
               <div className="flex items-start justify-between gap-2">
-                <h2 className="text-sm font-semibold text-slate-100">{label.name}</h2>
+                <h2 className="text-sm font-semibold text-fg">{labelDisplayName(label)}</h2>
                 <button
                   type="button"
                   aria-label="Close panel"
                   onClick={() => setSelectedLabel(null)}
-                  className="text-slate-400 hover:text-slate-100"
+                  className="text-fg-muted hover:text-fg"
                 >
-                  ×
+                  <Icon icon={X} size="md" />
                 </button>
               </div>
               {staffing?.get(label.name)?.kind === 'human' && (
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-fg-muted">
                   Only a human moves tasks out of this stage. Assigning an agent only matters once the stage
                   has an agent transition.
                 </p>
               )}
               {agents.length === 0 ? (
-                <p className="text-xs text-slate-400">
-                  No agent configs yet. <Link to="/pipeline/agents" className="text-indigo-400 hover:text-indigo-300">Create one →</Link>
+                <p className="text-xs text-fg-muted">
+                  No agent configs yet. <Link to="/pipeline/agents" className="text-accent-fg hover:underline">Create one →</Link>
                 </p>
               ) : (
                 <ul className="space-y-1">
@@ -315,7 +318,7 @@ export default function PipelineOverviewPage() {
                     const assigned = parseAgentLabels(a.labels).includes(label.name)
                     return (
                       <li key={a.id} className="flex items-center gap-2 text-sm">
-                        <label className="flex flex-1 min-w-0 items-center gap-2 text-slate-200">
+                        <label className="flex flex-1 min-w-0 items-center gap-2 text-fg">
                           <input
                             type="checkbox"
                             checked={assigned}
@@ -323,15 +326,15 @@ export default function PipelineOverviewPage() {
                             onChange={(e) => void toggle(a, e.target.checked)}
                           />
                           <span className="truncate">{a.name}</span>
-                          <span className="text-xs text-slate-500 shrink-0">
+                          <span className="text-xs text-fg-subtle shrink-0">
                             {a.provider_config?.provider ?? ''}{a.enabled ? '' : ' · disabled'}
                           </span>
                         </label>
                         <Link
-                          to="/pipeline/agents"
+                          to={`/pipeline/agents?agent=${a.id}`}
                           title={`Edit ${a.name}`}
                           aria-label={`Edit ${a.name}`}
-                          className="text-xs text-indigo-400 hover:text-indigo-300 shrink-0"
+                          className="text-xs text-accent-fg hover:text-accent-fg shrink-0"
                         >
                           Edit
                         </Link>
@@ -340,11 +343,27 @@ export default function PipelineOverviewPage() {
                   })}
                 </ul>
               )}
-              {error && <p role="alert" className="text-xs text-red-300">{error}</p>}
+              {error && <p role="alert" className="text-xs text-danger">{error}</p>}
             </aside>
           )}
         </div>
       )}
-    </div>
+      </div>
+      {confirmDiscard && (
+        <ConfirmDialog
+          destructive
+          title="Discard workflow changes?"
+          confirmLabel="Discard changes"
+          cancelLabel="Keep editing"
+          onCancel={() => setConfirmDiscard(false)}
+          onConfirm={discard}
+        >
+          <p>
+            Your unsaved edits to the {workflow?.name ?? 'workflow'} pipeline (labels, transitions and layout) will be lost.
+            The saved workflow is not changed.
+          </p>
+        </ConfirmDialog>
+      )}
+    </PageFrame>
   )
 }

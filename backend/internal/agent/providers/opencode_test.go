@@ -1,11 +1,13 @@
 package providers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -727,5 +729,49 @@ func TestBuildOpencodeArgs_NoAttachmentsNoFileFlag(t *testing.T) {
 	args := buildOpencodeArgs(agent.RunInput{Task: agent.Task{Title: "t"}, RepoPath: t.TempDir()})
 	if containsArg(args, "-f") {
 		t.Fatalf("did not expect a -f arg without attachments, args=%v", args)
+	}
+}
+
+// TestOpencodeConfigContent_PermissionOrder asserts the raw key order of
+// permission.bash: "*" first, allows, then denies last.
+func TestOpencodeConfigContent_PermissionOrder(t *testing.T) {
+	orderOf := func(allow, deny []string) [][2]string {
+		out, err := opencodeConfigContent("p", 50, nil, "", allow, deny)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg struct {
+			Permission struct {
+				Bash json.RawMessage `json:"bash"`
+			} `json:"permission"`
+		}
+		if err := json.Unmarshal([]byte(out), &cfg); err != nil {
+			t.Fatal(err)
+		}
+		dec := json.NewDecoder(bytes.NewReader(cfg.Permission.Bash))
+		if _, err := dec.Token(); err != nil {
+			t.Fatal(err)
+		}
+		var got [][2]string
+		for dec.More() {
+			k, _ := dec.Token()
+			v, _ := dec.Token()
+			got = append(got, [2]string{k.(string), v.(string)})
+		}
+		return got
+	}
+	// "rm tmp/*" sorts after "rm *" alphabetically, so the old map code
+	// would have put this allow last.
+	got := orderOf(
+		[]string{"rm tmp/*", "rm -rf ./tmp*", "git status", "", "both"},
+		[]string{"rm *", "rm*", "git push*", "both", "", "rm *"})
+	want := [][2]string{{"*", "deny"}, {"rm tmp/*", "allow"}, {"rm -rf ./tmp*", "allow"}, {"git status", "allow"},
+		{"rm *", "deny"}, {"rm*", "deny"}, {"git push*", "deny"}, {"both", "deny"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+	got = orderOf(nil, []string{"rm *"})
+	if !reflect.DeepEqual(got, [][2]string{{"rm *", "deny"}}) {
+		t.Errorf("denylist only: %v", got)
 	}
 }

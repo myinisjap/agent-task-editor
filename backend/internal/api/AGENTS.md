@@ -9,6 +9,8 @@ GET  /healthz               (no auth; static liveness stub)
 GET  /readyz                (no auth; DB ping + dispatcher heartbeat — what the compose healthcheck targets)
 GET  /ws                    (auth via single-use ?ticket=, see POST /ws-ticket below; the old ?token= fallback was removed and now 401s)
 GET  /metrics                (Prometheus scrape; gated by METRICS_TOKEN, else by the API tokens when API auth is configured unless METRICS_PUBLIC=true; outside /api/v1 and outside the main bearer group)
+POST /api/v1/intake/{endpoint_id}  IntakeEndpointsHandler.Receive (outside BearerAuth; HMAC X-ATE-Signature-256 is the auth, own 256 KB cap + per-endpoint rate limit; also POST /api/v1/github/webhook likewise)
+  /intake-endpoints[/{id}[/rotate-secret|/test]]  IntakeEndpointsHandler CRUD (inside /api/v1, bearer-gated)
 /api/v1/
   POST body limit: 1 MB (50 MB for POST /tasks, which handles image uploads via multipart)
   POST /ws-ticket             WSTicketHandler (mints single-use WS auth ticket; bearer-gated)
@@ -19,7 +21,9 @@ GET  /metrics                (Prometheus scrape; gated by METRICS_TOKEN, else by
   tasks/{id}/dependencies/*    DependenciesHandler (dispatch-gating peer task dependencies)
   tasks/{id}/subtasks          SubtasksHandler (create_subtask MCP tool)
   tasks/{id}/review-comments/* ReviewCommentsHandler (inline diff review comments)
+  tasks/{id}/review-brief      ReviewBriefHandler (deterministic risk flags + verification summary; internal/reviewbrief)
   templates/*                  TemplatesHandler
+  lessons/*, repos/{id}/lessons LessonsHandler
   uploads/{task_id}/{filename} UploadsHandler (serve attachment images)
   workflows/*                  WorkflowsHandler
   agents/*                     AgentsHandler

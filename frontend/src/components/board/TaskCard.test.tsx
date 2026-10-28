@@ -8,7 +8,7 @@
 // target for a CSS-only touch fix. True touch-usability verification (a
 // control is visibly tappable without a prior hover) belongs in a visual/E2E
 // layer (see task notes — Playwright E2E deferred).
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
@@ -364,7 +364,6 @@ describe('TaskCard action buttons keyboard reachability (#350)', () => {
 
   it('actually reaches and can activate the Delete button via sequential Tab presses once the card is focused', async () => {
     const onDelete = vi.fn()
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const user = userEvent.setup()
 
     render(
@@ -383,10 +382,8 @@ describe('TaskCard action buttons keyboard reachability (#350)', () => {
     expect(screen.getByTitle('Delete task')).toHaveFocus()
 
     await user.keyboard('{Enter}')
-    expect(confirmSpy).toHaveBeenCalled()
-    expect(onDelete).toHaveBeenCalledWith('task-1')
+    expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ id: 'task-1' }))
 
-    confirmSpy.mockRestore()
   })
 
   it('drops the action buttons back out of the tab order once focus moves off the card entirely', async () => {
@@ -453,5 +450,90 @@ describe('TaskCard escalation badge', () => {
     expect(screen.getByText('Budget reached')).toBeInTheDocument()
     expect(screen.getByTitle('Cost budget reached')).toBeInTheDocument()
     useNeedsMeStore.setState({ byTask: {} })
+  })
+})
+
+describe('TaskCard header layout and single needs-you badge', () => {
+  afterEach(() => {
+    useNeedsMeStore.setState({ byTask: {} })
+  })
+
+  const seed = (escalation_reason?: string) =>
+    useNeedsMeStore.setState({
+      byTask: {
+        'task-nm': {
+          task_id: 'task-nm', task_title: 't', repo_id: 'r', workflow_id: 'w', label: 'work',
+          reason: 'waiting_human', escalation_reason, since: '2026-01-01T00:00:00Z',
+        },
+      },
+    } as never)
+
+  it('shows exactly one "Needs you" badge when needsMe and waiting_human both apply', () => {
+    seed()
+    render(
+      <MemoryRouter>
+        <TaskCard task={baseTask({ id: 'task-nm', active_agent_run_id: 'r1', active_run_status: 'waiting_human' })} />
+      </MemoryRouter>,
+    )
+    expect(screen.getAllByText('Needs you')).toHaveLength(1)
+    expect(screen.queryByTitle('The agent is waiting for a human to respond')).not.toBeInTheDocument()
+  })
+
+  it('shows only the escalation badge when an escalation reason exists', () => {
+    seed('cost_budget')
+    render(
+      <MemoryRouter>
+        <TaskCard task={baseTask({ id: 'task-nm', active_agent_run_id: 'r1', active_run_status: 'waiting_human' })} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('Budget reached')).toBeInTheDocument()
+    expect(screen.queryByText('Needs you')).not.toBeInTheDocument()
+  })
+
+  it('renders the title in its own element, separate from the badge row', () => {
+    render(
+      <MemoryRouter>
+        <TaskCard
+          task={baseTask({
+            title: 'Fix flaky login test',
+            priority: 2,
+            paused: true,
+            block_reason: { code: 'cost_budget', message: 'budget exhausted' },
+          })}
+        />
+      </MemoryRouter>,
+    )
+    const title = screen.getByTestId('task-card-title')
+    const badges = screen.getByTestId('task-card-badges')
+    expect(title.textContent).toBe('Fix flaky login test')
+    expect(title.className).toContain('line-clamp-3')
+    expect(badges.contains(title)).toBe(false)
+    expect(title.parentElement?.contains(badges)).toBe(false)
+    expect(badges.textContent).toContain('Paused')
+  })
+})
+
+describe('TaskCard archive with Undo toast', () => {
+  it('archives immediately and Undo restores the previous state', async () => {
+    const { api } = await import('../../api/client')
+    const { useToastStore } = await import('../../stores/toast')
+    const t = baseTask()
+    const archived = { ...t, archived: true }
+    vi.mocked(api.tasks.setArchived).mockReset()
+    vi.mocked(api.tasks.setArchived).mockResolvedValueOnce(archived).mockResolvedValueOnce(t)
+    useTasksStore.setState({ tasks: [t], loading: false, error: null })
+    useToastStore.setState({ toast: null })
+
+    render(
+      <MemoryRouter>
+        <TaskCard task={t} />
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Archive task/ }))
+    await vi.waitFor(() => expect(useToastStore.getState().toast?.action?.label).toBe('Undo'))
+    expect(api.tasks.setArchived).toHaveBeenCalledWith('task-1', true)
+
+    useToastStore.getState().toast!.action!.onClick()
+    await vi.waitFor(() => expect(api.tasks.setArchived).toHaveBeenCalledWith('task-1', false))
   })
 })

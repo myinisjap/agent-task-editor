@@ -69,6 +69,18 @@ sql:
       - "internal/storage/migrations/065_model_pricing_cached_input.up.sql"
       - "internal/storage/migrations/066_model_pricing_claude_cache.up.sql"
       - "internal/storage/migrations/067_agent_provider_fallbacks.up.sql"
+      - "internal/storage/migrations/070_task_human_decisions.up.sql"
+      - "internal/storage/migrations/071_agent_run_session_cost.up.sql"
+      - "internal/storage/migrations/072_repo_lessons.up.sql"
+      - "internal/storage/migrations/073_agent_escalation_ladder.up.sql"
+      - "internal/storage/migrations/074_skills.up.sql"
+      - "internal/storage/migrations/075_agent_config_versions.up.sql"
+      - "internal/storage/migrations/076_intake_endpoints.up.sql"
+      - "internal/storage/migrations/077_subtask_fanout.up.sql"
+      - "internal/storage/migrations/078_repo_preview.up.sql"
+      - "internal/storage/migrations/079_agent_experiments.up.sql"
+      - "internal/storage/migrations/080_label_display_name.up.sql"
+      - "internal/storage/migrations/081_agent_logs_seq.up.sql"
     gen:
       go:
         package: "gen"

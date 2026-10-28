@@ -69,8 +69,11 @@ const dashboard: Dashboard = {
 }
 
 const outcomeQuality: OutcomeQuality = {
+  group_by: 'config',
   configs: [
     {
+      group_key: 'cfg-1\u0000',
+      low_sample: false,
       agent_config_id: 'cfg-1',
       agent_name: 'worker',
       provider: 'claude',
@@ -101,6 +104,13 @@ beforeEach(() => {
 })
 
 describe('AgentPerformancePage', () => {
+  it('puts column definitions in header title hints', async () => {
+    render(<AgentPerformancePage />)
+    await waitFor(() => expect(screen.getAllByText('worker').length).toBeGreaterThan(0))
+    expect(screen.getByText('Rework rate')).toHaveAttribute('title', expect.stringContaining('bounce-back'))
+    expect(screen.getByText('Retries')).toHaveAttribute('title', expect.stringContaining('retry counter'))
+  })
+
   it('renders outcome-quality metrics ahead of the legacy success-rate table', async () => {
     render(<AgentPerformancePage />)
 
@@ -124,12 +134,12 @@ describe('AgentPerformancePage', () => {
     render(<AgentPerformancePage />)
 
     await waitFor(() => expect(reposListMock).toHaveBeenCalled())
-    await waitFor(() => expect(outcomeQualityMock).toHaveBeenCalledWith(undefined))
+    await waitFor(() => expect(outcomeQualityMock).toHaveBeenCalledWith(undefined, 'config'))
 
     const select = await screen.findByDisplayValue('All repos')
     await user.selectOptions(select, 'repo-1')
 
-    await waitFor(() => expect(outcomeQualityMock).toHaveBeenCalledWith('repo-1'))
+    await waitFor(() => expect(outcomeQualityMock).toHaveBeenCalledWith('repo-1', 'config'))
   })
 
   it('greys out low-sample rates instead of hiding them', async () => {
@@ -149,5 +159,42 @@ describe('AgentPerformancePage', () => {
 
     await waitFor(() => expect(screen.getByText('100%')).toBeInTheDocument())
     expect(screen.getByText('(n=2)')).toBeInTheDocument()
+  })
+
+  it('shows finishing-rung stats for laddered configs', async () => {
+    outcomeQualityMock.mockResolvedValue({
+      configs: [
+        {
+          ...outcomeQuality.configs[0],
+          ladder_rungs: [
+            { rung: 0, tasks_done: 3, avg_cost_to_done_usd: 0.5 },
+            { rung: 1, tasks_done: 1, avg_cost_to_done_usd: 2 },
+          ],
+        },
+      ],
+    })
+    render(<AgentPerformancePage />)
+    await waitFor(() => expect(screen.getByText(/Finished by rung: r0 ×3 \(\$0.5000 avg\) · r1 ×1/)).toBeInTheDocument())
+  })
+})
+
+describe('AgentPerformancePage breakdown', () => {
+  it('passes group_by to the API and shows the group column, greying low-sample rows', async () => {
+    const user = userEvent.setup()
+    render(<AgentPerformancePage />)
+    await waitFor(() => expect(outcomeQualityMock).toHaveBeenCalledWith(undefined, 'config'))
+
+    outcomeQualityMock.mockResolvedValue({
+      group_by: 'version',
+      configs: [
+        { ...outcomeQuality.configs[0], group_key: 'cfg-1\u00003', group_value: 'v3', version: 3, low_sample: true, tasks_done: 2 },
+      ],
+    })
+    await user.selectOptions(screen.getByLabelText('Break down by'), 'version')
+    await waitFor(() => expect(outcomeQualityMock).toHaveBeenCalledWith(undefined, 'version'))
+    const cell = await screen.findByText('v3')
+    const row = cell.closest('tr')!
+    expect(row.className).toContain('opacity-50')
+    expect(row.getAttribute('title')).toContain('low sample')
   })
 })

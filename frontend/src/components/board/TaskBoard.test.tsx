@@ -8,7 +8,7 @@
 // src/test/setup.ts. getBoundingClientRect is stubbed per-element below so
 // dnd-kit's collision detection (rectIntersection) can resolve a drop target.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import TaskBoard from './TaskBoard'
 import type { Task, WorkflowLabel } from '../../api/client'
@@ -108,13 +108,22 @@ async function dragCardToColumn(cardTitle: string, targetLabel: string) {
   // 5px) for pointer-driven drags: it activates via the React
   // `onMouseDown` handler, then listens for native `mousemove`/`mouseup`
   // events on the document to track and end the drag.
+  // Yield between steps so dnd-kit's async state updates commit before the
+  // next event; without this the drop is flaky when the machine is loaded.
+  const tick = () => act(async () => { await new Promise((r) => setTimeout(r, 0)) })
   fireEvent.mouseDown(cardEl, { clientX: 20, clientY: 20, button: 0 })
   // MouseSensor requires 5px movement before a drag "activates".
   fireEvent.mouseMove(document, { clientX: 30, clientY: 20 })
+  await tick()
   // Move over the destination column so dnd-kit's collision detection picks
   // it as the active droppable.
   fireEvent.mouseMove(document, { clientX: 500, clientY: 100 })
+  await tick()
   fireEvent.mouseUp(document, { clientX: 500, clientY: 100 })
+  await tick()
+  // dnd-kit keeps a capture-phase document click-swallower for ~50ms after a
+  // drop; wait it out so it can't eat the next click (in this or a later test).
+  await act(async () => { await new Promise((r) => setTimeout(r, 80)) })
 }
 
 describe('TaskBoard drag-to-move', () => {
@@ -138,7 +147,7 @@ describe('TaskBoard drag-to-move', () => {
       </MemoryRouter>,
     )
 
-    await dragCardToColumn('Move me', 'doing')
+    await dragCardToColumn('Move me', 'Doing')
 
     await waitFor(() => {
       expect(moveLabelMock).toHaveBeenCalledWith('task-1', 'doing')
@@ -160,7 +169,7 @@ describe('TaskBoard drag-to-move', () => {
       </MemoryRouter>,
     )
 
-    await dragCardToColumn('Move me', 'doing')
+    await dragCardToColumn('Move me', 'Doing')
 
     await waitFor(() => {
       expect(moveLabelMock).toHaveBeenCalledWith('task-1', 'doing')
@@ -176,7 +185,6 @@ describe('TaskBoard drag-to-move', () => {
   it('confirms before moving a blocked task into an agent-triggerable column, and skips the move if declined', async () => {
     const blockedTask = task({ blocked_by_count: 2 })
     useTasksStore.setState({ tasks: [blockedTask], loading: false, error: null })
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
 
     const transitions = [
       { id: 't1', workflow_id: 'wf', from_label: 'doing', to_label: 'done', trigger_type: 'agent' as const },
@@ -193,14 +201,37 @@ describe('TaskBoard drag-to-move', () => {
       </MemoryRouter>,
     )
 
-    await dragCardToColumn('Move me', 'doing')
+    await dragCardToColumn('Move me', 'Doing')
 
-    await waitFor(() => {
-      expect(confirmSpy).toHaveBeenCalled()
-    })
+    expect(await screen.findByRole('dialog', { name: 'Move blocked task?' })).toBeInTheDocument()
     expect(moveLabelMock).not.toHaveBeenCalled()
 
-    confirmSpy.mockRestore()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(moveLabelMock).not.toHaveBeenCalled()
+  })
+
+  it('moves a blocked task once "Move anyway" is clicked', async () => {
+    const blockedTask = task({ blocked_by_count: 2 })
+    useTasksStore.setState({ tasks: [blockedTask], loading: false, error: null })
+
+    const transitions = [
+      { id: 't0', workflow_id: 'wf', from_label: 'todo', to_label: 'doing', trigger_type: 'human' as const },
+      { id: 't1', workflow_id: 'wf', from_label: 'doing', to_label: 'done', trigger_type: 'agent' as const },
+    ]
+
+    render(
+      <MemoryRouter>
+        <TaskBoard labels={labels} tasks={[blockedTask]} runningTaskIds={new Set()} transitions={transitions} />
+      </MemoryRouter>,
+    )
+
+    await dragCardToColumn('Move me', 'Doing')
+    fireEvent.click(await screen.findByRole('button', { name: 'Move anyway' }))
+
+    await waitFor(() => {
+      expect(moveLabelMock).toHaveBeenCalledWith('task-1', 'doing')
+    })
   })
 
   it('surfaces the server error when a move is rejected', async () => {
@@ -215,7 +246,7 @@ describe('TaskBoard drag-to-move', () => {
       </MemoryRouter>,
     )
 
-    await dragCardToColumn('Move me', 'doing')
+    await dragCardToColumn('Move me', 'Doing')
 
     expect(await screen.findByRole('alert')).toHaveTextContent('a run is currently active on this task')
   })
@@ -232,7 +263,7 @@ describe('TaskBoard drag-to-move', () => {
       </MemoryRouter>,
     )
 
-    await dragCardToColumn('Move me', 'done')
+    await dragCardToColumn('Move me', 'Done')
 
     expect(await screen.findByRole('alert')).toHaveTextContent(/no transition defined/i)
     expect(moveLabelMock).not.toHaveBeenCalled()
@@ -258,5 +289,80 @@ describe('TaskBoard running indicator (#249)', () => {
     )
 
     expect(screen.getByTitle('Agent running')).toBeInTheDocument()
+  })
+})
+
+describe('TaskBoard fit-to-screen layout', () => {
+  const labels = [label('todo', 0), label('doing', 1), label('review', 2), label('done', 3, { is_terminal: 1 })]
+  const modeOf = (name: string) => findColumnDropZone(name).closest('[data-column-mode]')?.getAttribute('data-column-mode')
+
+  beforeEach(() => {
+    moveLabelMock.mockReset()
+    localStorage.clear()
+  })
+
+  it('narrows empty non-starting columns and keeps populated ones full', () => {
+    render(
+      <MemoryRouter>
+        <TaskBoard labels={labels} tasks={[task({ label: 'review' })]} runningTaskIds={new Set()} workflowId="wf" />
+      </MemoryRouter>,
+    )
+    expect(modeOf('Todo')).toBe('full')
+    expect(modeOf('Doing')).toBe('narrow')
+    expect(modeOf('Review')).toBe('full')
+  })
+
+  it('collapses terminal columns, expands on click, and persists per workflow', () => {
+    const { unmount } = render(
+      <MemoryRouter>
+        <TaskBoard labels={labels} tasks={[task()]} runningTaskIds={new Set()} workflowId="wf" />
+      </MemoryRouter>,
+    )
+    expect(modeOf('Done')).toBe('collapsed')
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Done column' }))
+    expect(modeOf('Done')).toBe('full')
+    expect(JSON.parse(localStorage.getItem('board.expandedTerminals.wf') ?? '[]')).toEqual(['done'])
+    unmount()
+    render(
+      <MemoryRouter>
+        <TaskBoard labels={labels} tasks={[task()]} runningTaskIds={new Set()} workflowId="wf" />
+      </MemoryRouter>,
+    )
+    expect(modeOf('Done')).toBe('full')
+  })
+
+  it('groups into per-repo swimlanes in name order and drag still moves by label', async () => {
+    moveLabelMock.mockResolvedValue(task({ label: 'doing' }))
+    const tasks = [
+      task({ id: 'a', title: 'Alpha task', repo_id: 'r2' }),
+      task({ id: 'b', title: 'Beta task', repo_id: 'r1' }),
+    ]
+    useTasksStore.setState({ tasks, loading: false, error: null })
+    render(
+      <MemoryRouter>
+        <TaskBoard
+          labels={labels}
+          tasks={tasks}
+          runningTaskIds={new Set()}
+          workflowId="wf"
+          groupByRepo
+          repos={[{ id: 'r1', name: 'zebra' }, { id: 'r2', name: 'apple' }]}
+        />
+      </MemoryRouter>,
+    )
+    const lanes = screen.getAllByTestId('repo-lane')
+    expect(lanes).toHaveLength(2)
+    expect(lanes[0].textContent).toContain('apple')
+    expect(lanes[1].textContent).toContain('zebra')
+
+    const cardEl = findCardEl('Alpha task')
+    const dropZone = lanes[0].querySelectorAll('.flex.flex-col.shrink-0')[1].querySelector('.flex-1.flex.flex-col') as HTMLElement
+    stubRect(cardEl, { left: 10, top: 10, width: 200, height: 80 })
+    stubRect(dropZone, { left: 400, top: 0, width: 300, height: 600 })
+    fireEvent.mouseDown(cardEl, { clientX: 20, clientY: 20, button: 0 })
+    fireEvent.mouseMove(document, { clientX: 30, clientY: 20 })
+    fireEvent.mouseMove(document, { clientX: 500, clientY: 100 })
+    fireEvent.mouseUp(document, { clientX: 500, clientY: 100 })
+    await waitFor(() => expect(moveLabelMock).toHaveBeenCalledWith('a', 'doing'))
   })
 })

@@ -325,14 +325,14 @@ describe('TaskHeader block_reason banner (#353)', () => {
 
     expect(screen.getByText(/Not dispatching/)).toBeInTheDocument()
     expect(screen.getByText('task is paused')).toBeInTheDocument()
-    expect(screen.queryByText('⏸ Paused — agents will not pick up this task')).not.toBeInTheDocument()
+    expect(screen.queryByText('Paused — agents will not pick up this task')).not.toBeInTheDocument()
   })
 
   it('falls back to the plain Paused badge when there is no block_reason', () => {
     renderHeader(TaskHeader, baseTask({ paused: true }))
 
     expect(screen.queryByText(/Not dispatching/)).not.toBeInTheDocument()
-    expect(screen.getByText('⏸ Paused — agents will not pick up this task')).toBeInTheDocument()
+    expect(screen.getByText('Paused — agents will not pick up this task')).toBeInTheDocument()
   })
 
   it('renders a countdown for a transient reason with clears_at', () => {
@@ -353,7 +353,7 @@ describe('TaskHeader block_reason banner (#353)', () => {
       baseTask({ block_reason: { code: 'dependency', message: 'blocked on 1 unresolved dependency' } }),
     )
 
-    expect(screen.getByText(/See Dependencies below/)).toBeInTheDocument()
+    expect(screen.getByText(/See Dependencies under Details below/)).toBeInTheDocument()
   })
 })
 
@@ -369,7 +369,7 @@ describe('TaskHeader "Move to…" filtering', () => {
   it('lists only labels reachable via a defined transition', () => {
     renderHeader(TaskHeader, baseTask({ label: 'todo' }), { labels, transitions })
     const options = screen.getAllByRole('option').map((o) => o.textContent)
-    expect(options).toEqual(['Move to…', 'doing', 'review'])
+    expect(options).toEqual(['Move to…', 'Doing', 'Review'])
   })
 
   it('hides the control when there are no legal targets', () => {

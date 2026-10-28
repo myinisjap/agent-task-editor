@@ -372,3 +372,23 @@ func git(ctx context.Context, dir string, args ...string) ([]byte, error) {
 func runGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	return gitcmd.CombinedNoPrompt(ctx, dir, args...)
 }
+
+// changedFilesAgainstBase lists the files the task's branch changed relative to
+// its merge-base with baseRef (falls back to baseRef when there is no merge-base).
+func changedFilesAgainstBase(ctx context.Context, wtPath, baseRef, branch string) ([]string, error) {
+	from := baseRef
+	if mb, err := git(ctx, wtPath, "merge-base", baseRef, branch); err == nil {
+		from = strings.TrimSpace(string(mb))
+	}
+	out, err := git(ctx, wtPath, "diff", "--name-only", from, branch, "--")
+	if err != nil {
+		return nil, fmt.Errorf("git diff --name-only: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	var files []string
+	for _, l := range strings.Split(string(out), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			files = append(files, l)
+		}
+	}
+	return files, nil
+}

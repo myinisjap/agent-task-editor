@@ -67,12 +67,20 @@ describe('PipelineOverviewPage', () => {
   it('renders a node per label with staffing and markers', async () => {
     renderPage()
     await screen.findByTestId('pipeline-node-work')
-    expect(screen.getByTestId('pipeline-node-work')).toHaveTextContent('Coder · claude')
-    expect(screen.getByTestId('pipeline-node-review')).toHaveTextContent('No agent assigned')
-    expect(screen.getByTestId('pipeline-node-review')).toHaveTextContent('verify: disabled')
+    expect(screen.getByTestId('pipeline-node-work')).toHaveTextContent('Coder')
+    expect(screen.getByTestId('pipeline-node-work')).toHaveTextContent('claude')
+    expect(screen.getByTestId('pipeline-node-review')).toHaveTextContent('No agent')
+    expect(screen.getByTestId('pipeline-node-review')).toHaveTextContent('Verify: disabled')
     expect(screen.getByTestId('pipeline-node-approve')).toHaveTextContent('Human gate')
-    expect(screen.getByTestId('pipeline-node-done')).toHaveTextContent('opens PR')
-    expect(screen.getByTestId('pipeline-node-done')).toHaveTextContent('terminal')
+    expect(screen.getByTestId('pipeline-node-done')).toHaveTextContent('Opens PR')
+    expect(screen.getByTestId('pipeline-node-done')).toHaveTextContent('Terminal')
+  })
+
+  it('Assign button on an unstaffed node opens the assign panel', async () => {
+    renderPage()
+    const node = await screen.findByTestId('pipeline-node-review')
+    fireEvent.click(within(node).getByText('Assign'))
+    expect(screen.getByRole('complementary', { name: /assign agents to review/i })).toBeInTheDocument()
   })
 
   it('assigning an agent from the panel updates its labels', async () => {
@@ -167,6 +175,7 @@ describe('PipelineOverviewPage', () => {
       await addLabelNamed(user, 'qa')
       await screen.findByTestId('pipeline-node-qa')
       await user.click(screen.getByRole('button', { name: 'Discard' }))
+      await user.click(await screen.findByRole('button', { name: 'Discard changes' }))
       expect(screen.queryByTestId('pipeline-node-qa')).not.toBeInTheDocument()
       expect(updateYaml).not.toHaveBeenCalled()
       expect(screen.getByRole('button', { name: 'Edit workflow' })).toBeInTheDocument()

@@ -191,3 +191,12 @@ doesn't provide. If you build the image yourself, expect a larger image
 than before (Debian's base is bigger than Alpine's) and rebuild any
 downstream derivative images that assumed an Alpine base (e.g. anything
 using `apk` in a multi-stage build on top of this image).
+
+## Preview screenshots
+
+The review brief can show screenshots of changed UI routes (see [workflows.md](workflows.md#preview-screenshots)). Capturing needs headless Chromium, driven by `backend/preview/capture.mjs` through `playwright-core`.
+
+- **Docker image.** Installed by default at `/opt/preview-capture` (browsers in `/opt/ms-playwright`, `PLAYWRIGHT_BROWSERS_PATH`). This adds roughly 300-400 MB; build with `INSTALL_PREVIEW_BROWSER=false docker compose build` to opt out. Without it a configured repo reports "preview failed: preview browser not installed". `PLAYWRIGHT_VERSION` should track `@playwright/test` in `frontend/package.json`.
+- **Outside Docker.** `npm i playwright-core && npx playwright-core install chromium`, copy or point to the script, and set `PREVIEW_CAPTURE_SCRIPT` (default `/opt/preview-capture/capture.mjs`) to its path. `playwright-core` must be resolvable from the script's directory.
+- **The preview command** runs as the agent user in the task's worktree with a free `$PORT` and the same allow-listed environment as agent CLIs (no server secrets). Bind to `127.0.0.1` (Vite does by default). Chromium launches with `--no-sandbox` because containers usually lack the needed user namespaces; it only visits `http://127.0.0.1:$PORT`.
+- Cleanup kills the command's process group. A command that daemonizes (`setsid`, `docker compose up -d`) is not cleaned up.

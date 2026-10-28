@@ -94,3 +94,35 @@ describe('AgentLogEntry — merged tool rows', () => {
     expect(screen.getByRole('button')).toBeDisabled()
   })
 })
+
+describe('AgentLogEntry system events', () => {
+  it('styles by severity', () => {
+    const l = logs(
+      ['system', 'Run failed: claude exited with an error (it had reported "success")'],
+      ['system', 'Human reply: ok'],
+    )
+    // logs() JSON-encodes content; undo for plain-text system lines
+    l.forEach((e) => { e.content = JSON.parse(e.content) })
+    const rows = groupLogRows(l, false, false)
+    render(<>{rows.map((r) => <AgentLogEntry key={r.key} row={r} />)}</>)
+    const [err, info] = screen.getAllByTestId('system-event')
+    expect(err.dataset.severity).toBe('error')
+    expect(err.innerHTML).toContain('text-danger')
+    expect(info.dataset.severity).toBe('info')
+    expect(info.innerHTML).not.toContain('text-danger')
+  })
+})
+
+describe('AgentLogEntry — long output', () => {
+  it('truncates long output behind Show more / Show less', async () => {
+    const long = Array.from({ length: 50 }, (_, i) => `line ${i}`).join('\n')
+    renderRows(callAndResult('cat big.txt', long, true))
+    // errors auto-expand
+    expect(screen.getByText(/line 0/)).toBeInTheDocument()
+    expect(screen.queryByText(/line 49/)).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: /Show more \(30 more lines\)/ }))
+    expect(screen.getByText(/line 49/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Show less' }))
+    expect(screen.queryByText(/line 49/)).toBeNull()
+  })
+})

@@ -7,7 +7,7 @@ import (
 
 // TestAgentLogsQueriesUseCompositeIndex verifies migration 068 dropped the
 // redundant idx_agent_logs_run and the per-run log queries still use
-// idx_agent_logs_run_timestamp.
+// idx_agent_logs_run_ts_seq (superseded by migration 080).
 func TestAgentLogsQueriesUseCompositeIndex(t *testing.T) {
 	db, err := Open(t.TempDir() + "/m68.db")
 	if err != nil {
@@ -43,7 +43,7 @@ func TestAgentLogsQueriesUseCompositeIndex(t *testing.T) {
 			plan = append(plan, detail)
 		}
 		_ = rows.Close()
-		if !strings.Contains(strings.Join(plan, "|"), "idx_agent_logs_run_timestamp") {
+		if !strings.Contains(strings.Join(plan, "|"), "idx_agent_logs_run_ts_seq") {
 			t.Errorf("query %q plan %v does not use composite index", q, plan)
 		}
 	}

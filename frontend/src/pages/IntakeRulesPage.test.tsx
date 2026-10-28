@@ -27,6 +27,7 @@ vi.mock('../api/client', async () => {
         delete: (...args: unknown[]) => deleteMock(...args),
         preview: (...args: unknown[]) => previewMock(...args),
       },
+      intakeEndpoints: { ...actual.api.intakeEndpoints, list: () => Promise.resolve([]) },
       repos: { ...actual.api.repos, list: (...args: unknown[]) => reposListMock(...args) },
       templates: { ...actual.api.templates, list: (...args: unknown[]) => templatesListMock(...args) },
       workflows: { ...actual.api.workflows, list: (...args: unknown[]) => workflowsListMock(...args) },
@@ -190,11 +191,12 @@ describe('IntakeRulesPage', () => {
 
   it('deletes a rule', async () => {
     deleteMock.mockResolvedValue(undefined)
-    window.confirm = vi.fn().mockReturnValue(true)
     render(<IntakeRulesPage />)
     await screen.findByText('Bug triage')
 
     await userEvent.click(screen.getByText('Delete'))
+    expect(deleteMock).not.toHaveBeenCalled()
+    await userEvent.click(await screen.findByRole('button', { name: 'Delete rule' }))
     await waitFor(() => expect(deleteMock).toHaveBeenCalledWith('rule-1'))
   })
 })

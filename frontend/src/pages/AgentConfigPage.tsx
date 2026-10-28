@@ -1,13 +1,16 @@
-import { useEffect, useState } from 'react'
-import { api, type AgentConfig } from '../api/client'
+import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { api, type AgentConfig, type Skill } from '../api/client'
 import { useAgentsStore } from '../stores/agents'
 import { useWorkflowStore } from '../stores/workflow'
 import { useProviderConfigsStore } from '../stores/providerConfigs'
 import { EMPTY, TEMPLATES } from '../lib/agentTemplates'
 import AgentSidebar from '../components/agents/AgentSidebar'
 import AgentConfigForm, { type FormState } from '../components/agents/AgentConfigForm'
+import ConfirmDialog from '../components/shared/ConfirmDialog'
+import { errMessage } from '../lib/errMessage'
 import HelpModal from '../components/shared/HelpModal'
-import HelpButton from '../components/shared/HelpButton'
+import { Button, PageFrame } from '../components/ui'
 import { AgentsHelp } from '../components/shared/pageHelp'
 
 export default function AgentConfigPage() {
@@ -27,12 +30,26 @@ export default function AgentConfigPage() {
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [templateError, setTemplateError] = useState('')
+  const [bulkError, setBulkError] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [creatingTemplate, setCreatingTemplate] = useState(false)
   const [multiMode, setMultiMode] = useState(false)
   const [multiSelected, setMultiSelected] = useState<Set<string>>(new Set())
   const [bulkSaving, setBulkSaving] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  const [note, setNote] = useState('')
+  const [historyReloadKey, setHistoryReloadKey] = useState(0)
+  const [skillIds, setSkillIds] = useState<string[]>([])
+  const [allSkills, setAllSkills] = useState<Skill[]>([])
+  const selectedIdRef = useRef<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  // True once the user explicitly chose "New" (or deleted the last agent), so
+  // store refreshes don't auto-select an agent over the empty form.
+  const [creatingNew, setCreatingNew] = useState(false)
 
   const availableLabels = workflows[0]?.labels.map((l) => l.name) ?? []
 
@@ -40,7 +57,13 @@ export default function AgentConfigPage() {
     fetchAgents()
     fetchWorkflows()
     fetchProviderConfigs()
+    api.skills.list().then((l) => setAllSkills(l ?? [])).catch(() => setAllSkills([]))
   }, [fetchAgents, fetchWorkflows, fetchProviderConfigs])
+
+  useEffect(() => {
+    if (selected || creatingNew || agents.length === 0) return
+    selectAgent(agents.find((a) => a.id === searchParams.get('agent')) ?? agents[0])
+  }, [agents, selected, creatingNew]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const provider = providerConfigs.find((pc) => pc.id === form.provider_config_id)?.provider
@@ -49,11 +72,25 @@ export default function AgentConfigPage() {
   }, [form.provider_config_id, providerConfigs]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function selectAgent(a: AgentConfig) {
+    setError('')
+    setNotice('')
+    setNote('')
+    setCreatingNew(false)
+    setSearchParams({ agent: a.id }, { replace: true })
+    selectedIdRef.current = a.id
+    setSkillIds([])
+    api.agents
+      .skills(a.id)
+      .then((l) => {
+        if (selectedIdRef.current === a.id) setSkillIds((l ?? []).map((s) => s.id))
+      })
+      .catch(() => {})
     setSelected(a)
     setForm({
       name: a.name,
       provider_config_id: a.provider_config_id,
       fallback_provider_config_ids: a.fallback_provider_config_ids ?? [],
+      escalation_ladder: a.escalation_ladder ?? [],
       system_prompt: a.system_prompt,
       labels: a.labels,
       max_tokens: a.max_tokens,
@@ -75,7 +112,18 @@ export default function AgentConfigPage() {
     })
   }
 
+  function handleRestored(config: AgentConfig) {
+    selectAgent(config)
+    fetchAgents()
+  }
+
   function newAgent() {
+    setError('')
+    setNotice('')
+    setCreatingNew(true)
+    setSearchParams({}, { replace: true })
+    selectedIdRef.current = null
+    setSkillIds([])
     setSelected(null)
     // Preserve whatever provider config was already chosen (if any) so
     // switching templates doesn't force re-picking it every time.
@@ -85,41 +133,65 @@ export default function AgentConfigPage() {
   async function applyTemplate(t: typeof TEMPLATES[0]) {
     setCreatingTemplate(true)
     setShowTemplates(false)
+    setTemplateError('')
     try {
       const providerConfigId = form.provider_config_id || providerConfigs[0]?.id || ''
       if (!providerConfigId) {
-        alert('Create a provider config first (Providers page) before applying a template.')
+        setTemplateError('Create a provider config first (Providers page) before applying a template.')
         return
       }
       const { config, labelConflict } = await createAgent({ ...t, provider_config_id: providerConfigId, fallback_provider_config_ids: [] })
       selectAgent(config)
       if (labelConflict) {
-        alert(`Agent created but started disabled — label conflict with active config "${labelConflict}".`)
+        setNotice(`Agent created but started disabled — label conflict with active config "${labelConflict}".`)
       }
-    } catch (e: any) {
-      alert(e.message)
+    } catch (e: unknown) {
+      setTemplateError(errMessage(e))
     } finally {
       setCreatingTemplate(false)
     }
   }
 
+  // Skill attachment is a separate PUT after the agent itself is saved.
+  async function saveSkills(id: string) {
+    try {
+      await api.agents.setSkills(id, skillIds)
+      return ''
+    } catch (e: unknown) {
+      return `Agent saved, but attaching skills failed: ${errMessage(e)}`
+    }
+  }
+
   async function handleSave() {
     setSaving(true)
+    setError('')
+    setNotice('')
+    let savedConfig: AgentConfig | null = null
+    let nextNotice = ''
+    let skillsError = ''
     try {
       if (selected) {
-        const { labelConflict } = await updateAgent(selected.id, { ...form, enabled: !!selected.enabled })
+        const { config: updated, labelConflict } = await updateAgent(selected.id, { ...form, enabled: !!selected.enabled, note: note.trim() || undefined })
+        skillsError = await saveSkills(selected.id)
+        savedConfig = updated
         if (labelConflict) {
-          alert(`Saved, but this label is also handled by active config "${labelConflict}" — failover will run them in priority order.`)
+          nextNotice = `Saved, but this label is also handled by active config "${labelConflict}" — failover will run them in priority order.`
         }
       } else {
-        const { labelConflict } = await createAgent(form)
+        const { config, labelConflict } = await createAgent(form)
+        skillsError = await saveSkills(config.id)
+        savedConfig = config
         if (labelConflict) {
-          alert(`Agent created but started disabled — label conflict with active config "${labelConflict}".`)
+          nextNotice = `Agent created but started disabled — label conflict with active config "${labelConflict}".`
         }
       }
-      newAgent()
-    } catch (e: any) {
-      alert(e.message)
+      setNote('')
+      setHistoryReloadKey((k) => k + 1)
+      if (savedConfig) selectAgent(savedConfig)
+      setNotice(nextNotice)
+      setError(skillsError)
+    } catch (e: unknown) {
+      setError(errMessage(e))
     } finally {
       setSaving(false)
     }
@@ -128,11 +200,12 @@ export default function AgentConfigPage() {
   async function handleToggleEnabled() {
     if (!selected) return
     setSaving(true)
+    setError('')
     try {
       const { config } = await updateAgent(selected.id, { ...form, enabled: !selected.enabled })
       selectAgent(config)
-    } catch (e: any) {
-      alert(e.message)
+    } catch (e: unknown) {
+      setError(errMessage(e))
     } finally {
       setSaving(false)
     }
@@ -141,6 +214,7 @@ export default function AgentConfigPage() {
   async function handleBulkToggle(enable: boolean) {
     if (multiSelected.size === 0) return
     setBulkSaving(true)
+    setBulkError('')
     try {
       const toUpdate = agents.filter((a) => multiSelected.has(a.id))
       await Promise.all(
@@ -170,46 +244,44 @@ export default function AgentConfigPage() {
       )
       await fetchAgents()
       setMultiSelected(new Set())
-    } catch (e: any) {
-      alert(e.message)
+    } catch (e: unknown) {
+      setBulkError(errMessage(e))
     } finally {
       setBulkSaving(false)
     }
   }
 
-  async function handleDelete() {
+  function handleDelete() {
     if (!selected) return
-    if (!confirm(`Delete agent "${selected.name}"?`)) return
+    setConfirmDelete(true)
+  }
+
+  async function performDelete() {
+    if (!selected) return
     setDeleting(true)
     try {
+      const remaining = agents.filter((a) => a.id !== selected.id)
       await deleteAgent(selected.id)
-      newAgent()
-    } catch (e: any) {
-      alert(e.message)
+      setConfirmDelete(false)
+      if (remaining.length > 0) selectAgent(remaining[0])
+      else newAgent()
     } finally {
       setDeleting(false)
     }
   }
 
   return (
-    <div className="flex flex-col h-full overflow-hidden" data-testid="agents-page">
-      {/* Mobile-only header bar: shows selected agent + button to open the configs drawer */}
-      <div className="md:hidden flex items-center justify-between px-4 py-2 border-b border-slate-800 bg-slate-950">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-sm text-slate-300 truncate">
-            {selected ? selected.name : 'New agent'}
-          </span>
-          <HelpButton onClick={() => setShowHelp(true)} title="About agent configs" />
-        </div>
-        <button
-          onClick={() => setSidebarOpen(true)}
-          className="text-xs px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-slate-300"
-        >
+    <PageFrame
+      title="Agents"
+      testId="agents-page"
+      help={{ onClick: () => setShowHelp(true), title: 'About agent configs' }}
+      actions={
+        <Button size="sm" className="md:hidden" onClick={() => setSidebarOpen(true)}>
           Configs
-        </button>
-      </div>
-
-      <div className="flex-1 flex overflow-hidden">
+        </Button>
+      }
+    >
+      <div className="flex items-start gap-6">
         <AgentSidebar
           agents={agents}
           selected={selected}
@@ -225,6 +297,8 @@ export default function AgentConfigPage() {
           setShowTemplates={setShowTemplates}
           creatingTemplate={creatingTemplate}
           onApplyTemplate={applyTemplate}
+          templateError={templateError}
+          bulkError={bulkError}
           isOpen={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
         />
@@ -240,18 +314,39 @@ export default function AgentConfigPage() {
           deleting={deleting}
           onSave={handleSave}
           onDelete={handleDelete}
+          error={error}
+          notice={notice}
           onToggleEnabled={handleToggleEnabled}
-          helpButton={
-            <HelpButton onClick={() => setShowHelp(true)} title="About agent configs" />
-          }
+          note={note}
+          setNote={setNote}
+          onRestored={handleRestored}
+          historyReloadKey={historyReloadKey}
+          skills={allSkills}
+          skillIds={skillIds}
+          onSkillIdsChange={setSkillIds}
         />
       </div>
+
+      {confirmDelete && selected && (
+        <ConfirmDialog
+          destructive
+          title={`Delete agent "${selected.name}"?`}
+          confirmLabel="Delete agent"
+          onCancel={() => setConfirmDelete(false)}
+          onConfirm={performDelete}
+        >
+          <p>
+            The agent, its saved version history and experiments are permanently deleted. Labels it handles will have no
+            agent unless another enabled config covers them, and past runs keep their logs but lose the link to this agent.
+          </p>
+        </ConfirmDialog>
+      )}
 
       {showHelp && (
         <HelpModal title="About Agent Configs" onClose={() => setShowHelp(false)}>
           <AgentsHelp />
         </HelpModal>
       )}
-    </div>
+    </PageFrame>
   )
 }

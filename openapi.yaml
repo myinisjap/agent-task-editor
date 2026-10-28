@@ -44,6 +44,137 @@ components:
           type: string
           format: date-time
           description: When the task started needing a human; the list is sorted by this ascending.
+        risk_flags:
+          type: array
+          items: { $ref: "#/components/schemas/RiskFlagCode" }
+          description: >-
+            Review-brief flag codes; present only for human_gate items whose
+            branch diff could be computed and raised at least one flag.
+        summary:
+          type: string
+          description: One-line agent summary from the review brief. human_gate items only, when the brief could be built and an agent summary exists.
+        changed:
+          type: object
+          required: [files, additions, deletions]
+          description: Diff size. human_gate items only, when the branch diff could be computed.
+          properties:
+            files: { type: integer }
+            additions: { type: integer }
+            deletions: { type: integer }
+        cost_usd:
+          type: number
+          format: double
+          description: Cost so far across the task's runs. human_gate items only, when the review brief could be built.
+        cost_unknown:
+          type: boolean
+          description: True when some run had unknown cost. human_gate items only, when the review brief could be built.
+        verification:
+          type: string
+          enum: [pass, fail, timeout, error, not_run]
+          description: Latest verify result. human_gate items only, when the review brief could be built.
+        preview_count:
+          type: integer
+          description: Images in the latest preview capture. human_gate items only, when the review brief could be built; omitted when 0.
+    RiskFlagCode:
+      type: string
+      enum: [migration, auth_or_security, dependencies, tests_removed, ci_config, large_change, outside_plan_scope]
+      description: >-
+        Deterministic, advisory risk flag computed from the task's branch diff.
+        migration - a migrations/ path, a .sql file named like schema, or DDL
+        (CREATE/ALTER/DROP TABLE|INDEX|VIEW|TRIGGER) in a .sql file.
+        auth_or_security - path contains auth, oauth, token, secret, middleware,
+        crypto, password, credential, jwt, csrf, cors, permission, security or
+        session, or a .env* file. dependencies - manifests/lockfiles
+        (go.mod, package.json, requirements*.txt, Cargo.*, ...) or a Dockerfile
+        FROM change. tests_removed - a test file deleted, net test functions
+        removed, or skip/only markers added. ci_config - .github/workflows,
+        .gitea/workflows or .gitlab-ci.yml. large_change - more than 800
+        changed lines (lockfiles/generated excluded) or more than 25 files.
+        outside_plan_scope - the plan in agent_notes lists files and the diff
+        touches others (skipped when the plan has no file list).
+    RiskFlag:
+      type: object
+      required: [code, reason, files]
+      properties:
+        code: { $ref: "#/components/schemas/RiskFlagCode" }
+        reason: { type: string, description: Human-readable explanation of why the flag fired. }
+        files:
+          type: array
+          items: { type: string }
+          description: Offending files (at most 10); empty for large_change.
+    ReviewBrief:
+      type: object
+      description: >-
+        Deterministic summary shown above the diff when a task is waiting on a
+        human. No LLM is involved; flags are advisory and never approve anything.
+      required: [human_gate, changed, risk_flags, verification, runs, agent_summary, diff_available, truncated, computed_at]
+      properties:
+        human_gate:
+          type: boolean
+          description: Whether the task's label is currently a human gate.
+        changed:
+          type: object
+          required: [files, additions, deletions, top_files]
+          properties:
+            files: { type: integer }
+            additions: { type: integer }
+            deletions: { type: integer }
+            top_files:
+              type: array
+              description: Up to 10 files with the most churn.
+              items:
+                type: object
+                required: [path, status, additions, deletions]
+                properties:
+                  path: { type: string }
+                  status: { type: string, enum: [added, modified, deleted, renamed] }
+                  additions: { type: integer }
+                  deletions: { type: integer }
+        risk_flags:
+          type: array
+          items: { $ref: "#/components/schemas/RiskFlag" }
+        verification:
+          nullable: true
+          description: Latest verify-command result; null when none ran.
+          type: object
+          required: [status, command, exit_code, duration_ms, output_tail, truncated, created_at]
+          properties:
+            status: { type: string }
+            command: { type: string }
+            exit_code: { type: integer, nullable: true }
+            duration_ms: { type: integer }
+            output_tail: { type: string, description: Last ~20 lines (at most 2000 chars) of output. }
+            truncated: { type: boolean }
+            created_at: { type: string, format: date-time }
+        runs:
+          type: object
+          required: [total, failed, rework_loops, cost_usd, cost_unknown]
+          properties:
+            total: { type: integer }
+            failed: { type: integer }
+            rework_loops: { type: integer, description: Transitions into a label the task already visited. }
+            cost_usd: { type: number }
+            cost_unknown: { type: boolean, description: True when some run's cost could not be priced. }
+        agent_summary:
+          nullable: true
+          description: >-
+            Latest store_info from a run (first 1500 chars), else the tail of
+            agent_notes; null when both are empty.
+          type: object
+          required: [source, run_id, agent_name, text, truncated]
+          properties:
+            source: { type: string, enum: [stored_info, agent_notes] }
+            run_id: { type: string }
+            agent_name: { type: string }
+            text: { type: string }
+            truncated: { type: boolean }
+        diff_available:
+          type: boolean
+          description: False when the task has no branch or it cannot be resolved.
+        truncated:
+          type: boolean
+          description: The diff exceeded the size limit; numbers are best effort.
+        computed_at: { type: string, format: date-time }
     ProviderConfig:
       type: object
       description: >
@@ -180,7 +311,8 @@ components:
           description: >
             Where the task was imported from ("github" for the GitHub Issues
             importer, "gitea" for the Gitea Issues importer against a
-            self-hosted instance). Empty for manually created tasks.
+            self-hosted instance, "webhook" for an intake webhook endpoint).
+            Empty for manually created tasks.
         source_ref:
           type: string
           description: >
@@ -224,7 +356,9 @@ components:
             Derived (read-time) count of this task's dependency blockers whose
             edges are still unsatisfied. A task with any unsatisfied blocker is
             never picked up by the dispatcher. A blocker is satisfied once it
-            reaches a terminal label or is archived. Zero when the task has no
+            reaches a terminal label or is archived; a blocker that is a subtask must also
+            have finished merging back into its parent (merge_status merged or
+            merge_conflict). Zero when the task has no
             unsatisfied blockers.
         blocking_count:
           type: integer
@@ -257,6 +391,19 @@ components:
         subtask_conflicts:
           type: integer
           description: "Derived: children whose merge-back is in conflict."
+        file_scope:
+          type: array
+          items: { type: string }
+          description: >
+            A subtask's declared file globs (repo-relative); empty when unscoped.
+            Used for the sibling overlap guard and a post-run out-of-scope warning.
+        integration_status:
+          type: string
+          enum: ["", pending, done]
+          description: >
+            A parent's integration state: pending once every subtask finished and
+            merged back (the parent's agent then runs an integration pass), done
+            after that run succeeds. Empty otherwise.
         max_cost_usd:
           type: number
           format: double
@@ -458,7 +605,7 @@ components:
           type: boolean
           description: >
             For a blocker: whether the edge is satisfied (the blocker is terminal
-            or archived). Not meaningful for dependents (always false there).
+            or archived; a subtask blocker must also be merged/merge_conflict). Not meaningful for dependents (always false there).
       required: [task_id, title, label, archived, satisfied]
 
     TaskDependencies:
@@ -477,6 +624,33 @@ components:
         blocking_count:   { type: integer, description: "Count of dependents" }
       required: [blocked_by, blocking, blocked_by_count, blocking_count]
 
+    Skill:
+      type: object
+      description: >
+        An Agent Skills folder (SKILL.md with name + description frontmatter,
+        plus optional files) in the provider-neutral skills library. Trusted
+        admin config: only the normal API token can read or write it, never an
+        MCP sidecar scoped token. Enabled skills attached to an agent config
+        or its repo are copied into the run's worktree.
+      properties:
+        id:          { type: string }
+        name:        { type: string, description: "Unique slug from the SKILL.md frontmatter" }
+        description: { type: string, description: "From the SKILL.md frontmatter" }
+        enabled:     { type: boolean }
+        created_at:  { type: string, format: date-time }
+        updated_at:  { type: string, format: date-time }
+        skill_md:    { type: string, description: "SKILL.md contents (GET /skills/{id} only)" }
+        files:       { type: array, items: { type: string }, description: "Relative file paths (GET /skills/{id} only)" }
+        agent_config_ids: { type: array, items: { type: string }, description: "Attached agent config ids (GET /skills list only)" }
+        repo_ids:    { type: array, items: { type: string }, description: "Attached repo ids (GET /skills list only)" }
+      required: [id, name, description, enabled, created_at, updated_at]
+
+    SkillIDs:
+      type: object
+      properties:
+        skill_ids: { type: array, items: { type: string } }
+      required: [skill_ids]
+
     TaskTemplate:
       type: object
       description: >
@@ -492,6 +666,57 @@ components:
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
       required: [id, name, title, description, type, created_at, updated_at]
+
+    RepoLesson:
+      type: object
+      description: >
+        Short curated lesson injected into agent prompts (REPO LESSONS section).
+        repo_id null means the lesson applies to every repo. Only status=active
+        lessons are injected, filtered by stages (empty = all agents) and
+        path_globs (empty = always; otherwise matched against the files the
+        task branch changed vs base).
+      properties:
+        id:              { type: string }
+        repo_id:         { type: string, nullable: true }
+        kind:            { type: string, enum: [convention, trap, command, decision, preference] }
+        body:            { type: string, maxLength: 300 }
+        path_globs:      { type: array, items: { type: string } }
+        stages:          { type: array, items: { type: string } }
+        citations:       { type: array, items: {}, description: "Reserved for citation checks in a later phase." }
+        source:          { type: string, enum: [human, agent, distiller] }
+        source_task_id:  { type: string, nullable: true }
+        status:          { type: string, enum: [proposed, active, stale, retired] }
+        injected_count:  { type: integer }
+        created_at:      { type: string, format: date-time }
+        updated_at:      { type: string, format: date-time }
+        last_checked_at: { type: string, format: date-time, nullable: true }
+      required: [id, repo_id, kind, body, path_globs, stages, citations, source, source_task_id, status, injected_count, created_at, updated_at, last_checked_at]
+
+    RepoLessonCreate:
+      type: object
+      required: [kind, body]
+      properties:
+        kind:           { type: string, enum: [convention, trap, command, decision, preference] }
+        body:           { type: string, maxLength: 300 }
+        path_globs:     { type: array, items: { type: string } }
+        stages:         { type: array, items: { type: string } }
+        citations:      { type: array, items: {} }
+        status:         { type: string, enum: [proposed, active, stale, retired], default: active }
+        source:         { type: string, enum: [human, agent, distiller], default: human }
+        source_task_id: { type: string }
+
+    RepoLessonUpdate:
+      type: object
+      description: Partial update; omitted fields are kept. repo_id cannot change.
+      properties:
+        kind:           { type: string, enum: [convention, trap, command, decision, preference] }
+        body:           { type: string, maxLength: 300 }
+        path_globs:     { type: array, items: { type: string } }
+        stages:         { type: array, items: { type: string } }
+        citations:      { type: array, items: {} }
+        status:         { type: string, enum: [proposed, active, stale, retired] }
+        source:         { type: string, enum: [human, agent, distiller] }
+        source_task_id: { type: string }
 
     TaskSchedule:
       type: object
@@ -538,7 +763,7 @@ components:
         name:                { type: string }
         enabled:             { type: boolean }
         sort_order:          { type: integer, description: "Lower sorts first; first-match-wins evaluation order among enabled rules." }
-        match_source:        { type: string, enum: ['', manual, issue, schedule, subtask], description: "Empty = any. Only 'issue' and 'schedule' are currently evaluated by any code path." }
+        match_source:        { type: string, enum: ['', manual, issue, schedule, webhook, subtask], description: "Empty = any. Only 'issue', 'schedule' and 'webhook' are currently evaluated by any code path." }
         match_repo_id:       { type: string, nullable: true, description: "Null = any repo." }
         match_labels:        { type: array, items: { type: string }, description: "ANY-of, case-insensitive. Empty = any." }
         match_title_pattern: { type: string, description: "Go regexp (unanchored substring search unless anchored). Empty = any." }
@@ -553,6 +778,73 @@ components:
         created_at:          { type: string, format: date-time }
         updated_at:          { type: string, format: date-time }
       required: [id, name, enabled, sort_order, match_source, match_labels, match_title_pattern, match_body_pattern, match_author_assoc, apply_target_label, stop_processing, created_at, updated_at]
+
+    IntakeEndpoint:
+      type: object
+      description: >
+        A signed inbound webhook endpoint that creates tasks (see
+        docs/task-sources.md). The HMAC secret is never included here; it is
+        returned only by create and rotate-secret.
+      properties:
+        id:                   { type: string }
+        name:                 { type: string }
+        repo_id:              { type: string }
+        workflow_id:          { type: string, nullable: true, description: "Null = the repo's workflow." }
+        target_label:         { type: string, description: "Empty = the workflow's human-gate label. A non-gate label starts tasks without human review." }
+        enabled:              { type: boolean }
+        title_template:       { type: string }
+        description_template: { type: string, description: "Empty = the payload pretty-printed as JSON." }
+        dedupe_key_template:  { type: string, description: "Empty = never dedupe." }
+        last_received_at:     { type: string, format: date-time, nullable: true }
+        created_at:           { type: string, format: date-time }
+        updated_at:           { type: string, format: date-time }
+        secret_set:           { type: boolean }
+        url_path:             { type: string, example: "/api/v1/intake/<id>" }
+      required: [id, name, repo_id, workflow_id, target_label, enabled, title_template, description_template, dedupe_key_template, last_received_at, created_at, updated_at, secret_set, url_path]
+
+    IntakeEndpointCreated:
+      allOf:
+        - $ref: "#/components/schemas/IntakeEndpoint"
+        - type: object
+          properties:
+            secret: { type: string, description: "HMAC secret. Shown only once." }
+          required: [secret]
+
+    IntakeEndpointBody:
+      type: object
+      properties:
+        name:                 { type: string }
+        repo_id:              { type: string }
+        workflow_id:          { type: string, nullable: true }
+        target_label:         { type: string }
+        enabled:              { type: boolean, description: "Default true." }
+        title_template:       { type: string, maxLength: 4096 }
+        description_template: { type: string, maxLength: 4096 }
+        dedupe_key_template:  { type: string, maxLength: 4096 }
+      required: [name, repo_id, title_template]
+
+    IntakeEndpointTestRequest:
+      type: object
+      description: Sample payload plus optional unsaved template overrides.
+      properties:
+        payload:              { type: object, additionalProperties: true }
+        title_template:       { type: string }
+        description_template: { type: string }
+        dedupe_key_template:  { type: string }
+      required: [payload]
+
+    IntakeEndpointTestResponse:
+      type: object
+      properties:
+        title:           { type: string }
+        description:     { type: string }
+        dedupe_key:      { type: string }
+        label:           { type: string }
+        workflow_id:     { type: string }
+        priority:        { type: integer }
+        matched_rule_id: { type: string, nullable: true }
+        existing_task_id: { type: string, nullable: true, description: "Open task a real delivery would append a comment to." }
+      required: [title, description, dedupe_key, label, workflow_id, priority, matched_rule_id, existing_task_id]
 
     BackupSettings:
       type: object
@@ -635,6 +927,7 @@ components:
         id:           { type: string }
         workflow_id:  { type: string }
         name:         { type: string }
+        display_name: { type: string, maxLength: 64, description: "Optional human-readable title shown in the UI (column headers, chips). Empty/absent = UI derives one from name (separators to spaces, sentence case). name stays the API/URL identifier." }
         color:        { type: string, pattern: "^#[0-9a-fA-F]{3,8}$", description: "Hex color (#rgb/#rrggbb/#rrggbbaa) used by the UI, including the dashboard's factory visualization. Empty string is allowed (falls back to a UI default); anything else that isn't a hex literal is rejected with 400 on write." }
         sort_order:   { type: integer }
         agent_ignore: { type: integer }
@@ -686,9 +979,119 @@ components:
         updated_at:  { type: string, format: date-time }
       required: [id, name, description, labels, transitions, created_at, updated_at]
 
+    AgentConfigSnapshot:
+      type: object
+      description: "Behaviour-relevant fields of an agent config at one version. name, labels, enabled and priority are not versioned."
+      properties:
+        system_prompt: { type: string }
+        provider_config_id: { type: string }
+        fallback_provider_config_ids: { type: array, items: { type: string } }
+        escalation_ladder: { type: array, items: { $ref: "#/components/schemas/EscalationRung" } }
+        effort: { type: string }
+        permission_mode: { type: string }
+        max_turns: { type: integer }
+        max_tokens: { type: integer }
+        timeout_secs: { type: integer }
+        max_cost_usd: { type: number, format: double }
+        max_retries: { type: integer }
+        retry_backoff_secs: { type: integer }
+        resume_sessions: { type: boolean }
+        subtasks_enabled: { type: boolean }
+        max_subtasks: { type: integer }
+        enabled_plugins: { type: array, items: { type: string } }
+        enabled_mcp_servers: { type: array, items: { type: string } }
+        command_allowlist: { type: array, items: { type: string } }
+        command_denylist: { type: array, items: { type: string } }
+    AgentConfigVersion:
+      type: object
+      required: [id, agent_config_id, version, snapshot, created_at]
+      properties:
+        id: { type: string }
+        agent_config_id: { type: string }
+        version: { type: integer, description: "1-based, increasing per agent config." }
+        snapshot: { $ref: "#/components/schemas/AgentConfigSnapshot" }
+        actor_id: { type: string, nullable: true }
+        note: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+    AgentExperimentArmStats:
+      type: object
+      required: [tasks, tasks_done, first_pass_success_rate_percent, rework_rate_percent, human_touch_rate_percent, avg_cost_to_done_usd, avg_duration_secs, not_enough_data]
+      properties:
+        tasks: { type: integer, description: "Assigned, non-archived tasks." }
+        tasks_done: { type: integer, description: "Assigned tasks whose current label is terminal." }
+        first_pass_success_rate_percent: { type: number, format: double, description: "Of done tasks, share where the agent had exactly one run and it completed." }
+        rework_rate_percent: { type: number, format: double, description: "Of done tasks, share with a transition into an already-visited label." }
+        human_touch_rate_percent: { type: number, format: double, description: "Of done tasks, share with any human-triggered transition." }
+        avg_cost_to_done_usd: { type: number, format: double, description: "Mean total cost of all runs on each done task." }
+        avg_duration_secs: { type: number, format: double, description: "Mean duration of the agent's finished runs in this arm." }
+        not_enough_data: { type: boolean, description: "True when tasks_done is below min_tasks_per_arm." }
+    AgentExperimentResults:
+      type: object
+      required: [control, candidate, min_tasks_per_arm]
+      properties:
+        control: { $ref: "#/components/schemas/AgentExperimentArmStats" }
+        candidate: { $ref: "#/components/schemas/AgentExperimentArmStats" }
+        min_tasks_per_arm: { type: integer }
+    AgentExperiment:
+      type: object
+      required: [id, agent_config_id, candidate_snapshot, share_percent, status, started_at]
+      properties:
+        id: { type: string }
+        agent_config_id: { type: string }
+        candidate_snapshot: { $ref: "#/components/schemas/AgentConfigSnapshot" }
+        base_version: { type: integer, nullable: true, description: "Latest version when the experiment started (informational)." }
+        share_percent: { type: integer, minimum: 1, maximum: 90 }
+        status: { type: string, enum: [running, stopped, promoted] }
+        note: { type: string, nullable: true }
+        actor_id: { type: string, nullable: true }
+        promoted_version: { type: integer, nullable: true }
+        started_at: { type: string, format: date-time }
+        stopped_at: { type: string, format: date-time, nullable: true }
+        results: { $ref: "#/components/schemas/AgentExperimentResults" }
+    AgentExperimentStart:
+      type: object
+      required: [candidate, share_percent]
+      properties:
+        candidate: { $ref: "#/components/schemas/AgentConfigSnapshot" }
+        share_percent: { type: integer, minimum: 1, maximum: 90, description: "Percent of newly arriving tasks assigned to the candidate arm." }
+        note: { type: string }
+    AgentExperimentPromoteResponse:
+      type: object
+      required: [experiment, config]
+      properties:
+        experiment: { $ref: "#/components/schemas/AgentExperiment" }
+        config: { $ref: "#/components/schemas/AgentConfig" }
+    RunningExperimentSummary:
+      type: object
+      required: [id, share_percent, started_at, control_tasks, candidate_tasks]
+      properties:
+        id: { type: string }
+        share_percent: { type: integer }
+        started_at: { type: string, format: date-time }
+        note: { type: string, nullable: true }
+        control_tasks: { type: integer }
+        candidate_tasks: { type: integer }
+    EscalationRung:
+      type: object
+      required: [provider_config_id]
+      properties:
+        provider_config_id: { type: string, description: "Existing provider config used on this rung." }
+        effort:
+          type: string
+          enum: ["", low, medium, high, xhigh, max]
+          description: "Effort for this rung; empty inherits the agent config's effort."
+        fallback_provider_config_ids:
+          type: array
+          items: { type: string }
+          description: "Tried after the rung provider when it is rate-limited or paused, before the agent's own provider list."
     AgentConfig:
       type: object
       properties:
+        current_version: { type: integer, nullable: true, description: "Latest version number in the config's version history (null when it has none yet). Create/update bodies accept an optional `note` recorded on the new version." }
+        running_experiment:
+          nullable: true
+          allOf: [{ $ref: "#/components/schemas/RunningExperimentSummary" }]
+          description: "Summary of the running A/B experiment; populated on GET /agents/{id} only (null otherwise)."
         id:            { type: string }
         name:          { type: string }
         provider_config_id:
@@ -717,6 +1120,19 @@ components:
             on update keeps the stored list (minus a fallback promoted to
             primary). Runs record which one they used in
             AgentRun.provider_config_id.
+        escalation_ladder:
+          type: array
+          items: { $ref: "#/components/schemas/EscalationRung" }
+          description: >
+            Escalate on failure. Rung 0 is implicit (this config's own
+            provider_config_id/effort); entry i is rung i+1. At dispatch the
+            rung is the number of failed attempts on this agent's stage
+            (consecutive failures plus review/test bounce-backs into the
+            label), capped at the last rung; it resets when the stage is
+            freshly entered or a human acts. Max 10 rungs. Rate-limit fallbacks
+            still apply on top. Optional on write: omitted on create means
+            none; omitted on update keeps the stored ladder. Runs record the
+            rung in AgentRun.ladder_rung.
         enabled:
           type: boolean
           description: >
@@ -1043,6 +1459,21 @@ components:
         verify_timeout_seconds:
           type: integer
           description: Timeout for verify_command in seconds (1-3600, default 600).
+        preview_command:
+          type: string
+          description: >
+            Shell command that starts the app's dev server in the task's
+            worktree (run as the agent user, `$PORT` is a free port, bind
+            127.0.0.1). Empty (the default) disables preview screenshots.
+            See docs/workflows.md#preview-screenshots.
+        preview_routes:
+          type: string
+          description: Newline-separated paths to screenshot (each starts with /, at most 20).
+        preview_paths_glob:
+          type: string
+          description: >
+            Newline-separated globs deciding when a diff counts as a UI change.
+            Empty = frontend/**, web/**, src/**/*.{tsx,jsx,vue,svelte,css}.
         created_at:  { type: string, format: date-time }
       required: [id, name, path, created_at]
 
@@ -1068,6 +1499,31 @@ components:
         duration_ms: { type: integer }
         created_at:  { type: string, format: date-time }
       required: [run_id, task_id, command, status, exit_code, output, truncated, duration_ms, created_at]
+
+    TaskPreviewImage:
+      type: object
+      properties:
+        id:      { type: string }
+        route:   { type: string }
+        variant: { type: string, enum: [after, before], description: "Only after is produced today." }
+        width:   { type: integer }
+        height:  { type: integer }
+        url:     { type: string, description: "Served by GET /uploads/{task_id}/{filename}." }
+      required: [id, route, variant, width, height, url]
+
+    TaskPreviewCapture:
+      type: object
+      description: One preview screenshot capture for a task.
+      properties:
+        id:          { type: string }
+        status:      { type: string, enum: [running, ok, failed] }
+        error:       { type: string, description: "Short failure reason; for status ok it lists routes that failed (partial success)." }
+        created_at:  { type: string, format: date-time }
+        finished_at: { type: string, format: date-time, nullable: true }
+        images:
+          type: array
+          items: { $ref: "#/components/schemas/TaskPreviewImage" }
+      required: [id, status, error, created_at, finished_at, images]
 
     RuntimeLanguagePin:
       type: object
@@ -1145,6 +1601,22 @@ components:
         created_at:          { type: string, format: date-time, description: "When this row was ingested" }
       required: [id, task_id, external_id, author, body, external_created_at, created_at]
 
+    TaskHumanDecision:
+      type: object
+      description: >-
+        A human reply to a waiting_human run, shown to later runs under HUMAN
+        DECISIONS ON THIS TASK. Only replied rows are returned.
+      properties:
+        run_id:            { type: string }
+        label:             { type: string }
+        escalation_reason: { type: string }
+        question:          { type: string }
+        reply:             { type: string, nullable: true }
+        replied_at:        { type: string, format: date-time, nullable: true }
+        asked_at:          { type: string, format: date-time }
+        agent_name:        { type: string, description: "Empty when the agent config was deleted" }
+      required: [run_id, label, escalation_reason, question, reply, replied_at, asked_at, agent_name]
+
     AgentRun:
       type: object
       properties:
@@ -1152,6 +1624,10 @@ components:
         task_id:          { type: string }
         agent_config_id:  { type: string, nullable: true, description: "Agent config that ran this task; set NULL if that config is later deleted." }
         provider_config_id: { type: string, nullable: true, description: "Provider config the run used (the agent config's primary or one of its fallbacks); null for runs from before provider fallbacks." }
+        ladder_rung:      { type: integer, nullable: true, description: "Escalation ladder rung the run used (0 = the agent config's own provider/effort); null when the agent config had no ladder." }
+        agent_config_version: { type: integer, nullable: true, description: "Agent config version the run was dispatched with; null for runs from before version history." }
+        experiment_id: { type: string, nullable: true, description: "A/B experiment the run belonged to; null when none." }
+        experiment_arm: { type: string, nullable: true, enum: [control, candidate], description: "Experiment arm; candidate runs have a null agent_config_version until the experiment is promoted." }
         status:           { type: string, enum: [pending, running, completed, failed, waiting_human, cancelled, interrupted] }
         feedback:         { type: string, nullable: true }
         stored_info:      { type: string, nullable: true, description: "Free-form info the agent stored for this run (via the MCP store_info tool); null when none." }
@@ -1198,6 +1674,19 @@ components:
             falling back to an internal, approximate pricing table for
             models with no matching row. 0 if unknown/unreported — see
             cost_unknown to distinguish that from a genuinely free run.
+            For a claude run that resumed an earlier session it is that run's
+            own share: the CLI's session total minus session_cost_usd of the
+            session's previous run.
+        session_cost_usd:
+          type: number
+          format: double
+          nullable: true
+          description: >-
+            The provider's own cumulative cost for the run's whole session, as
+            reported when the run ended (claude only; it includes earlier runs
+            resumed into the same session). Null when not reported. Used as
+            the baseline for the next resumed run's cost_usd; sum cost_usd,
+            not this, for spend totals.
         cost_unknown:
           type: integer
           description: >-
@@ -1262,6 +1751,7 @@ components:
         timestamp:    { type: string, format: date-time }
         type:         { type: string, enum: [stdout, stderr, system, tool_call, tool_result] }
         content:      { type: string }
+        seq:          { type: integer, format: int64, description: "Monotonic per-entry sequence; tiebreak for entries with the same (second-resolution) timestamp." }
       required: [id, agent_run_id, timestamp, type, content]
 
     Dashboard:
@@ -1386,6 +1876,8 @@ components:
               output_tokens:          { type: integer }
               cost_usd:               { type: number, format: double }
             required:
+              - group_key
+              - low_sample
               - agent_config_id
               - agent_name
               - provider
@@ -1561,6 +2053,7 @@ components:
         [docs/api.md#dashboard](../docs/api.md#dashboard) for full metric
         definitions, attribution rules, and caveats.
       properties:
+        group_by: { type: string, enum: [config, version, provider_config, repo, task_type], description: "Dimension the rows are broken down by." }
         configs:
           type: array
           items:
@@ -1581,6 +2074,13 @@ components:
               current label has workflow_labels.is_terminal set.
             properties:
               agent_config_id:            { type: string }
+              group_key: { type: string, description: "Unique row id (config id + dimension value)." }
+              group_value: { type: string, description: "Display label of the dimension value (v3, unversioned, provider config name, repo name, task type); absent for group_by=config." }
+              version: { type: integer, nullable: true }
+              provider_config_id: { type: string }
+              repo_id: { type: string }
+              task_type: { type: string }
+              low_sample: { type: boolean, description: "true when tasks_done is below 5." }
               agent_name:                 { type: string }
               provider:                   { type: string }
               tasks_done:
@@ -1640,6 +2140,20 @@ components:
                   Percentage of runs_finished runs that ended waiting_human
                   rather than completed.
               low_sample_escalation: { type: boolean, description: "true when runs_finished is below 10." }
+              ladder_rungs:
+                type: array
+                description: >-
+                  Present only for configs whose runs carry a ladder_rung. Per
+                  finishing rung (the rung of the config's last laddered run on
+                  each terminal task): tasks finished and average total task
+                  cost. Independent of the last-run attribution of tasks_done.
+                items:
+                  type: object
+                  required: [rung, tasks_done, avg_cost_to_done_usd]
+                  properties:
+                    rung: { type: integer }
+                    tasks_done: { type: integer }
+                    avg_cost_to_done_usd: { type: number, format: double }
             required:
               - agent_config_id
               - agent_name
@@ -1728,6 +2242,7 @@ components:
         - $ref: "#/components/schemas/WsSystemCostBudgetTrippedEvent"
         - $ref: "#/components/schemas/WsTaskReviewCommentsChangedEvent"
         - $ref: "#/components/schemas/WsTaskVerificationEvent"
+        - $ref: "#/components/schemas/WsTaskPreviewEvent"
         - $ref: "#/components/schemas/WsTaskRateLimitedEvent"
         - $ref: "#/components/schemas/WsProviderPauseChangedEvent"
         - $ref: "#/components/schemas/WsTaskGitStateChangedEvent"
@@ -1755,6 +2270,7 @@ components:
           system.cost_budget_tripped: "#/components/schemas/WsSystemCostBudgetTrippedEvent"
           task.review_comments_changed: "#/components/schemas/WsTaskReviewCommentsChangedEvent"
           task.verification: "#/components/schemas/WsTaskVerificationEvent"
+          task.preview: "#/components/schemas/WsTaskPreviewEvent"
           task.rate_limited: "#/components/schemas/WsTaskRateLimitedEvent"
           provider.pause_changed: "#/components/schemas/WsProviderPauseChangedEvent"
           task.git_state_changed: "#/components/schemas/WsTaskGitStateChangedEvent"
@@ -1939,6 +2455,21 @@ components:
         status:  { type: string, enum: [pass, fail, timeout, error] }
       required: [task_id, run_id, status]
 
+    WsTaskPreviewEvent:
+      type: object
+      properties:
+        type: { type: string, enum: [task.preview] }
+        payload: { $ref: "#/components/schemas/WsTaskPreviewPayload" }
+      required: [type, payload]
+    WsTaskPreviewPayload:
+      type: object
+      description: A preview screenshot capture started or finished (refetch GET /tasks/{id}/previews).
+      properties:
+        task_id:    { type: string }
+        capture_id: { type: string }
+        status:     { type: string, enum: [running, ok, failed] }
+      required: [task_id, capture_id, status]
+
     WsTaskRateLimitedEvent:
       type: object
       properties:
@@ -2113,6 +2644,7 @@ components:
         type:    { type: string, enum: [stdout, stderr, system, tool_call, tool_result] }
         content: { type: string }
         at:      { type: string, format: date-time }
+        seq:     { type: integer, format: int64, description: "Monotonic per-entry sequence; tiebreak for entries with the same timestamp." }
       required: [id, type, content, at]
 
     WsAgentLogEvent:
@@ -2501,6 +3033,13 @@ paths:
                 title:       { type: string }
                 description: { type: string }
                 type:        { type: string, enum: [feature, bug, chore, spike] }
+                file_scope:
+                  type: array
+                  items: { type: string }
+                  description: >
+                    Optional repo-relative globs the subtask may change (max 20,
+                    256 chars each, no leading "/" or ".." segments). Siblings with
+                    overlapping scopes are serialized via dependency edges.
                 label:
                   type: string
                   description: >
@@ -2510,7 +3049,20 @@ paths:
         "201":
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Task" }
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Task"
+                  - type: object
+                    properties:
+                      overlap_dependencies:
+                        type: array
+                        description: Siblings this subtask now depends on because their file scopes overlap.
+                        items:
+                          type: object
+                          properties:
+                            task_id: { type: string }
+                            title:   { type: string }
+                            globs:   { type: array, items: { type: string } }
         "400": { description: Depth limit exceeded, non-gate label, or missing title }
         "403": { description: Creating run's config is not permitted to create subtasks }
         "404": { description: Parent task not found }
@@ -2951,6 +3503,25 @@ paths:
               schema: { type: array, items: { $ref: "#/components/schemas/TaskSourceComment" } }
         "404": { description: Task not found }
 
+  /tasks/{id}/human-decisions:
+    get:
+      summary: List a task's human replies to waiting_human runs
+      description: >
+        Replied decisions only (question-only rows are excluded), oldest
+        first. These are the same replies shown to later runs under HUMAN
+        DECISIONS ON THIS TASK.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/TaskHumanDecision" } }
+        "404": { description: Task not found }
+
   /tasks/{id}/runs:
     get:
       summary: List agent runs for a task
@@ -2986,6 +3557,32 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/AgentRun" } }
 
+  /tasks/{id}/previews:
+    get:
+      summary: Latest preview screenshot capture for a task
+      description: >
+        Screenshots of the repo's preview routes at desktop (1280x800) and
+        phone (390x844) width, captured when a run succeeded into a human gate
+        and the diff touched UI files. capture is null when none was taken.
+        Failures never block the task; they appear as status failed.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  capture:
+                    nullable: true
+                    allOf:
+                      - $ref: "#/components/schemas/TaskPreviewCapture"
+                required: [capture]
+
   /tasks/{id}/verifications:
     get:
       summary: List the task's verification results
@@ -3004,6 +3601,27 @@ paths:
           content:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/RunVerification" } }
+
+  /tasks/{id}/review-brief:
+    get:
+      summary: Review brief for a task
+      description: >
+        Deterministic risk flags, change summary, latest verification, run/rework/cost
+        totals and the latest agent summary. Diff-derived parts are cached per
+        branch head. Advisory only; no LLM calls.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: The review brief.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewBrief" }
+        "404":
+          description: Task not found.
 
   /tasks/{id}/runs/{run_id}:
     get:
@@ -3217,6 +3835,237 @@ paths:
       responses:
         "204": { description: Deleted }
 
+  /repos/{id}/lessons:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: List a repo's own lessons (global lessons excluded)
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [proposed, active, stale, retired] }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/RepoLesson" } }
+        "400": { description: Invalid status filter }
+        "404": { description: Repo not found }
+    post:
+      summary: Create a lesson for a repo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RepoLessonCreate" }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepoLesson" }
+        "400": { description: Invalid kind/status/source, empty or over-long body, or non-array citations }
+        "404": { description: Repo not found }
+
+  /lessons:
+    get:
+      summary: List global lessons (repo_id null)
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [proposed, active, stale, retired] }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/RepoLesson" } }
+        "400": { description: Invalid status filter }
+    post:
+      summary: Create a global lesson
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RepoLessonCreate" }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepoLesson" }
+        "400": { description: Invalid kind/status/source, empty or over-long body, or non-array citations }
+
+  /lessons/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    patch:
+      summary: Update a lesson (repo or global)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RepoLessonUpdate" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepoLesson" }
+        "400": { description: Invalid field value }
+        "404": { description: Lesson not found }
+    delete:
+      summary: Delete a lesson
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Lesson not found }
+
+  /skills:
+    get:
+      summary: List skills
+      responses:
+        "200":
+          description: Skills sorted by name
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Skill" } }
+    post:
+      summary: Create a skill from a SKILL.md body or a zip of a skill folder
+      description: >
+        Send JSON `{skill_md}` or an `application/zip` body (max 1 MB, at most
+        200 files; SKILL.md at the root or in a single top-level folder).
+        Zips with path traversal, absolute paths or symlinks are rejected.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [skill_md]
+              properties:
+                skill_md: { type: string }
+          application/zip:
+            schema: { type: string, format: binary }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Skill" }
+        "400": { description: Invalid SKILL.md frontmatter or unsafe zip }
+        "409": { description: A skill with that name already exists }
+
+  /skills/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get a skill with its SKILL.md and file list
+      responses:
+        "200":
+          description: The skill
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Skill" }
+        "404": { description: Skill not found }
+    patch:
+      summary: Enable/disable a skill and/or replace its content
+      description: >
+        JSON `{enabled?, skill_md?}` or an `application/zip` body replacing the
+        content. Replacement content must keep the skill's name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:  { type: boolean }
+                skill_md: { type: string }
+          application/zip:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Skill" }
+        "400": { description: Invalid content or name mismatch }
+        "404": { description: Skill not found }
+    delete:
+      summary: Delete a skill (also detaches it everywhere)
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Skill not found }
+
+  /agents/{id}/skills:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: List skills attached to an agent config
+      responses:
+        "200":
+          description: Attached skills
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Skill" } }
+        "404": { description: Agent config not found }
+    put:
+      summary: Replace the set of skills attached to an agent config
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SkillIDs" }
+      responses:
+        "200":
+          description: The new attached set
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Skill" } }
+        "400": { description: Unknown skill id }
+        "404": { description: Agent config not found }
+
+  /repos/{id}/skills:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: List skills attached to a repo
+      responses:
+        "200":
+          description: Attached skills
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Skill" } }
+        "404": { description: Repo not found }
+    put:
+      summary: Replace the set of skills attached to a repo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SkillIDs" }
+      responses:
+        "200":
+          description: The new attached set
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/Skill" } }
+        "400": { description: Unknown skill id }
+        "404": { description: Repo not found }
+
   /schedules:
     get:
       summary: List task schedules
@@ -3311,7 +4160,7 @@ paths:
                 name:                { type: string }
                 enabled:             { type: boolean, default: true }
                 sort_order:          { type: integer, default: 0 }
-                match_source:        { type: string, enum: ['', manual, issue, schedule, subtask] }
+                match_source:        { type: string, enum: ['', manual, issue, schedule, webhook, subtask] }
                 match_repo_id:       { type: string, nullable: true }
                 match_labels:        { type: array, items: { type: string } }
                 match_title_pattern: { type: string }
@@ -3401,7 +4250,7 @@ paths:
                 name:                { type: string }
                 enabled:             { type: boolean, default: true }
                 sort_order:          { type: integer, default: 0 }
-                match_source:        { type: string, enum: ['', manual, issue, schedule, subtask] }
+                match_source:        { type: string, enum: ['', manual, issue, schedule, webhook, subtask] }
                 match_repo_id:       { type: string, nullable: true }
                 match_labels:        { type: array, items: { type: string } }
                 match_title_pattern: { type: string }
@@ -3613,6 +4462,180 @@ paths:
       responses:
         "204": { description: Deleted }
 
+  /agents/{id}/versions:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: List an agent config's version history (newest first, with snapshots)
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AgentConfigVersion" } }
+        "404": { description: Not found }
+
+  /agents/{id}/versions/{version}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: version
+        in: path
+        required: true
+        schema: { type: integer }
+    get:
+      summary: Get one version snapshot
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentConfigVersion" }
+        "400": { description: Non-integer version }
+        "404": { description: Not found }
+
+  /agents/{id}/versions/{version}/restore:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: version
+        in: path
+        required: true
+        schema: { type: integer }
+    post:
+      summary: Restore a version as a new version
+      description: >
+        Applies the snapshot onto the current config (name, labels, enabled and
+        priority are kept) and records a new version, unless the result is
+        identical to the current config. Provider configs referenced by the
+        snapshot are re-validated.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentConfig" }
+        "400": { description: Snapshot references a deleted provider config or is otherwise invalid }
+        "404": { description: Not found }
+
+  /agents/{id}/experiments:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: List an agent config's A/B experiments (newest first, without results)
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AgentExperiment" } }
+        "404": { description: Not found }
+    post:
+      summary: Start an A/B experiment
+      description: >
+        Runs the candidate snapshot on a deterministic share of tasks that first
+        reach this agent's label; the rest keep the current config. At most one
+        experiment runs per agent config.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AgentExperimentStart" }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentExperiment" }
+        "400": { description: Invalid share, invalid candidate, or candidate identical to the current config }
+        "404": { description: Not found }
+        "409": { description: An experiment is already running for this agent }
+
+  /agents/{id}/experiments/{experimentId}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: experimentId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get one experiment with per-arm results
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentExperiment" }
+        "404": { description: Not found }
+
+  /agents/{id}/experiments/{experimentId}/stop:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: experimentId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      summary: Stop a running experiment (all later runs use the current config)
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentExperiment" }
+        "404": { description: Not found }
+        "409": { description: Experiment is not running }
+
+  /agents/{id}/experiments/{experimentId}/promote:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+      - name: experimentId
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      summary: Promote the candidate to the agent's new version
+      description: >
+        Applies the candidate onto the current config (like a version restore),
+        records a new version, marks the experiment promoted and tags the
+        candidate-arm runs with the new version.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AgentExperimentPromoteResponse" }
+        "400": { description: Candidate references a deleted provider config or is otherwise invalid }
+        "404": { description: Not found }
+        "409": { description: Experiment is not running }
+
   /agents/models:
     get:
       summary: Get available models for a provider
@@ -3755,6 +4778,7 @@ paths:
       description: >
         The body also accepts verify_command (string) and
         verify_timeout_seconds (integer, 1-3600); see the Repo schema.
+        It also accepts preview_command, preview_routes and preview_paths_glob (strings).
       responses:
         "201":
           content:
@@ -3818,6 +4842,15 @@ paths:
                   minimum: 1
                   maximum: 3600
                   description: Replaces the verify timeout. Omit to leave unchanged.
+                preview_command:
+                  type: string
+                  description: Replaces the preview command; empty string disables previews. Omit to leave unchanged.
+                preview_routes:
+                  type: string
+                  description: Replaces the newline-separated preview routes. Omit to leave unchanged.
+                preview_paths_glob:
+                  type: string
+                  description: Replaces the newline-separated UI path globs (empty = defaults). Omit to leave unchanged.
       responses:
         "200":
           content:
@@ -3954,6 +4987,8 @@ paths:
         docs/api.md#dashboard. Optionally scoped to a single repo via
         ?repo_id=, since aggregate cross-repo numbers can hide a config that
         is excellent on one codebase and poor on another.
+        Use ?group_by= to break rows down by version, provider config, repo or
+        task type (default: config).
       parameters:
         - name: repo_id
           in: query
@@ -3962,6 +4997,10 @@ paths:
             belonging to this repo instead of the cached all-repos
             snapshot.
           schema: { type: string }
+        - name: group_by
+          in: query
+          description: Break rows down by this dimension. Invalid values return 400.
+          schema: { type: string, enum: [config, version, provider_config, repo, task_type], default: config }
       responses:
         "200":
           content:
@@ -4004,6 +5043,165 @@ paths:
                 properties:
                   authed: { type: boolean }
                   note:   { type: string }
+
+  /intake-endpoints:
+    get:
+      summary: List intake webhook endpoints
+      responses:
+        "200":
+          description: Endpoints (secrets omitted)
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/IntakeEndpoint" } }
+    post:
+      summary: Create an intake webhook endpoint
+      description: The response includes the generated HMAC `secret`; it is not retrievable again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IntakeEndpointBody" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeEndpointCreated" }
+        "400": { description: Validation error }
+
+  /intake-endpoints/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get an intake webhook endpoint
+      responses:
+        "200":
+          description: The endpoint (secret omitted)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeEndpoint" }
+        "404": { description: Not found }
+    put:
+      summary: Update an intake webhook endpoint
+      description: Does not change the secret; use rotate-secret.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IntakeEndpointBody" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeEndpoint" }
+        "400": { description: Validation error }
+        "404": { description: Not found }
+    delete:
+      summary: Delete an intake webhook endpoint
+      responses:
+        "204": { description: Deleted }
+
+  /intake-endpoints/{id}/rotate-secret:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      summary: Rotate an endpoint's HMAC secret
+      description: The old secret stops working immediately. The new one is shown only in this response.
+      responses:
+        "200":
+          description: New secret
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  secret: { type: string }
+                required: [secret]
+        "404": { description: Not found }
+
+  /intake-endpoints/{id}/test:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      summary: Preview how a sample payload would be turned into a task
+      description: Renders the templates and runs intake rules. Creates nothing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IntakeEndpointTestRequest" }
+      responses:
+        "200":
+          description: Rendered preview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeEndpointTestResponse" }
+        "400": { description: Missing or invalid payload }
+        "404": { description: Not found }
+        "422": { description: No workflow resolvable }
+
+  /intake/{endpoint_id}:
+    post:
+      summary: Deliver a signed event to an intake endpoint
+      description: >
+        NOT behind bearer auth; authenticated by the HMAC-SHA256 of the raw
+        body, keyed with the endpoint secret, sent as
+        `X-ATE-Signature-256: sha256=<hex>` (constant-time compare). Body is
+        capped at 256 KB, must be a JSON object, and each endpoint accepts at
+        most 30 authenticated requests per minute. Creates a task (source
+        `webhook`, on the workflow's gate label unless the endpoint sets a
+        target label), or, when the dedupe key matches an open task, appends
+        the event as an untrusted source comment to it. See
+        docs/task-sources.md.
+      security: []
+      parameters:
+        - { name: endpoint_id, in: path, required: true, schema: { type: string } }
+        - { name: X-ATE-Signature-256, in: header, required: true, schema: { type: string, example: "sha256=..." } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: Deduplicated into an existing open task
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id: { type: string }
+                  deduped: { type: boolean }
+        "201":
+          description: Task created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  task_id: { type: string }
+                  created: { type: boolean }
+        "400": { description: Unreadable body, invalid JSON, or not an object }
+        "401": { description: Missing or invalid signature }
+        "403": { description: Endpoint disabled }
+        "404": { description: Unknown endpoint }
+        "413": { description: Body larger than 256 KB }
+        "415": { description: Content type is not application/json }
+        "422": { description: No workflow resolvable for the endpoint }
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After: { schema: { type: integer } }
 
   /github/webhook:
     post:

@@ -43,3 +43,19 @@ export function formatRelativeAge(iso: string, now: Date = new Date()): string {
   if (hours < 24) return `${hours}h ago`
   return `${Math.round(hours / 24)}d ago`
 }
+
+const RUN_STATUS_LABELS: Record<string, string> = {
+  waiting_human: 'Waiting on you',
+  running: 'Running',
+  failed: 'Failed',
+  completed: 'Done',
+  interrupted: 'Interrupted',
+  cancelled: 'Cancelled',
+  pending: 'Queued',
+}
+
+/** Human-readable agent run status; unknown values pass through. */
+export function formatRunStatus(status: string | null | undefined): string {
+  if (!status) return '—'
+  return RUN_STATUS_LABELS[status] ?? status
+}
