@@ -158,6 +158,21 @@ function summariseResult(_toolName: string | undefined, text: string): { summary
 }
 
 /** Parse a Claude Code SDK message event */
+function parseSdkEvent(obj: Record<string, unknown>): ParsedLog | null {
+  if (typeof obj.type !== 'string') return null
+  if (obj.type === 'tool_progress') {
+    const name = typeof obj.tool_name === 'string' && obj.tool_name ? obj.tool_name : 'Tool'
+    const el = typeof obj.elapsed_time_seconds === 'number' ? ` · ${obj.elapsed_time_seconds}s` : ''
+    return { kind: 'system_event', event: `${name} still running${el}`, severity: 'debug' }
+  }
+  return {
+    kind: 'system_event',
+    event: humaniseSubtype(obj.type),
+    detail: JSON.stringify(obj).slice(0, 300),
+    severity: 'debug',
+  }
+}
+
 function parseMessage(obj: Record<string, unknown>): ParsedLog | null {
   const msg = obj.message as Record<string, unknown> | undefined
   if (!msg) return null
@@ -171,6 +186,7 @@ function parseMessage(obj: Record<string, unknown>): ParsedLog | null {
   // return a single ParsedLog rather than splitting a mixed message.
   if (role === 'assistant' && Array.isArray(content)) {
     const texts: string[] = []
+    const thoughts: string[] = []
     let toolBlock: Record<string, unknown> | undefined
     for (const block of content as unknown[]) {
       if (typeof block !== 'object' || block === null) continue
@@ -179,6 +195,8 @@ function parseMessage(obj: Record<string, unknown>): ParsedLog | null {
         texts.push(b.text.trim())
       } else if (b.type === 'tool_use' && !toolBlock) {
         toolBlock = b
+      } else if (b.type === 'thinking' && typeof b.thinking === 'string' && b.thinking.trim()) {
+        thoughts.push(b.thinking.trim())
       }
     }
     if (toolBlock) {
@@ -197,6 +215,17 @@ function parseMessage(obj: Record<string, unknown>): ParsedLog | null {
     if (texts.length > 0) {
       return { kind: 'assistant_text', text: texts.join('\n') }
     }
+    // Thinking-only (or empty) assistant turn: debug noise, never raw JSON.
+    const thinking = thoughts.join('\n')
+    if (thinking || content.length > 0) {
+      return {
+        kind: 'system_event',
+        event: 'Thinking',
+        detail: thinking ? truncate(thinking, 2000) : undefined,
+        severity: 'debug',
+      }
+    }
+    return { kind: 'system_event', event: 'Assistant message (no content)', severity: 'debug' }
   }
 
   // user message (tool results)
@@ -420,6 +449,8 @@ export function parseLogContent(type: string, content: string, debug: boolean = 
       // Any other system subtype (known or future/unrecognised) — render as a
       // readable summary rather than falling through to raw JSON.
       if (obj.type === 'system') return parseSystemEvent(obj)
+      const sdk = parseSdkEvent(obj)
+      if (sdk) return sdk
     }
     return { kind: 'text', text: content }
   }
@@ -495,6 +526,9 @@ export function parseLogContent(type: string, content: string, debug: boolean = 
   // Any other system subtype (known or future/unrecognised) — render as a
   // readable summary rather than falling through to raw JSON.
   if (obj.type === 'system') return parseSystemEvent(obj)
+
+  const sdk = parseSdkEvent(obj)
+  if (sdk) return sdk
 
   // Fallback: show content but truncated
   const truncated = content.length > 300 ? content.slice(0, 300) + '…' : content

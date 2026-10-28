@@ -468,3 +468,37 @@ describe('parseLogContent — new claude code system subtypes (regression: raw J
     expect(parsed.event).toContain('Session started')
   })
 })
+
+describe('parseLogContent — raw JSON leaks (thinking-only assistant, tool_progress)', () => {
+  const asst = (content: unknown[]) =>
+    JSON.stringify({ type: 'assistant', message: { role: 'assistant', content } })
+  it('thinking-only is debug system_event', () => {
+    const p = parseLogContent('stdout', asst([{ type: 'thinking', thinking: '', signature: 'x' }]))
+    expect(p).toMatchObject({ kind: 'system_event', severity: 'debug', event: 'Thinking' })
+  })
+  it('thinking text becomes detail', () => {
+    const p = parseLogContent('stdout', asst([{ type: 'thinking', thinking: 'hmm' }]))
+    expect(p).toMatchObject({ kind: 'system_event', detail: 'hmm' })
+  })
+  it('mixed text+thinking stays assistant_text', () => {
+    const p = parseLogContent('stdout', asst([{ type: 'thinking', thinking: 'secret' }, { type: 'text', text: 'hi' }]))
+    expect(p).toEqual({ kind: 'assistant_text', text: 'hi' })
+  })
+  it('tool_progress is debug system_event', () => {
+    const p = parseLogContent('stdout', '{"type":"tool_progress","tool_name":"Bash","elapsed_time_seconds":30}')
+    expect(p).toMatchObject({ kind: 'system_event', severity: 'debug' })
+    expect((p as { event: string }).event).toContain('Bash')
+    expect((p as { event: string }).event).toContain('30s')
+  })
+  it('unknown typed event is system_event', () => {
+    const p = parseLogContent('stdout', '{"type":"rate_limit_event","session_id":"x"}')
+    expect(p.kind).toBe('system_event')
+  })
+  it('empty assistant content is not text/raw', () => {
+    const p = parseLogContent('stdout', asst([]))
+    expect(p.kind).toBe('system_event')
+  })
+  it('non-JSON stdout stays text', () => {
+    expect(parseLogContent('stdout', 'hello')).toEqual({ kind: 'text', text: 'hello' })
+  })
+})
