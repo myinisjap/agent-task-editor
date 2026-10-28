@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { NeedsMeItem, Task, Workflow } from '../api/client'
-import { buildInbox, entryKey, failedEffectTasks, flattenInbox, inboxCount, itemActions, neighborKey, nextAfterRemoval, resolveSelection, sourceEditTasks } from './inbox'
+import { buildInbox, entryKey, isCountedEntry, failedEffectTasks, flattenInbox, inboxCount, itemActions, neighborKey, nextAfterRemoval, resolveSelection, sourceEditTasks } from './inbox'
 import { formatRelativeAge } from './format'
 
 const item = (over: Partial<NeedsMeItem>): NeedsMeItem => ({
@@ -170,5 +170,36 @@ describe('selection helpers', () => {
     expect(nextAfterRemoval(flat, 'g1')).toBe('g2')
     expect(nextAfterRemoval(flat, 'provider:claude')).toBe('g1:effects')
     expect(nextAfterRemoval(flat.slice(0, 1), 's1:source')).toBeUndefined()
+  })
+})
+
+describe('autonomy sections', () => {
+  const pending = (id: string, due: string) => item({ task_id: id, reason: 'auto_approving', due_at: due })
+  const approval = (id: string, at: string) => ({
+    task_id: id, task_title: id, repo_id: 'r', workflow_id: 'w', label: 'merge', gate_label: 'review',
+    approved_at: at, note: 'n', decision_id: 'd', undoable: true,
+  })
+
+  it('routes pending and approved rows, sorted soonest / newest first', () => {
+    const s = buildInbox(
+      [item({ task_id: 'h' }), pending('late', '2026-01-01T00:10:00Z'), pending('soon', '2026-01-01T00:01:00Z')],
+      [], [], [],
+      { approved: [approval('old', '2026-01-01T01:00:00Z'), approval('new', '2026-01-01T02:00:00Z')] },
+    )
+    expect(s.decide).toHaveLength(1)
+    expect(s.auto_approving.map(entryKey)).toEqual(['soon', 'late'])
+    expect(s.approved.map(entryKey)).toEqual(['new:approved', 'old:approved'])
+    expect(flattenInbox(s).map(entryKey)).toEqual(['h', 'soon', 'late', 'new:approved', 'old:approved'])
+  })
+
+  it('never counts pending or approved entries', () => {
+    const s = buildInbox([item({})], [], [], [], { autoApproving: [pending('p', '2026-01-01T00:01:00Z')], approved: [approval('a', '2026-01-01T01:00:00Z')] })
+    expect(inboxCount(s)).toBe(1)
+    const flat = flattenInbox(s)
+    expect(flat.filter(isCountedEntry)).toHaveLength(1)
+  })
+
+  it('offers no one-click actions for pending rows', () => {
+    expect(itemActions(pending('p', 'x'), undefined)).toEqual({ approve: false, requestChanges: false, retry: false, reply: false })
   })
 })

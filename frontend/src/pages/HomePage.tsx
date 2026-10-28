@@ -23,10 +23,12 @@ import RunningNowPanel from '../components/home/RunningNowPanel'
 import TodayPanel from '../components/home/TodayPanel'
 import DispatchPill from '../components/home/DispatchPill'
 import ReviewPopup from '../components/home/ReviewPopup'
+import { useInboxActions } from '../lib/useInboxActions'
 
 export default function HomePage() {
   const { dash } = useDashboard()
   const sections = useInboxSections()
+  const actions = useInboxActions()
   const flat = useMemo(() => flattenInbox(sections), [sections])
   const needsMeLoaded = useNeedsMeStore((st) => st.loaded)
   const effectsLoaded = useInboxStore((st) => st.loaded)
@@ -97,7 +99,7 @@ export default function HomePage() {
   const budget = dash?.global_cost_budget
 
   const scene = workflow && counts ? <SceneBand workflow={workflow} labelCounts={counts} /> : null
-  const needsYou = <NeedsYouPanel sections={sections} onSelect={onSelect} highlight={flashing} limit={isPhone ? 2 : undefined} />
+  const needsYou = <NeedsYouPanel sections={sections} onSelect={onSelect} workflows={workflows} onHold={(e) => void actions.hold(e)} onUndo={(e) => void actions.undoApproval(e)} isBusy={actions.isBusy} highlight={flashing} limit={isPhone ? 2 : undefined} />
   const running = dash ? (
     <RunningNowPanel
       agents={dash.active_agents}

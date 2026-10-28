@@ -7,15 +7,17 @@ import ReviewPopup from './ReviewPopup'
 import { useNeedsMeStore } from '../../stores/needsMe'
 import { useInboxStore, useInboxSections } from '../../stores/inbox'
 import { useHealthStore } from '../../stores/health'
+import { useToastStore } from '../../stores/toast'
 import { flattenInbox } from '../../lib/inbox'
 
-const m = { needsMe: vi.fn(), approve: vi.fn(), reject: vi.fn(), list: vi.fn(), health: vi.fn(), reply: vi.fn() }
+const m = { hold: vi.fn(), undo: vi.fn(), needsMe: vi.fn(), approve: vi.fn(), reject: vi.fn(), list: vi.fn(), health: vi.fn(), reply: vi.fn() }
 vi.mock('../../api/client', async () => {
   const actual = await vi.importActual<typeof import('../../api/client')>('../../api/client')
   return {
     ...actual,
     api: {
-      needsMe: { list: (...a: unknown[]) => m.needsMe(...a) },
+      needsMe: { get: (...a: unknown[]) => m.needsMe(...a).then((r: unknown) => (Array.isArray(r) ? { items: r, approved_by_policy: [] } : r)) },
+      autonomy: { hold: (...a: unknown[]) => m.hold(...a), undo: (...a: unknown[]) => m.undo(...a) },
       tasks: {
         list: (...a: unknown[]) => m.list(...a),
         approve: (...a: unknown[]) => m.approve(...a),
@@ -23,6 +25,7 @@ vi.mock('../../api/client', async () => {
         replyRun: (...a: unknown[]) => m.reply(...a),
         reviewBrief: () => Promise.resolve({ human_gate: false }),
         previews: () => Promise.resolve({ capture: null }),
+        autonomyDecision: () => Promise.resolve(null),
       },
       health: { providers: (...a: unknown[]) => m.health(...a) },
     },
@@ -194,5 +197,61 @@ describe('ReviewPopup', () => {
     expect(onClose).not.toHaveBeenCalled()
     await act(async () => { vi.advanceTimersByTime(1600) })
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  describe('autonomy entries', () => {
+    const pending = {
+      ...gate('p1', 'Pending task'), reason: 'auto_approving', decision_id: 'd1', verification: 'pass', risk_flags: [],
+      due_at: new Date(Date.now() + 120_000).toISOString(),
+    }
+    const approval = {
+      task_id: 'a1', task_title: 'Approved task', workflow_id: 'w', label: 'done', gate_label: 'review',
+      approved_at: new Date(Date.now() - 600_000).toISOString(), note: 'Auto-approved: no flags', decision_id: 'd2', undoable: true,
+    }
+
+    it('shows the pending body and Hold moves it to Decide', async () => {
+      m.needsMe.mockResolvedValue([pending])
+      await load()
+      m.hold.mockResolvedValue({})
+      renderPopup('p1')
+      expect(screen.getByTestId('autonomy-countdown')).toHaveTextContent(/approves in/)
+      m.needsMe.mockResolvedValue([gate('p1', 'Pending task')])
+      await userEvent.click(screen.getByRole('button', { name: 'Hold' }))
+      expect(m.hold).toHaveBeenCalledWith('p1')
+      expect(await screen.findByRole('button', { name: 'Approve' })).toBeInTheDocument()
+      expect(title()).toBe('Pending task')
+      expect(useToastStore.getState().toast?.message).toMatch(/Held "Pending task"/)
+      expect(useToastStore.getState().toast?.action?.label).toBe('Undo')
+    })
+
+    it('h holds the selected pending entry', async () => {
+      m.needsMe.mockResolvedValue([pending])
+      await load()
+      m.hold.mockResolvedValue({})
+      renderPopup('p1')
+      await userEvent.keyboard('h')
+      expect(m.hold).toHaveBeenCalledWith('p1')
+    })
+
+    it('Review now holds too', async () => {
+      m.needsMe.mockResolvedValue([pending])
+      await load()
+      m.hold.mockResolvedValue({})
+      renderPopup('p1')
+      await userEvent.click(screen.getByRole('button', { name: 'Review now' }))
+      expect(m.hold).toHaveBeenCalledWith('p1')
+    })
+
+    it('approved body shows the note; Undo confirms then calls the API', async () => {
+      m.needsMe.mockResolvedValue({ items: [], approved_by_policy: [approval] })
+      await load()
+      m.undo.mockResolvedValue({ message: 'Moved back', pr_left_open: false })
+      renderPopup('a1:approved')
+      expect(screen.getByText('Auto-approved: no flags')).toBeInTheDocument()
+      await userEvent.click(screen.getByRole('button', { name: 'Undo' }))
+      expect(m.undo).not.toHaveBeenCalled()
+      await userEvent.click(screen.getByRole('button', { name: 'Undo approval' }))
+      expect(m.undo).toHaveBeenCalledWith('a1')
+    })
   })
 })

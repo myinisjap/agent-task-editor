@@ -36,6 +36,14 @@ components:
         undoable:
           type: boolean
           description: True when POST /tasks/{id}/autonomy/undo would currently be accepted (last gate exit by policy, not merged).
+        changed:
+          type: object
+          required: [files, additions, deletions]
+          description: Diff size when the branch diff could be computed.
+          properties:
+            files: { type: integer }
+            additions: { type: integer }
+            deletions: { type: integer }
     NeedsMeItem:
       type: object
       required: [task_id, task_title, repo_id, workflow_id, label, reason, since]

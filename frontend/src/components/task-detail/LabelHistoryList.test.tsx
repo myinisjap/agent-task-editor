@@ -60,3 +60,13 @@ describe('LabelHistoryList — Remember for this repo', () => {
     expect(screen.queryByRole('button', { name: 'Remember for this repo' })).not.toBeInTheDocument()
   })
 })
+
+describe('LabelHistoryList policy approvals', () => {
+  it('shows "Approved by policy" with the reason inline and no Remember button', () => {
+    render(<LabelHistoryList onRemember={vi.fn()} history={[entry({ actor_id: 'policy', note: 'Auto-approved: no flags' })]} />)
+    expect(screen.getByText('Approved by policy')).toBeInTheDocument()
+    expect(screen.getByText('Auto-approved: no flags')).toBeInTheDocument()
+    expect(screen.getByText('· by policy')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Remember for this repo')).not.toBeInTheDocument()
+  })
+})

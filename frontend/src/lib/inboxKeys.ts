@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-export type InboxKeyAction = 'next' | 'prev' | 'approve' | 'reject' | 'open' | 'escape'
+export type InboxKeyAction = 'hold' | 'next' | 'prev' | 'approve' | 'reject' | 'open' | 'escape'
 
 type KeyLike = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'defaultPrevented'> & { target: EventTarget | null }
 
@@ -21,6 +21,7 @@ export function inboxKeyAction(e: KeyLike): InboxKeyAction | null {
     case 'k': case 'ArrowUp': return 'prev'
     case 'a': return 'approve'
     case 'r': return 'reject'
+    case 'h': return 'hold'
     case 'o': return 'open'
     case 'Enter': {
       const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase()

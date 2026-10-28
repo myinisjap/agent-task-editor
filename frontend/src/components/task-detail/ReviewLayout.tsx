@@ -1,4 +1,5 @@
 import { MessageSquare } from 'lucide-react'
+import AutonomyCountdown from '../home/AutonomyCountdown'
 import { useEffect, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { AgentConfig, AgentRun, ProviderConfig, Task, TaskLabelHistoryEntry, WorkflowLabel } from '../../api/client'
@@ -24,7 +25,7 @@ export default function ReviewLayout({
   isRunning, canRerun, onStop, onRerun, canApprove, canReject, approveLabel, onApprove,
   rejectNote, setRejectNote, onReject, openCommentsCount, actionError, actionPending,
   diffComments, onAddComment, onRemoveComment, onReopenComment, onCreatePR, creatingPR,
-  verificationKey, briefKey, mode, onBack, onHelp, details, labelHistory, variant = 'desktop', labels, alwaysAsk,
+  verificationKey, briefKey, mode, onBack, onHelp, details, labelHistory, variant = 'desktop', labels, alwaysAsk, autoApproving, onHold,
 }: {
   task: Task
   repoName?: string
@@ -63,6 +64,9 @@ export default function ReviewLayout({
   variant?: 'desktop' | 'tablet' | 'phone'
   labels?: WorkflowLabel[]
   alwaysAsk?: boolean
+  /** Set while the gate's autonomy policy is counting down to approve this task. */
+  autoApproving?: { dueAt: string }
+  onHold?: () => void
 }) {
   const defaultTab: MainTab = mode === 'plan' ? 'plan' : 'diff'
   const [tab, setTab] = useState<MainTab>(defaultTab)
@@ -111,6 +115,18 @@ export default function ReviewLayout({
   )
 
   const phone = variant === 'phone'
+  const stateChip = autoApproving ? (
+    <Badge tone="success" data-testid="review-state-chip">
+      Auto-approving <AutonomyCountdown dueAt={autoApproving.dueAt} />
+    </Badge>
+  ) : (
+    <Badge tone="warning" data-testid="review-state-chip">
+      Waiting for your review
+    </Badge>
+  )
+  const holdButton = (cls: string) => (autoApproving && onHold ? (
+    <Button size="sm" variant="secondary" onClick={onHold} className={cls}>Hold</Button>
+  ) : null)
   const stacked = variant !== 'desktop'
 
   const commentsNote = openCommentsCount > 0 && (
@@ -128,9 +144,7 @@ export default function ReviewLayout({
         </div>
         <h1 className="text-base font-semibold text-fg break-words">{task.title}</h1>
         <div className="mt-1">
-          <Badge tone="warning" data-testid="review-state-chip">
-            Waiting for your review
-          </Badge>
+          {stateChip}
         </div>
       </div>
       {onHelp && <HelpButton onClick={onHelp} title="About this task" />}
@@ -144,9 +158,7 @@ export default function ReviewLayout({
         </div>
         <h1 className="text-lg font-semibold text-fg break-words">{task.title}</h1>
         <div className="flex flex-wrap items-center gap-3 mt-1 text-xs text-fg-muted">
-          <Badge tone="warning" data-testid="review-state-chip">
-            Waiting for your review
-          </Badge>
+          {stateChip}
           {repoName && <span>{repoName}</span>}
           <span>${(task.cumulative_cost_usd ?? 0).toFixed(2)}</span>
           <span>{runs.length} run{runs.length === 1 ? '' : 's'}</span>
@@ -160,6 +172,7 @@ export default function ReviewLayout({
               Request changes
             </Button>
           )}
+          {holdButton('')}
           {canApprove && (
             <Button size="sm" variant="primary" onClick={onApprove} disabled={actionPending}>
               {approveLabel}
@@ -343,6 +356,7 @@ export default function ReviewLayout({
               Request changes
             </Button>
           )}
+          {holdButton('min-h-[44px]')}
           {canApprove && (
             <Button variant="primary" onClick={onApprove} disabled={actionPending} className="min-h-[44px]">
               {approveLabel}

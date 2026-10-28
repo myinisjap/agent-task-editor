@@ -69,6 +69,8 @@ type policyApprovalItem struct {
 	DecisionID string `json:"decision_id"`
 	PRURL      string `json:"pr_url,omitempty"`
 	Undoable   bool   `json:"undoable"`
+	// Changed is the diff size, set when the branch diff could be computed.
+	Changed *needsMeChanged `json:"changed,omitempty"`
 }
 
 type needsMeChanged struct {
@@ -131,11 +133,17 @@ func (h *NeedsMeHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	approved := make([]policyApprovalItem, 0, len(recent))
 	for _, it := range recent {
-		approved = append(approved, policyApprovalItem{
+		pa := policyApprovalItem{
 			TaskID: it.TaskID, TaskTitle: it.TaskTitle, RepoID: it.RepoID, WorkflowID: it.WorkflowID,
 			Label: it.Label, GateLabel: it.GateLabel, ApprovedAt: it.ApprovedAt.UTC().Format("2006-01-02T15:04:05Z"),
 			Note: it.Note, DecisionID: it.DecisionID, PRURL: it.PRURL, Undoable: it.Undoable,
-		})
+		}
+		if h.cache != nil {
+			if d, ok := h.decisionContext(r, it.TaskID); ok {
+				pa.Changed = d.Changed
+			}
+		}
+		approved = append(approved, pa)
 	}
 	JSON(w, http.StatusOK, map[string]any{"items": out, "approved_by_policy": approved})
 }

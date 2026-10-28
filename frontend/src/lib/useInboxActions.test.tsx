@@ -12,7 +12,7 @@ vi.mock('../api/client', async () => {
   return {
     ...actual,
     api: {
-      needsMe: { list: () => Promise.resolve([]) },
+      needsMe: { get: () => Promise.resolve({ items: [], approved_by_policy: [] }) },
       tasks: {
         list: () => Promise.resolve({ items: [], nextCursor: null }),
         approve: (...a: unknown[]) => m.approve(...a),

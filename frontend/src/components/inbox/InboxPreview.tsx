@@ -11,6 +11,11 @@ import { providerLabel } from '../shared/ProviderPausedBanner'
 import ReviewBriefCard from '../task-detail/ReviewBriefCard'
 import { rejectDisabled, rejectPlaceholder } from '../task-detail/TaskActions'
 import DecisionContext from './DecisionContext'
+import AutonomyReasons from './AutonomyReasons'
+import AutonomyCountdown from '../home/AutonomyCountdown'
+import { gateTarget } from '../home/AutoApprovingRow'
+import { PR_STAYS_OPEN_TEXT, undoConfirmText } from '../../lib/homeInbox'
+import { UNDO_DISABLED_TITLE } from '../home/PolicyApprovalRow'
 import { Badge, Button, Card, Field, buttonClasses, controlClasses } from '../ui'
 
 const PRIMARY = buttonClasses({ variant: 'primary', size: 'sm' })
@@ -40,6 +45,12 @@ export type InboxPreviewProps = {
   onApplySource: () => void
   onDiscardSource: () => void
   onResume: () => void
+  onHold: () => void
+  /** Hold, then continue as a normal review of the same task. */
+  onReviewNow: () => void
+  onUndo: () => void
+  undoConfirmOpen: boolean
+  setUndoConfirmOpen: (v: boolean) => void
 }
 
 export default function InboxPreview(p: InboxPreviewProps) {
@@ -81,7 +92,7 @@ export default function InboxPreview(p: InboxPreviewProps) {
           </Badge>
           {item.label && (
             <Badge tone="neutral" size="xs">
-              {labelDisplayNameByName(item.label, p.workflow?.labels)}
+              {item.reason === 'auto_approving' ? gateTarget(item, p.workflow) : labelDisplayNameByName(item.label, p.workflow?.labels)}
             </Badge>
           )}
         </>
@@ -130,6 +141,24 @@ export default function InboxPreview(p: InboxPreviewProps) {
             )}
           </>
         )
+      } else if (item.reason === 'auto_approving') {
+        body = (
+          <>
+            <p className="text-sm text-fg">
+              <AutonomyCountdown dueAt={item.due_at} className="text-base font-semibold text-accent-fg" />
+              <span className="text-fg-muted"> unless you hold it.</span>
+            </p>
+            <AutonomyReasons item={item} labels={p.workflow?.labels} />
+            <DecisionContext item={item} />
+            <ReviewBriefCard taskId={item.task_id} refreshKey={item.since} filesOpen />
+            <div className="flex flex-wrap gap-2">
+              <Button aria-label="Hold" title="Hold (H)" size="sm" variant="primary" disabled={busy} onClick={p.onHold}>
+                Hold<kbd className={KBD}>h</kbd>
+              </Button>
+              <Button size="sm" variant="secondary" disabled={busy} onClick={p.onReviewNow}>Review now</Button>
+            </div>
+          </>
+        )
       } else if (item.reason === 'waiting_human' && a.reply) {
         body = (
           <>
@@ -176,6 +205,56 @@ export default function InboxPreview(p: InboxPreviewProps) {
           </>
         )
       }
+      break
+    }
+    case 'policy_approval': {
+      const ap = entry.approval
+      const gate = labelDisplayNameByName(ap.gate_label, p.workflow?.labels)
+      const current = labelDisplayNameByName(ap.label, p.workflow?.labels)
+      title = ap.task_title
+      age = ap.approved_at
+      chips = (
+        <>
+          <Badge tone="success" size="xs">Approved by policy</Badge>
+          <Badge tone="neutral" size="xs">{gate} → {current}</Badge>
+        </>
+      )
+      body = (
+        <>
+          {ap.note && <p data-testid="approval-note" className="rounded bg-surface-sunken px-3 py-2 text-xs text-fg-muted break-words">{ap.note}</p>}
+          {ap.pr_url && (
+            <a href={ap.pr_url} target="_blank" rel="noreferrer" className="text-xs text-accent-fg hover:underline">Pull request</a>
+          )}
+          {ap.changed && (
+            <p className="text-xs font-mono text-fg-muted">+{ap.changed.additions} −{ap.changed.deletions} · {ap.changed.files} {ap.changed.files === 1 ? 'file' : 'files'}</p>
+          )}
+          {/* The review brief card renders only while the task sits on a gate, so link to the diff instead. */}
+          <Link to={`/tasks/${ap.task_id}`} className="text-xs text-accent-fg hover:underline">View diff</Link>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              aria-label="Undo"
+              disabled={busy || !ap.undoable}
+              title={ap.undoable ? undefined : UNDO_DISABLED_TITLE}
+              onClick={() => p.setUndoConfirmOpen(!p.undoConfirmOpen)}
+            >
+              Undo
+            </Button>
+          </div>
+          {!ap.undoable && <p className="text-xs text-fg-subtle">{UNDO_DISABLED_TITLE}</p>}
+          {p.undoConfirmOpen && ap.undoable && (
+            <div data-testid="undo-confirm" className="flex flex-col gap-2 rounded-md border border-border bg-surface-sunken p-2 text-xs text-fg">
+              <p>{undoConfirmText(ap, { gate, current })}</p>
+              {ap.pr_url && <p>{PR_STAYS_OPEN_TEXT}</p>}
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="danger" disabled={busy} onClick={p.onUndo}>Undo approval</Button>
+                <Button size="sm" variant="secondary" onClick={() => p.setUndoConfirmOpen(false)}>Cancel</Button>
+              </div>
+            </div>
+          )}
+        </>
+      )
       break
     }
     case 'source_edit': {
