@@ -3524,6 +3524,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/workflows/{id}/labels/{label}/autonomy/backtest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Backtest a proposed autonomy setting for a gate label
+         * @description Read-only. Replays every human exit from the gate label in the last `days` days (default 30, max 90; forced moves ignored) and reports what the proposed setting would have done. Exits via the success path are `approved`, via the failure path `rejected`. Inputs are recomputed as of each pass (branch diff at that time, verify status of the latest run, cost so far); flags are only computed for `on_flags`. Passes whose branch or commit is gone are `unknown` and excluded from the tallies. Capped at the 500 most recent passes (`truncated`); on timeout the remaining passes are `unknown` and `timed_out` is true.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    label: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        mode: "ask" | "on_flags" | "auto";
+                        ask_on?: string[];
+                        max_cost_usd?: number | null;
+                        /** @default 30 */
+                        days?: number;
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutonomyBacktest"];
+                    };
+                };
+                /** @description Invalid body */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Workflow or label not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workflows/{id}": {
         parameters: {
             query?: never;
@@ -6459,6 +6525,31 @@ export interface components {
             /** @description mode_ask, always_ask, verify_failed, cost_exceeded, no_diff, flag_raised, auto_policy or no_blocking_flags. */
             code: string;
             detail: string;
+        };
+        AutonomyBacktest: {
+            total: number;
+            evaluated: number;
+            unknown: number;
+            would_skip: number;
+            would_ask: number;
+            /** @description Evaluated passes that were rejected */
+            rejected: number;
+            /** @description Rejected passes the setting would have skipped */
+            escaped: number;
+            truncated: boolean;
+            timed_out: boolean;
+            /** @description Oldest first */
+            passes: {
+                task_id: string;
+                title: string;
+                /** Format: date-time */
+                at: string;
+                /** @enum {string} */
+                outcome: "approved" | "rejected";
+                flags: string[];
+                would_skip: boolean | null;
+                unknown: boolean;
+            }[];
         };
         /** @description A shadow decision recorded when a task landed on a gate. Nothing is acted on. */
         AutonomyDecision: {
