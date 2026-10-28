@@ -103,11 +103,11 @@ func NewTasksHandler(q *gen.Queries, engine *workflow.Engine, uploadDir string, 
 	return &TasksHandler{q: q, engine: engine, uploadDir: uploadDir, canceller: canceller, dispatcher: dispatcher, blockReasons: blockReasons, wb: writeback.New(q)}
 }
 
-// SetPublisher sets the WebSocket publisher used to emit task.updated events
-// from handlers that change a task outside the workflow engine. Nil-safe.
 // SetAutonomyPublisher sets the publisher for autonomy hold/undo events.
 func (h *TasksHandler) SetAutonomyPublisher(pub TaskEventPublisher) { h.apub = pub }
 
+// SetPublisher sets the WebSocket publisher used to emit task.updated events
+// from handlers that change a task outside the workflow engine. Nil-safe.
 func (h *TasksHandler) SetPublisher(pub TaskEventPublisher) {
 	h.pub = pub
 }
