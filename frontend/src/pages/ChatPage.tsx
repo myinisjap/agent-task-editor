@@ -72,7 +72,7 @@ export default function ChatPage() {
 
   return (
     <div
-      className="h-full min-h-0 flex"
+      className="flex-1 min-h-0 flex"
       style={keyboardInset ? { paddingBottom: keyboardInset } : undefined}
       data-testid="chat-page"
     >
