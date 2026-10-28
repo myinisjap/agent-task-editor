@@ -49,6 +49,7 @@ export type InboxPreviewProps = {
   /** Hold, then continue as a normal review of the same task. */
   onReviewNow: () => void
   onUndo: () => void
+  onShouldHaveAsked?: () => void
   undoConfirmOpen: boolean
   setUndoConfirmOpen: (v: boolean) => void
 }
@@ -241,6 +242,9 @@ export default function InboxPreview(p: InboxPreviewProps) {
             >
               Undo
             </Button>
+            {p.onShouldHaveAsked && (
+              <Button size="sm" variant="secondary" onClick={p.onShouldHaveAsked}>Should have asked</Button>
+            )}
           </div>
           {!ap.undoable && <p className="text-xs text-fg-subtle">{UNDO_DISABLED_TITLE}</p>}
           {p.undoConfirmOpen && ap.undoable && (

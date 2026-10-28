@@ -200,6 +200,18 @@ describe('TaskHeader attachment URLs (#145 / #178)', () => {
   })
 })
 
+describe('TaskHeader should-have-asked button', () => {
+  it('renders only when the handler is provided', async () => {
+    const onSha = vi.fn()
+    const { unmount } = renderHeader(TaskHeader, baseTask({}))
+    expect(screen.queryByRole('button', { name: /Should have asked/ })).not.toBeInTheDocument()
+    unmount()
+    renderHeader(TaskHeader, baseTask({}), { onShouldHaveAsked: onSha })
+    await userEvent.click(screen.getByRole('button', { name: /Should have asked/ }))
+    expect(onSha).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('TaskHeader agent notes modal', () => {
   it('opens a modal with the full notes when the preview is clicked, and closes it', async () => {
     const user = userEvent.setup()

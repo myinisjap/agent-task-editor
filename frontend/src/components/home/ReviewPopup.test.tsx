@@ -10,14 +10,14 @@ import { useHealthStore } from '../../stores/health'
 import { useToastStore } from '../../stores/toast'
 import { flattenInbox } from '../../lib/inbox'
 
-const m = { hold: vi.fn(), undo: vi.fn(), needsMe: vi.fn(), approve: vi.fn(), reject: vi.fn(), list: vi.fn(), health: vi.fn(), reply: vi.fn() }
+const m = { suggestions: vi.fn(), hold: vi.fn(), undo: vi.fn(), needsMe: vi.fn(), approve: vi.fn(), reject: vi.fn(), list: vi.fn(), health: vi.fn(), reply: vi.fn() }
 vi.mock('../../api/client', async () => {
   const actual = await vi.importActual<typeof import('../../api/client')>('../../api/client')
   return {
     ...actual,
     api: {
       needsMe: { get: (...a: unknown[]) => m.needsMe(...a).then((r: unknown) => (Array.isArray(r) ? { items: r, approved_by_policy: [] } : r)) },
-      autonomy: { hold: (...a: unknown[]) => m.hold(...a), undo: (...a: unknown[]) => m.undo(...a) },
+      autonomy: { suggestions: (...a: unknown[]) => m.suggestions(...a), backtest: () => new Promise(() => undefined), hold: (...a: unknown[]) => m.hold(...a), undo: (...a: unknown[]) => m.undo(...a) },
       tasks: {
         list: (...a: unknown[]) => m.list(...a),
         approve: (...a: unknown[]) => m.approve(...a),
@@ -252,6 +252,20 @@ describe('ReviewPopup', () => {
       expect(m.undo).not.toHaveBeenCalled()
       await userEvent.click(screen.getByRole('button', { name: 'Undo approval' }))
       expect(m.undo).toHaveBeenCalledWith('a1')
+    })
+
+    it('Should have asked opens the dialog over the popup; Escape closes only the dialog', async () => {
+      m.needsMe.mockResolvedValue({ items: [], approved_by_policy: [approval] })
+      m.suggestions.mockResolvedValue({ task_id: 'a1', workflow_id: 'w', repo_id: 'r', label: 'review', policy_approved: true, decision_id: 'd', diff_available: true, changed_files: 2, changed_lines: 10, path_globs: [], task_type: null, min_changed_lines: null })
+      await load()
+      const onClose = vi.fn()
+      renderPopup('a1:approved', onClose)
+      await userEvent.click(screen.getByRole('button', { name: 'Should have asked' }))
+      expect(await screen.findByTestId('should-have-asked-dialog')).toBeInTheDocument()
+      await userEvent.keyboard('{Escape}')
+      expect(screen.queryByTestId('should-have-asked-dialog')).toBeNull()
+      expect(onClose).not.toHaveBeenCalled()
+      expect(screen.getByTestId('review-popup')).toBeInTheDocument()
     })
   })
 })

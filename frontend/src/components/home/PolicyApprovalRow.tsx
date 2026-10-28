@@ -14,16 +14,17 @@ type Props = {
   onSelect: (el: HTMLElement) => void
   onToggleConfirm: () => void
   onConfirmUndo: () => void
+  onShouldHaveAsked?: () => void
 }
 
 /** A policy approval row (last 24h): time, gate → current label, diff size and Undo with an inline confirm. */
-export default function PolicyApprovalRow({ approval: a, workflow, busy, entryKey, confirmOpen, onSelect, onToggleConfirm, onConfirmUndo }: Props) {
+export default function PolicyApprovalRow({ approval: a, workflow, busy, entryKey, confirmOpen, onSelect, onToggleConfirm, onConfirmUndo, onShouldHaveAsked }: Props) {
   const gate = labelDisplayNameByName(a.gate_label, workflow?.labels)
   const current = labelDisplayNameByName(a.label, workflow?.labels)
   const diff = formatChanged(a.changed)
   return (
     <li data-testid="policy-approval-row" className="min-w-0 flex flex-col">
-      <div className="flex items-center gap-1 rounded-md hover:bg-surface-sunken">
+      <div className="flex flex-wrap items-center gap-1 rounded-md hover:bg-surface-sunken">
         <button
           type="button"
           data-entry-key={entryKey}
@@ -37,6 +38,17 @@ export default function PolicyApprovalRow({ approval: a, workflow, busy, entryKe
             {diff && <span className="font-mono">{diff}</span>}
           </span>
         </button>
+        {onShouldHaveAsked && (
+          <Button
+            size="sm"
+            variant="ghost"
+            aria-label={`Should have asked about ${a.task_title}`}
+            onClick={onShouldHaveAsked}
+            className="shrink-0"
+          >
+            Should have asked
+          </Button>
+        )}
         <Button
           size="sm"
           variant="secondary"

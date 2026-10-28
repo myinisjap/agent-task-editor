@@ -59,6 +59,11 @@ export type TaskPreviewImage = Schemas['TaskPreviewImage']
 export type ReviewBrief = Schemas['ReviewBrief']
 export type AutonomyDecision = Schemas['AutonomyDecision']
 export type AutonomyReason = Schemas['AutonomyReason']
+export type AutonomySuggestions = Schemas['AutonomySuggestions']
+export type AutonomyBacktest = Schemas['AutonomyBacktest']
+export type ShouldHaveAskedRequest = Schemas['ShouldHaveAskedRequest']
+export type ShouldHaveAskedResponse = Schemas['ShouldHaveAskedResponse']
+export type AskRuleInput = Schemas['AskRuleInput']
 export type RiskFlag = Schemas['RiskFlag']
 export type RiskFlagCode = Schemas['RiskFlagCode']
 // Named *Entry historically; the schema is TaskLabelHistory.
@@ -557,6 +562,22 @@ export const api = {
       request<Schemas['AutonomyDecision']>(`/tasks/${taskId}/autonomy/hold`, { method: 'POST' }),
     undo: (taskId: string) =>
       request<Schemas['AutonomyUndoResponse']>(`/tasks/${taskId}/autonomy/undo`, { method: 'POST' }),
+    suggestions: (taskId: string) =>
+      request<Schemas['AutonomySuggestions']>(`/tasks/${taskId}/autonomy/suggestions`),
+    shouldHaveAsked: (taskId: string, body: Schemas['ShouldHaveAskedRequest']) =>
+      request<Schemas['ShouldHaveAskedResponse']>(`/tasks/${taskId}/autonomy/should-have-asked`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    backtest: (
+      workflowId: string,
+      label: string,
+      body: { mode: 'ask' | 'on_flags' | 'auto'; days?: number; extra_rules?: Schemas['AskRuleInput'][] },
+    ) =>
+      request<Schemas['AutonomyBacktest']>(
+        `/workflows/${workflowId}/labels/${encodeURIComponent(label)}/autonomy/backtest`,
+        { method: 'POST', body: JSON.stringify(body) },
+      ),
   },
   dashboard: {
     get: () => request<Dashboard>('/dashboard'),
