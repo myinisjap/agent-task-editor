@@ -3,7 +3,7 @@
 import type { Workflow } from '../api/client'
 import { bucketize } from '../components/taskBuckets'
 import { stationsFor } from '../components/factoryStations'
-import { entryKey, entrySince, entryTaskId, SECTION_ORDER, type InboxEntry, type InboxSections } from './inbox'
+import { entryKey, entrySince, orderedSectionKeys, reviewHref, SECTION_META, type InboxEntry, type InboxSections } from './inbox'
 import { isHumanGateLabel } from './humanGate'
 import { labelDisplayName } from './labelDisplay'
 
@@ -18,25 +18,21 @@ export function entryTitle(e: InboxEntry): string {
   }
 }
 
-/** Where a row goes today: the task page, or the Inbox with the entry selected. */
+/** Where a row goes: Home with the review popup open on the entry. */
 export function entryHref(e: InboxEntry): string {
-  const id = entryTaskId(e)
-  return id ? `/tasks/${id}` : `/inbox?task=${encodeURIComponent(entryKey(e))}`
+  return reviewHref(entryKey(e))
 }
-
-const SECTION_TITLES: Record<string, string> = { decide: 'Decide', answer: 'Answer', fix: 'Fix setup' }
 
 /** Section heading; unknown sections get a capitalised key, or "Other". */
 export function sectionTitle(key: string): string {
-  if (SECTION_TITLES[key]) return SECTION_TITLES[key]
+  if (SECTION_META[key]) return SECTION_META[key].title
   const k = key.replace(/[-_]+/g, ' ').trim()
   return k ? k.charAt(0).toUpperCase() + k.slice(1) : 'Other'
 }
 
 /** Section keys in display order: known ones first, then any extras. */
 export function sectionKeys(sections: InboxSections): string[] {
-  const extra = Object.keys(sections).filter((k) => !(SECTION_ORDER as string[]).includes(k))
-  return [...SECTION_ORDER, ...extra]
+  return orderedSectionKeys(sections)
 }
 
 /** [sectionKey, entries] for every non-empty section, in display order. */

@@ -20,7 +20,7 @@ describe('BottomTabBar', () => {
 
   it('renders tabs with hrefs and is phone-only', () => {
     setup()
-    expect(screen.getByRole('link', { name: 'Inbox' })).toHaveAttribute('href', '/inbox')
+    expect(screen.getByRole('link', { name: /^Home/ })).toHaveAttribute('href', '/')
     expect(screen.getByRole('link', { name: 'Board' })).toHaveAttribute('href', '/board')
     expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/chat')
     expect(screen.getByRole('navigation').className).toContain('md:hidden')
@@ -33,7 +33,7 @@ describe('BottomTabBar', () => {
     expect(screen.getByRole('link', { name: 'Board' })).not.toHaveAttribute('aria-current')
   })
 
-  it('shows the inbox badge only when count > 0', () => {
+  it('shows the Home badge only when count > 0', () => {
     setup()
     expect(screen.queryByLabelText(/items waiting/)).not.toBeInTheDocument()
   })

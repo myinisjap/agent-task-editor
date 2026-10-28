@@ -12,6 +12,7 @@ import TaskHeader from '../components/task-detail/TaskHeader'
 import { humanActionsFor, isHumanGateLabel as isStrictHumanGate, humanPathTargetLabel } from '../lib/humanGate'
 import { useIsPhone, useIsWideDesktop } from '../lib/useMediaQuery'
 import DetailsDisclosure from '../components/task-detail/DetailsDisclosure'
+import AlwaysAskSwitch from '../components/task-detail/AlwaysAskSwitch'
 import ReviewLayout from '../components/task-detail/ReviewLayout'
 import TaskActions from '../components/task-detail/TaskActions'
 import RunHistoryList from '../components/task-detail/RunHistoryList'
@@ -60,6 +61,7 @@ export default function TaskDetailPage() {
   const [activeTab, setActiveTab] = useState<Tab>('overview')
   const [showHelp, setShowHelp] = useState(false)
   const [workflow, setWorkflow] = useState<Workflow | null>(null)
+  const [alwaysAskPending, setAlwaysAskPending] = useState(false)
   const [editingTask, setEditingTask] = useState(false)
   const [editTitle, setEditTitle] = useState('')
   const [editDesc, setEditDesc] = useState('')
@@ -475,6 +477,23 @@ export default function TaskDetailPage() {
     }
   }
 
+  const handleToggleAlwaysAsk = async () => {
+    if (!id || !task) return
+    setAlwaysAskPending(true)
+    try {
+      const prev = !!task.always_ask
+      const updated = await api.tasks.setAlwaysAsk(id, !prev)
+      setTask(updated)
+      showUndoToast(`Always ask ${prev ? 'off' : 'on'} for "${task.title}"`, async () => {
+        setTask(await api.tasks.setAlwaysAsk(id, prev))
+      })
+    } catch (e: unknown) {
+      showError(errMessage(e))
+    } finally {
+      setAlwaysAskPending(false)
+    }
+  }
+
   // "Move to…" control on the Overview tab — same call the board's drag/bulk
   // "Move to…" actions use. Gives a touch-friendly path to change a task's
   // label from any device (see issue #147).
@@ -648,6 +667,9 @@ export default function TaskDetailPage() {
             <HumanDecisionsList decisions={humanDecisions} onRemember={canRemember ? setRememberText : undefined} />
 
             <DetailsDisclosure>
+              {(task.always_ask || (workflow?.labels ?? []).some((l) => l.autonomy && l.autonomy.mode !== 'ask')) && (
+                <AlwaysAskSwitch checked={!!task.always_ask} onChange={handleToggleAlwaysAsk} disabled={alwaysAskPending} />
+              )}
               <DependenciesPanel
                 task={task}
                 onChanged={() => { if (id) api.tasks.get(id).then(setTask).catch(() => {}) }}
@@ -711,6 +733,8 @@ export default function TaskDetailPage() {
       creatingPR={creatingPR}
       verificationKey={verificationKey}
       briefKey={briefKey}
+      labels={workflow?.labels ?? []}
+      alwaysAsk={!!task.always_ask}
       mode={reviewMode}
       onBack={() => navigate('/board')}
       onHelp={() => setShowHelp(true)}
