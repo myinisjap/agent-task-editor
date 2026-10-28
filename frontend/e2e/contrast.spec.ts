@@ -74,7 +74,7 @@ test.beforeAll(async () => {
 
 const pages: { name: string; path: () => string; anchor: (p: Page) => Locator }[] = [
   { name: 'Inbox', path: () => 'inbox', anchor: (p) => p.getByRole('heading', { name: 'Inbox', exact: true }) },
-  { name: 'Board', path: () => 'board', anchor: (p) => p.getByRole('heading', { name: 'Board', exact: true }) },
+  { name: 'Board', path: () => 'board', anchor: (p) => p.getByRole('button', { name: 'About the board' }) },
   { name: 'Task Detail', path: () => `tasks/${taskId}`, anchor: (p) => p.getByText(taskTitle).first() },
   { name: 'Pipeline Overview', path: () => 'pipeline/overview', anchor: (p) => p.getByTestId('pipeline-overview') },
   {
