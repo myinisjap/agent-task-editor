@@ -296,6 +296,8 @@ export function isGated(draft: WorkflowDraft, name: string): boolean {
 export function setGate(draft: WorkflowDraft, name: string, gated: boolean): WorkflowDraft {
   return {
     ...draft,
+    // The server rejects un-gating a label that still has autonomy, so clear it in the same save.
+    labels: gated ? draft.labels : draft.labels.map((l) => (l.name === name ? { ...l, autonomy: null } : l)),
     transitions: draft.transitions.map((t) => {
       if (t.from_label !== name || t.path === 'failure') return t
       return gated
@@ -351,7 +353,7 @@ export function validateDraft(draft: WorkflowDraft): DraftError[] {
  * sidesteps quoting rules for arbitrary names and commands, so the body is the
  * JSON encoding of the yaml-shaped object, sent as application/yaml.
  */
-export function serializeDraft(draft: WorkflowDraft): string {
+export function serializeDraft(draft: WorkflowDraft, opts?: { keepAgentConfig?: boolean }): string {
   const doc = {
     name: draft.name,
     description: draft.description || undefined,
@@ -382,6 +384,7 @@ export function serializeDraft(draft: WorkflowDraft): string {
       to: t.to_label,
       trigger: t.trigger_type,
       path: t.path ?? undefined,
+      agent_config: opts?.keepAgentConfig ? (t.agent_config_id ?? undefined) : undefined,
     })),
   }
   return JSON.stringify(doc)

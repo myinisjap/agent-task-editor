@@ -61,6 +61,13 @@ export type AutonomyDecision = Schemas['AutonomyDecision']
 export type AutonomyReason = Schemas['AutonomyReason']
 export type RiskFlag = Schemas['RiskFlag']
 export type RiskFlagCode = Schemas['RiskFlagCode']
+export type LabelAutonomy = Schemas['LabelAutonomy']
+export type AutonomyBacktest = Schemas['AutonomyBacktest']
+export type AskRule = Schemas['AskRule']
+export type AskRuleInput = Schemas['AskRuleInput']
+export type AutonomyHistory = Schemas['AutonomyHistory']
+export type AutonomyChange = Schemas['AutonomyChange']
+export type AutonomyEscape = Schemas['AutonomyEscape']
 // Named *Entry historically; the schema is TaskLabelHistory.
 export type TaskLabelHistoryEntry = Schemas['TaskLabelHistory']
 export type AgentLog = Schemas['AgentLog']
@@ -557,6 +564,25 @@ export const api = {
       request<Schemas['AutonomyDecision']>(`/tasks/${taskId}/autonomy/hold`, { method: 'POST' }),
     undo: (taskId: string) =>
       request<Schemas['AutonomyUndoResponse']>(`/tasks/${taskId}/autonomy/undo`, { method: 'POST' }),
+    backtest: (
+      workflowId: string,
+      label: string,
+      body: { mode: LabelAutonomy['mode']; ask_on: RiskFlagCode[]; max_cost_usd: number | null; days?: number },
+      signal?: AbortSignal,
+    ) =>
+      request<AutonomyBacktest>(
+        `/workflows/${workflowId}/labels/${encodeURIComponent(label)}/autonomy/backtest`,
+        { method: 'POST', body: JSON.stringify(body), signal },
+      ),
+    history: (workflowId: string, label: string) =>
+      request<AutonomyHistory>(`/workflows/${workflowId}/labels/${encodeURIComponent(label)}/autonomy/history`),
+    askRules: {
+      list: (q: { workflow_id: string; label: string }) => {
+        const qs = new URLSearchParams({ workflow_id: q.workflow_id, label: q.label })
+        return request<AskRule[]>(`/autonomy/ask-rules?${qs}`)
+      },
+      delete: (id: string) => request<void>(`/autonomy/ask-rules/${id}`, { method: 'DELETE' }),
+    },
   },
   dashboard: {
     get: () => request<Dashboard>('/dashboard'),

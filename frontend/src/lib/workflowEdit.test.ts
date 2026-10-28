@@ -94,6 +94,24 @@ describe('workflowEdit', () => {
     expect(d.transitions[1]).toMatchObject({ trigger_type: 'agent', path: 'success' })
   })
 
+  it('un-gating clears the label autonomy', () => {
+    let d = setGate(base(), 'work', true)
+    d = updateLabel(d, 'work', { autonomy: { mode: 'auto', ask_on: [], hold_seconds: 600 } })
+    d = setGate(d, 'work', false)
+    expect(d.labels.find((l) => l.name === 'work')?.autonomy).toBeNull()
+  })
+
+  it('keepAgentConfig emits per-transition agent_config and the autonomy hold', () => {
+    let d = base()
+    d = { ...d, transitions: d.transitions.map((t, i) => (i === 1 ? { ...t, agent_config_id: 'ag1' } : t)) }
+    d = updateLabel(d, 'work', { autonomy: { mode: 'auto', ask_on: [], hold_seconds: 600 } })
+    const plain = JSON.parse(serializeDraft(d))
+    expect(plain.transitions[1].agent_config).toBeUndefined()
+    const kept = JSON.parse(serializeDraft(d, { keepAgentConfig: true }))
+    expect(kept.transitions[1].agent_config).toBe('ag1')
+    expect(kept.labels.find((l: { name: string }) => l.name === 'work').autonomy.hold).toBe('600s')
+  })
+
   it('updateLabel keeps create_pr unique', () => {
     const d = updateLabel(base(), 'work', { create_pr: true })
     expect(d.labels.filter((l) => l.create_pr).map((l) => l.name)).toEqual(['work'])

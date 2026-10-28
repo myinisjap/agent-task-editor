@@ -1,6 +1,6 @@
 import { labelDisplayName } from '../lib/labelDisplay'
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api, type AgentConfig, type Workflow } from '../api/client'
 import ConfirmDialog from '../components/shared/ConfirmDialog'
 import WorkflowGraphEditor from '../components/shared/WorkflowGraphEditor'
@@ -16,7 +16,12 @@ import {
 } from '../lib/workflowEdit'
 import { validateWorkflow } from '../lib/validateWorkflow'
 import { Button, Icon, PageFrame, controlClasses } from '../components/ui'
-import { X } from 'lucide-react'
+import { ChevronRight, X } from 'lucide-react'
+import GateDialPanel from '../components/pipeline/GateDialPanel'
+import GateDialSheet from '../components/pipeline/GateDialSheet'
+import AutonomyDialChip from '../components/shared/AutonomyDialChip'
+import { gateMode, isAutonomyGate } from '../lib/autonomyDial'
+import { useIsMobile } from '../lib/useIsMobile'
 import WorkflowFlowchart from '../components/shared/WorkflowFlowchart'
 import { useAgentsStore } from '../stores/agents'
 import { useWorkflowStore } from '../stores/workflow'
@@ -66,6 +71,21 @@ export default function PipelineOverviewPage() {
     [workflow, agents],
   )
   const label = workflow?.labels.find((l) => l.name === selectedLabel)
+  const isMobile = useIsMobile()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const gateParam = searchParams.get('gate')
+  // Deep link from the graph editor: ?gate=<label> selects that gate. While
+  // editing, leave it in place so the panel opens after Save/Discard.
+  useEffect(() => {
+    if (!gateParam || editing) return
+    setSelectedLabel(gateParam)
+    setSearchParams((p) => { p.delete('gate'); return p }, { replace: true })
+  }, [gateParam, editing, setSearchParams])
+  const selectedIsGate = !editing && !!workflow && !!label && isAutonomyGate(workflow, label.name)
+  const gates = useMemo(
+    () => (workflow && !editing ? workflow.labels.filter((l) => isAutonomyGate(workflow, l.name)) : []),
+    [workflow, editing],
+  )
 
   const dirty = editing && draft !== null && baseline !== null && isDirty(draft, baseline)
   const draftWorkflow = useMemo(
@@ -264,8 +284,8 @@ export default function PipelineOverviewPage() {
           No workflows. Create one in the Workflow tab to get started.
         </div>
       ) : (
-        <div className="flex-1 min-h-0 flex flex-col md:flex-row gap-3">
-          <div className="flex-1 min-w-0 min-h-[50vh] md:min-h-0 rounded border border-border overflow-hidden bg-surface">
+        <div className={`flex-1 min-h-0 flex flex-col gap-3 ${selectedIsGate && !isMobile ? '' : 'md:flex-row'}`}>
+          <div className={`flex-1 min-w-0 min-h-[50vh] ${selectedIsGate && !isMobile ? 'md:min-h-[40vh]' : 'md:min-h-0'} rounded border border-border overflow-hidden bg-surface`}>
             <WorkflowFlowchart
               workflow={draftWorkflow ?? workflow}
               staffing={draftStaffing ?? staffing}
@@ -286,7 +306,37 @@ export default function PipelineOverviewPage() {
               connectPrefill={prefill}
             />
           )}
-          {!editing && label && (
+          {!isMobile && selectedIsGate && workflow && label && (
+            <section
+              aria-label={`Gate settings for ${labelDisplayName(label)}`}
+              className="max-h-[55vh] overflow-auto rounded border border-border bg-surface-raised"
+            >
+              <GateDialPanel workflow={workflow} label={label} onClose={() => setSelectedLabel(null)} />
+            </section>
+          )}
+          {isMobile && gates.length > 0 && (
+            <ul aria-label="Gates" className="space-y-1">
+              {gates.map((g) => (
+                <li key={g.name}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedLabel(g.name)}
+                    className="flex w-full items-center justify-between gap-2 rounded border border-border bg-surface-raised px-3 py-2 text-sm text-fg"
+                  >
+                    <span className="truncate">{labelDisplayName(g)}</span>
+                    <span className="flex items-center gap-2">
+                      <AutonomyDialChip mode={gateMode(g)} />
+                      <Icon icon={ChevronRight} size="sm" />
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {isMobile && selectedIsGate && workflow && label && (
+            <GateDialSheet workflow={workflow} label={label} onClose={() => setSelectedLabel(null)} />
+          )}
+          {!editing && label && !selectedIsGate && (
             <aside
               aria-label={`Assign agents to ${labelDisplayName(label)}`}
               className="md:w-72 shrink-0 rounded border border-border bg-surface-raised p-3 space-y-2 overflow-auto"

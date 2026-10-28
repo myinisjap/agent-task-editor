@@ -18,6 +18,8 @@ import {
 import '@xyflow/react/dist/style.css'
 import type { Workflow } from '../../api/client'
 import { useThemeStore } from '../../stores/theme'
+import AutonomyDialChip from './AutonomyDialChip'
+import { gateMode, isAutonomyGate, DIAL_NAME, type DialMode } from '../../lib/autonomyDial'
 import { useIsMobile } from '../../lib/useIsMobile'
 import type { LabelStaffing } from '../../lib/staffing'
 import {
@@ -69,6 +71,8 @@ interface LabelNodeData {
     staffing: LabelStaffing
     selected: boolean
     onSelect?: (name: string) => void
+    /** Set only on autonomy gates: the label's current dial mode. */
+    dial?: DialMode
     /** Edit mode: the main in/out handles become visible drag targets. */
     editable?: boolean
   }
@@ -85,6 +89,7 @@ function Badge({ text }: { text: string }) {
 function StaffingRow({ name, s, detail }: { name: string; s: LabelStaffing; detail: NonNullable<LabelNodeData['detail']> }) {
   if (s.kind === 'terminal') return null
   if (s.kind === 'human') {
+    if (detail.dial) return <span className="self-start"><AutonomyDialChip mode={detail.dial} size="xs" /></span>
     return <span className={`${chip} self-start border-slate-600 bg-slate-800 text-slate-300`} style={chipStyle}>Human gate</span>
   }
   if (s.kind === 'unstaffed') {
@@ -135,7 +140,7 @@ function WorkflowLabelNode({ data }: NodeProps) {
     <div
       role={detail?.onSelect ? 'button' : undefined}
       tabIndex={detail?.onSelect ? 0 : undefined}
-      aria-label={detail ? `${d.label} stage` : undefined}
+      aria-label={detail ? (detail.dial ? `${d.label} stage, gate: ${DIAL_NAME[detail.dial]}` : `${d.label} stage`) : undefined}
       aria-pressed={detail?.onSelect ? detail.selected : undefined}
       data-testid={detail ? `pipeline-node-${d.name}` : undefined}
       onKeyDown={
@@ -271,6 +276,7 @@ export default function WorkflowFlowchart({ workflow, staffing, onSelectLabel, s
               staffing: staffing.get(lbl.name!) ?? { kind: 'human', agents: [] },
               selected: selectedLabel === lbl.name,
               onSelect: onSelectLabel,
+              dial: isAutonomyGate(workflow, lbl.name!) ? gateMode(lbl) : undefined,
               editable,
             }
           : undefined,
