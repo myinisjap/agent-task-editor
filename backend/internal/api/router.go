@@ -9,6 +9,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
+	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/escape"
 	"github.com/myinisjap/agent-task-editor/backend/internal/intakehook"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/reviewbrief"
@@ -81,6 +82,9 @@ type RouterDeps struct {
 	// EventPublisher is the full fan-out (hub + notifier + policy), used for
 	// autonomy hold/undo events. Optional.
 	EventPublisher handlers.TaskEventPublisher
+	// EscapeRecorder records autonomy escapes and applies the step-down. Optional;
+	// the router builds one from the DB and EventPublisher when nil.
+	EscapeRecorder *escape.Recorder
 }
 
 // NewRouter builds and returns the application router.
@@ -99,6 +103,17 @@ func NewRouter(deps RouterDeps) http.Handler {
 	if deps.EventPublisher != nil {
 		tasksH.SetAutonomyPublisher(deps.EventPublisher)
 	}
+	escapeRec := deps.EscapeRecorder
+	if escapeRec == nil {
+		var ep escape.Publisher = hub
+		if deps.EventPublisher != nil {
+			ep = deps.EventPublisher
+		}
+		escapeRec = escape.New(q, ep)
+	}
+	tasksH.SetAutonomyDeps(db.SQL(), escapeRec, briefCache)
+	autonomyRulesH := handlers.NewAutonomyRulesHandler(q)
+	autonomySettingsH := handlers.NewAutonomySettingsHandler(q)
 	depsH := handlers.NewDependenciesHandler(q, db.SQL(), hub)
 	subtasksH := handlers.NewSubtasksHandler(q, db.SQL(), hub)
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
@@ -238,6 +253,15 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Get("/tasks/{id}/autonomy-decision", handlers.NewAutonomyHandler(q).GetDecision)
 			r.Post("/tasks/{id}/autonomy/hold", tasksH.HoldAutonomy)
 			r.Post("/tasks/{id}/autonomy/undo", tasksH.UndoAutonomy)
+			r.Get("/tasks/{id}/autonomy/suggestions", tasksH.AutonomySuggestions)
+			r.Post("/tasks/{id}/autonomy/should-have-asked", tasksH.ShouldHaveAsked)
+			r.Get("/autonomy/ask-rules", autonomyRulesH.List)
+			r.Post("/autonomy/ask-rules", autonomyRulesH.Create)
+			r.Patch("/autonomy/ask-rules/{id}", autonomyRulesH.Update)
+			r.Delete("/autonomy/ask-rules/{id}", autonomyRulesH.Delete)
+			r.Get("/workflows/{id}/labels/{label}/autonomy/history", autonomyRulesH.History)
+			r.Get("/settings/autonomy", autonomySettingsH.Get)
+			r.Put("/settings/autonomy", autonomySettingsH.Update)
 			r.Get("/tasks/{id}/pr-url", tasksH.PRURL)
 			r.Post("/tasks/{id}/pr", tasksH.CreatePR)
 			r.Post("/tasks/{id}/side-effects/retry", tasksH.RetrySideEffects)

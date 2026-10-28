@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -296,6 +297,11 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	oldLabels, err := tq.ListWorkflowLabels(r.Context(), wfID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if err := tq.DeleteWorkflowLabels(r.Context(), wfID); err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
@@ -334,6 +340,11 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+	}
+
+	if err := recordAutonomyChanges(r.Context(), tq, wfID, oldLabels, middleware.ActorFromContext(r.Context()), "workflow update"); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
 	if err := tq.DeleteWorkflowTransitions(r.Context(), wfID); err != nil {

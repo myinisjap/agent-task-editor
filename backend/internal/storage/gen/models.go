@@ -115,6 +115,32 @@ type AgentRun struct {
 	ExperimentArm      *string    `json:"experiment_arm"`
 }
 
+type AutonomyAskRule struct {
+	ID              string     `json:"id"`
+	RepoID          *string    `json:"repo_id"`
+	WorkflowID      string     `json:"workflow_id"`
+	Label           *string    `json:"label"`
+	PathGlobs       string     `json:"path_globs"`
+	TaskType        *string    `json:"task_type"`
+	MinChangedLines *int64     `json:"min_changed_lines"`
+	CreatedBy       string     `json:"created_by"`
+	SourceTaskID    *string    `json:"source_task_id"`
+	CreatedAt       time.Time  `json:"created_at"`
+	HitCount        int64      `json:"hit_count"`
+	LastHitAt       *time.Time `json:"last_hit_at"`
+}
+
+type AutonomyChange struct {
+	ID         string    `json:"id"`
+	WorkflowID string    `json:"workflow_id"`
+	Label      string    `json:"label"`
+	FromMode   string    `json:"from_mode"`
+	ToMode     string    `json:"to_mode"`
+	Actor      string    `json:"actor"`
+	Reason     string    `json:"reason"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 type AutonomyDecision struct {
 	ID           string     `json:"id"`
 	TaskID       string     `json:"task_id"`
@@ -134,12 +160,24 @@ type AutonomyDecision struct {
 }
 
 type AutonomyEscape struct {
-	ID         string    `json:"id"`
-	TaskID     string    `json:"task_id"`
-	WorkflowID string    `json:"workflow_id"`
-	Label      string    `json:"label"`
-	Source     string    `json:"source"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID              string    `json:"id"`
+	TaskID          string    `json:"task_id"`
+	WorkflowID      string    `json:"workflow_id"`
+	Label           string    `json:"label"`
+	Source          string    `json:"source"`
+	CreatedAt       time.Time `json:"created_at"`
+	DecisionID      *string   `json:"decision_id"`
+	Actor           *string   `json:"actor"`
+	Note            *string   `json:"note"`
+	RuleID          *string   `json:"rule_id"`
+	ResetByChangeID *string   `json:"reset_by_change_id"`
+}
+
+type AutonomySetting struct {
+	ID                 int64     `json:"id"`
+	StepDownEscapes    int64     `json:"step_down_escapes"`
+	StepDownWindowDays int64     `json:"step_down_window_days"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 type BackupSetting struct {

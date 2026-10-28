@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
+	"github.com/myinisjap/agent-task-editor/backend/internal/pathglob"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -121,50 +122,7 @@ func matchLessonGlob(pattern, file string) bool {
 	return matchLessonGlobCached(map[string]*regexp.Regexp{}, pattern, file)
 }
 
-func compileLessonGlob(pattern string) *regexp.Regexp {
-	pattern = strings.TrimSpace(pattern)
-	if pattern == "" {
-		return nil
-	}
-	prefix := false
-	if strings.HasSuffix(pattern, "/") {
-		prefix = true
-		pattern = strings.TrimLeft(pattern, "/")
-		pattern += "**"
-	}
-	var b strings.Builder
-	b.WriteString("^")
-	if !strings.Contains(strings.TrimSuffix(pattern, "**"), "/") && !prefix {
-		b.WriteString("(?:.*/)?") // basename match
-	}
-	for i := 0; i < len(pattern); i++ {
-		c := pattern[i]
-		switch c {
-		case '*':
-			if i+1 < len(pattern) && pattern[i+1] == '*' {
-				i++
-				if i+1 < len(pattern) && pattern[i+1] == '/' {
-					i++
-					b.WriteString("(?:.*/)?") // "**/" = zero or more dirs
-				} else {
-					b.WriteString(".*")
-				}
-			} else {
-				b.WriteString("[^/]*")
-			}
-		case '?':
-			b.WriteString("[^/]")
-		default:
-			b.WriteString(regexp.QuoteMeta(string(c)))
-		}
-	}
-	b.WriteString("$")
-	re, err := regexp.Compile(b.String())
-	if err != nil {
-		return nil
-	}
-	return re
-}
+func compileLessonGlob(pattern string) *regexp.Regexp { return pathglob.Compile(pattern) }
 
 // lessonSelector returns the Job.SelectLessons closure for task t. It runs in
 // the pool worker after the worktree exists, so git never runs in the sweep.

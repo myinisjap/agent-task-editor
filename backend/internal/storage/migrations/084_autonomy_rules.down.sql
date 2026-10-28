@@ -1,0 +1,12 @@
+DROP TABLE autonomy_settings;
+DROP INDEX idx_autonomy_changes_gate;
+DROP TABLE autonomy_changes;
+DROP INDEX idx_autonomy_ask_rules_wf;
+DROP TABLE autonomy_ask_rules;
+DROP INDEX idx_autonomy_escapes_decision;
+DROP INDEX idx_autonomy_escapes_gate;
+ALTER TABLE autonomy_escapes DROP COLUMN reset_by_change_id;
+ALTER TABLE autonomy_escapes DROP COLUMN rule_id;
+ALTER TABLE autonomy_escapes DROP COLUMN note;
+ALTER TABLE autonomy_escapes DROP COLUMN actor;
+ALTER TABLE autonomy_escapes DROP COLUMN decision_id;

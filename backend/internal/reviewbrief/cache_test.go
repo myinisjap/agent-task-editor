@@ -84,3 +84,12 @@ func must(t *testing.T, err error) {
 		t.Fatal(err)
 	}
 }
+
+func TestCompute_Paths(t *testing.T) {
+	diff := "diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1 +1 @@\n-a\n+b\n" +
+		"diff --git a/db/q.sql b/db/q.sql\n--- a/db/q.sql\n+++ b/db/q.sql\n@@ -1 +1 @@\n-a\n+b\n"
+	res := compute(diff, "")
+	if len(res.Paths) != 2 || res.Paths[0] != "x.go" || res.Paths[1] != "db/q.sql" {
+		t.Fatalf("paths = %v", res.Paths)
+	}
+}

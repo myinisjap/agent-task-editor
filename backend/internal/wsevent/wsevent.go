@@ -44,6 +44,7 @@ const (
 	TypeTaskAutonomyApproved     = "task.autonomy_approved"
 	TypeTaskAutonomyUndone       = "task.autonomy_undone"
 	TypeTaskAutonomyAsked        = "task.autonomy_asked"
+	TypeAutonomySteppedDown      = "autonomy.stepped_down"
 	TypeResync                   = "resync"
 )
 
@@ -307,4 +308,18 @@ const (
 	AskedSkipped         = "skipped"
 	AskedFailed          = "failed"
 	AskedEvaluationError = "evaluation_error"
+	AskedSteppedDown     = "stepped_down"
 )
+
+// AutonomySteppedDown is the payload of autonomy.stepped_down: a gate's mode
+// was lowered after too many escapes.
+type AutonomySteppedDown struct {
+	WorkflowID string `json:"workflow_id"`
+	Label      string `json:"label"`
+	FromMode   string `json:"from_mode"`
+	ToMode     string `json:"to_mode"`
+	Actor      string `json:"actor"`
+	Reason     string `json:"reason"`
+	Escapes    int    `json:"escapes"`
+	ChangeID   string `json:"change_id"`
+}

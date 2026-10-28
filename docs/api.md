@@ -254,6 +254,55 @@ gate exit was by actor `policy`. Records label history (actor = caller, note
 `pr_left_open` is true. `404` unknown task; `409` when archived, the last gate
 exit was not by `policy`, the task is terminal-merged, or a run is live.
 
+### `GET /tasks/{id}/autonomy/suggestions`
+Candidate ask-rule conditions derived from the task (see
+[workflows.md § Should have asked](workflows.md#should-have-asked)):
+`{task_id, workflow_id, repo_id, label, policy_approved, decision_id,
+diff_available, changed_files, changed_lines, path_globs: [{glob, kind, files}],
+task_type, min_changed_lines}`. Without a diff `path_globs` is `[]` and
+`min_changed_lines` null. `404` unknown task.
+
+### `POST /tasks/{id}/autonomy/should-have-asked`
+Body `{rule?: {path_globs?, task_type?, min_changed_lines?}, scope_repo,
+label_scope: "this_gate"|"all_gates", send_back_note?, lesson?: {body, kind?}}`.
+Records an escape (source `should_have_asked`) against the task's latest policy
+approval, optionally creates the ask rule and an active lesson (same globs),
+optionally sends the task back through its failure path, then may step the gate
+down. Returns `{escape, rule, lesson, sent_back, send_back_error?, step_down,
+task}`. `400` invalid rule/lesson/`label_scope`; `404` unknown task; `409` task
+archived, not approved by the policy, or (with `send_back_note`) no failure path
+or a live run. Nothing is written on a 4xx.
+
+### `GET /autonomy/ask-rules`
+Query `workflow_id`, `label`, `repo_id` (all optional). The `label` and `repo_id`
+filters also return all-gates / all-repos rules. Newest first.
+
+### `POST /autonomy/ask-rules`
+Body `{workflow_id, label?, repo_id?, path_globs?, task_type?,
+min_changed_lines?, source_task_id?}` with at least one condition. `201` with
+the rule (`hit_count`, `last_hit_at`, `summary`); `400` for no condition, an
+invalid glob (max 20, 256 chars each), `min_changed_lines < 1`, or an unknown
+workflow, label or repo.
+
+### `PATCH /autonomy/ask-rules/{id}`
+Same fields; an explicit `null` clears `label`, `repo_id`, `task_type` or
+`min_changed_lines`. `workflow_id` cannot change. The merged rule is
+re-validated. `404` unknown rule.
+
+### `DELETE /autonomy/ask-rules/{id}`
+`204`, or `404`.
+
+### `GET /workflows/{id}/labels/{label}/autonomy/history`
+`{workflow_id, label, current_mode, changes: [{id, from_mode, to_mode, actor,
+reason, created_at}], escapes: [{id, task_id, task_title, source, decision_id,
+actor, note, rule_id, created_at, counted}], step_down: {escapes_counted,
+threshold, window_days}}`, newest first, 200 each. `404` only for an unknown
+workflow.
+
+### `GET /settings/autonomy` / `PUT /settings/autonomy`
+`{step_down_escapes (0–100, 0 = never step down; default 2),
+step_down_window_days (1–365; default 14)}`. Both fields are required on PUT.
+
 ### `PATCH /tasks/{id}/always-ask`
 Body `{"always_ask": true|false}`. Sets the per-task override that makes the
 autonomy policy always ask a human at gates. Returns the task (with

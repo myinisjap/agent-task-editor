@@ -17,6 +17,8 @@ One file per resource group. All handlers receive a `*gen.Queries` for database 
 | `review_brief.go` | `ReviewBriefHandler` (GET /tasks/{id}/review-brief) | `reviewbrief`, `needsme` |
 | `autonomy.go` | `AutonomyHandler` (GET /tasks/{id}/autonomy-decision), `TasksHandler.SetAlwaysAsk` | `autonomy` |
 | `label_autonomy.go` | Shared label autonomy validation (YAML + JSON), gate check, `workflowLabelResponse` | `autonomy`, `needsme`, `reviewbrief` |
+| `autonomy_rules.go` | `AutonomyRulesHandler` (ask-rule CRUD, gate history), `AutonomySettingsHandler` | `autonomy`, `pathglob` |
+| `autonomy_should_ask.go` | `TasksHandler.AutonomySuggestions`, `ShouldHaveAsked` | `autonomy`, `autonomy/escape`, `reviewbrief` |
 | `workflows.go` | `WorkflowsHandler` | `gen.Queries`, `*sql.DB` (for YAML import transactions) |
 | `agents.go` | `AgentsHandler` | `gen.Queries` |
 | `providers.go` | `ProviderConfigsHandler` — CRUD for Provider Configs (provider/model/env), the entity `agent_configs`/`chat_sessions` reference by `provider_config_id` | `gen.Queries` |

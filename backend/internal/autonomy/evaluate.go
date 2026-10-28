@@ -31,11 +31,16 @@ type Input struct {
 	// Undone is set when the task is landing on this gate because a person
 	// undid an auto-approval; the policy must not re-approve it.
 	Undone bool
+	// Rules are the ask rules applicable to this gate and task; Facts are what
+	// they are matched against.
+	Rules []AskRule
+	Facts Facts
 }
 
 // Reason explains part of a decision.
 type Reason struct {
 	Code   string `json:"code"`
+	RuleID string `json:"rule_id,omitempty"`
 	Detail string `json:"detail"`
 }
 
@@ -52,20 +57,23 @@ func Evaluate(in Input) Decision {
 	}
 	reasons := []Reason{}
 	if in.Undone {
-		reasons = append(reasons, Reason{ReasonUndone, "auto-approval was undone; a person decides"})
+		reasons = append(reasons, Reason{Code: ReasonUndone, Detail: "auto-approval was undone; a person decides"})
 	}
 	if in.AlwaysAsk {
-		reasons = append(reasons, Reason{ReasonAlwaysAsk, "task is marked always_ask"})
+		reasons = append(reasons, Reason{Code: ReasonAlwaysAsk, Detail: "task is marked always_ask"})
 	}
 	if in.VerifyStatus != "" && in.VerifyStatus != verifyPass {
-		reasons = append(reasons, Reason{ReasonVerifyFailed, "verification status: " + in.VerifyStatus})
+		reasons = append(reasons, Reason{Code: ReasonVerifyFailed, Detail: "verification status: " + in.VerifyStatus})
 	}
 	if in.MaxCostUSD != nil && in.CostUSD > *in.MaxCostUSD {
-		reasons = append(reasons, Reason{ReasonCostExceeded, fmt.Sprintf("$%.2f > $%.2f", in.CostUSD, *in.MaxCostUSD)})
+		reasons = append(reasons, Reason{Code: ReasonCostExceeded, Detail: fmt.Sprintf("$%.2f > $%.2f", in.CostUSD, *in.MaxCostUSD)})
+	}
+	for _, r := range MatchRules(in.Rules, in.Facts) {
+		reasons = append(reasons, Reason{Code: ReasonAskRule, Detail: r.Summary(), RuleID: r.ID})
 	}
 	if in.Mode == ModeOnFlags {
 		if !in.HasDiff {
-			reasons = append(reasons, Reason{ReasonNoDiff, "no diff against base; flags cannot be computed"})
+			reasons = append(reasons, Reason{Code: ReasonNoDiff, Detail: "no diff against base; flags cannot be computed"})
 		} else {
 			raised := map[string]bool{}
 			for _, f := range in.Flags {
@@ -73,7 +81,7 @@ func Evaluate(in Input) Decision {
 			}
 			for _, code := range in.AskOn {
 				if raised[code] {
-					reasons = append(reasons, Reason{ReasonFlagRaised, code})
+					reasons = append(reasons, Reason{Code: ReasonFlagRaised, Detail: code})
 				}
 			}
 		}
@@ -82,7 +90,7 @@ func Evaluate(in Input) Decision {
 		return Decision{Decision: DecisionAsk, Reasons: reasons}
 	}
 	if in.Mode == ModeAuto {
-		return Decision{Decision: DecisionApprove, Reasons: []Reason{{ReasonAutoPolicy, "auto mode and no hard stops"}}}
+		return Decision{Decision: DecisionApprove, Reasons: []Reason{{Code: ReasonAutoPolicy, Detail: "auto mode and no hard stops"}}}
 	}
-	return Decision{Decision: DecisionApprove, Reasons: []Reason{{ReasonNoBlockingFlags, "no ask_on flag raised"}}}
+	return Decision{Decision: DecisionApprove, Reasons: []Reason{{Code: ReasonNoBlockingFlags, Detail: "no ask_on flag raised"}}}
 }

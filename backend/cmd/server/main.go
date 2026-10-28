@@ -17,6 +17,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
+	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/escape"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/policy"
 	"github.com/myinisjap/agent-task-editor/backend/internal/backup"
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
@@ -182,6 +183,8 @@ func main() {
 	engine := workflow.New(db.SQL(), pub)
 	policyRec.SetApprover(engine)
 	policyRec.SetPublisher(pub)
+	escapeRec := escape.New(termQ, pub)
+	policyRec.SetEscapeRecorder(escapeRec)
 
 	// Subtask coordinator: owns child→parent branch merge-back and parent
 	// auto-advance (Mechanism 2). Git identity is filled in once resolved below.
@@ -396,6 +399,7 @@ func main() {
 	listenAddr := fmt.Sprintf(":%s", cfg.Port)
 	router := api.NewRouter(api.RouterDeps{
 		EventPublisher:      pub,
+		EscapeRecorder:      escapeRec,
 		DB:                  db,
 		Engine:              engine,
 		Hub:                 hub,

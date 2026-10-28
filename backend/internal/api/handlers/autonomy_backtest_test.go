@@ -231,3 +231,85 @@ func TestBacktest_Validation(t *testing.T) {
 		t.Fatalf("empty: %+v", got)
 	}
 }
+
+func TestBacktest_ExtraRules(t *testing.T) {
+	e := newBacktestEnv(t)
+	h := time.Hour
+	bug := e.pass(t, "bug", "done", "human", "", 5*h, 0, "pass", false)
+	e.pass(t, "feature", "done", "human", "", 4*h, 0, "pass", false)
+	e.exec(t, `UPDATE tasks SET type='bug' WHERE id=?`, bug)
+	// Policy approvals at the gate for both tasks.
+	var ids []string
+	if err := func() error {
+		rows, err := e.sqlDB.Query(`SELECT id FROM tasks`)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			_ = rows.Scan(&id)
+			ids = append(ids, id)
+		}
+		return nil
+	}(); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		e.exec(t, `INSERT INTO autonomy_decisions (id, task_id, workflow_id, label, mode, decision, reasons, outcome, outcome_at)
+			VALUES (?, ?, ?, 'review', 'auto', 'approve', '[]', 'approved', CURRENT_TIMESTAMP)`, uuid.NewString(), id, e.wfID)
+	}
+
+	plain := e.post(t, "review", map[string]any{"mode": "auto"})
+	if plain.Code != 200 || !bytes.Contains(plain.Body.Bytes(), []byte(`"rules":null`)) {
+		t.Fatalf("no extra_rules: %d %s", plain.Code, plain.Body)
+	}
+	if e.run(t, map[string]any{"mode": "auto"}).WouldSkip != 2 {
+		t.Fatal("baseline would_skip should be 2")
+	}
+
+	w := e.post(t, "review", map[string]any{"mode": "auto", "extra_rules": []map[string]any{{"task_type": "bug"}, {"task_type": "chore"}}})
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	var got struct {
+		WouldSkip int `json:"would_skip"`
+		WouldAsk  int `json:"would_ask"`
+		Rules     *struct {
+			PolicyApprovals int `json:"policy_approvals"`
+			Evaluated       int `json:"evaluated"`
+			WouldStop       int `json:"would_stop"`
+			Stopped         []struct {
+				Title       string `json:"title"`
+				RuleIndexes []int  `json:"rule_indexes"`
+			} `json:"stopped"`
+		} `json:"rules"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &got)
+	if got.WouldSkip != 1 || got.WouldAsk != 1 {
+		t.Fatalf("extra rule should flip the bug pass: %s", w.Body)
+	}
+	if got.Rules == nil || got.Rules.PolicyApprovals != 2 || got.Rules.Evaluated != 2 || got.Rules.WouldStop != 1 ||
+		got.Rules.Stopped[0].Title != "bug" || len(got.Rules.Stopped[0].RuleIndexes) != 1 || got.Rules.Stopped[0].RuleIndexes[0] != 0 {
+		t.Fatalf("rules = %s", w.Body)
+	}
+	// Stored rules apply too, and nothing was counted as a hit.
+	e.exec(t, `INSERT INTO autonomy_ask_rules (id, workflow_id, label, task_type) VALUES ('r1', ?, 'review', 'bug')`, e.wfID)
+	if got := e.run(t, map[string]any{"mode": "auto"}); got.WouldSkip != 1 {
+		t.Fatalf("stored rule: %+v", got)
+	}
+	var hits int
+	_ = e.sqlDB.QueryRow(`SELECT hit_count FROM autonomy_ask_rules WHERE id='r1'`).Scan(&hits)
+	if hits != 0 {
+		t.Fatalf("backtest recorded hits: %d", hits)
+	}
+	// Invalid extra rule.
+	for _, body := range []any{
+		map[string]any{"mode": "auto", "extra_rules": []map[string]any{{}}},
+		map[string]any{"mode": "auto", "extra_rules": []map[string]any{{"task_type": "bug"}, {"min_changed_lines": 0}}},
+	} {
+		if w := e.post(t, "review", body); w.Code != 400 {
+			t.Fatalf("invalid extra rule: %d %s", w.Code, w.Body)
+		}
+	}
+}

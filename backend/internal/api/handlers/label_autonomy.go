@@ -4,8 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy"
+	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/escape"
 	"github.com/myinisjap/agent-task-editor/backend/internal/needsme"
 	"github.com/myinisjap/agent-task-editor/backend/internal/reviewbrief"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -158,4 +163,78 @@ func (wf yamlWorkflow) gateSet() map[string]bool {
 		ts = append(ts, autoGateTransition{t.From, t.To, t.TriggerType})
 	}
 	return gateSet(ls, ts)
+}
+
+// autonomyShape is the comparable part of a label's autonomy config.
+type autonomyShape struct {
+	mode  string
+	askOn string
+	hold  int64
+	max   string
+}
+
+func shapeOf(l gen.WorkflowLabel) autonomyShape {
+	var askOn []string
+	_ = json.Unmarshal([]byte(l.AutonomyAskOn), &askOn)
+	s := autonomyShape{mode: l.AutonomyMode, askOn: fmt.Sprint(askOn), hold: l.AutonomyHoldSeconds}
+	if l.AutonomyMode == "" || l.AutonomyMode == string(autonomy.ModeAsk) {
+		s.mode, s.askOn, s.hold = string(autonomy.ModeAsk), "[]", autonomy.DefaultHoldSeconds
+		return s
+	}
+	if l.AutonomyMaxCostUsd != nil {
+		s.max = fmt.Sprint(*l.AutonomyMaxCostUsd)
+	}
+	return s
+}
+
+// recordAutonomyChanges writes an autonomy_changes row for every label of the
+// workflow whose autonomy config differs from before a workflow update, and
+// restarts that gate's step-down counter. old is the label list read before
+// the labels were replaced; the new list is read back from tq. A new label
+// counts as "ask" defaults; removed labels are skipped. via names the path
+// ("workflow update" / "workflow YAML update").
+func recordAutonomyChanges(ctx context.Context, tq *gen.Queries, wfID string, old []gen.WorkflowLabel, actor, via string) error {
+	oldBy := map[string]gen.WorkflowLabel{}
+	for _, l := range old {
+		oldBy[l.Name] = l
+	}
+	cur, err := tq.ListWorkflowLabels(ctx, wfID)
+	if err != nil {
+		return err
+	}
+	for _, n := range cur {
+		o := oldBy[n.Name] // zero value == ask defaults after shapeOf
+		os, ns := shapeOf(o), shapeOf(n)
+		if os == ns {
+			continue
+		}
+		var parts []string
+		if os.mode != ns.mode {
+			parts = append(parts, fmt.Sprintf("mode %s → %s", os.mode, ns.mode))
+		}
+		var other []string
+		if os.askOn != ns.askOn {
+			other = append(other, "ask_on")
+		}
+		if os.hold != ns.hold {
+			other = append(other, "hold")
+		}
+		if os.max != ns.max {
+			other = append(other, "max cost")
+		}
+		if len(other) > 0 {
+			parts = append(parts, strings.Join(other, ", ")+" changed")
+		}
+		ch, err := tq.CreateAutonomyChange(ctx, gen.CreateAutonomyChangeParams{
+			ID: uuid.NewString(), WorkflowID: wfID, Label: n.Name, FromMode: os.mode, ToMode: ns.mode,
+			Actor: actor, Reason: via + ": " + strings.Join(parts, "; "), CreatedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			return err
+		}
+		if err := escape.ResetCounter(ctx, tq, wfID, n.Name, ch.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }

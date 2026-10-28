@@ -130,6 +130,7 @@ func TestPayloadsMatchOpenAPI(t *testing.T) {
 		{TypeTaskAutonomyApproved, TaskAutonomyApproved{TaskID: "t", DecisionID: "d", From: "a", To: "b", Note: "n"}, TaskAutonomyApproved{}},
 		{TypeTaskAutonomyUndone, TaskAutonomyUndone{TaskID: "t", Label: "l", From: "f", PRURL: "u"}, TaskAutonomyUndone{}},
 		{TypeTaskAutonomyAsked, TaskAutonomyAsked{TaskID: "t", Label: "l", DecisionID: "d", Reason: "policy", Reasons: []string{"r"}}, TaskAutonomyAsked{Reasons: []string{}}},
+		{TypeAutonomySteppedDown, AutonomySteppedDown{WorkflowID: "w", Label: "l", FromMode: "auto", ToMode: "on_flags", Actor: "policy", Reason: "r", Escapes: 2, ChangeID: "c"}, AutonomySteppedDown{}},
 		{TypeResync, Resync{}, Resync{}},
 	}
 

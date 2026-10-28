@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"gopkg.in/yaml.v3"
@@ -188,6 +189,11 @@ func (h *WorkflowsHandler) UpdateWorkflowYAML(w http.ResponseWriter, r *http.Req
 	defer func() { _ = tx.Rollback() }()
 	tq := gen.New(tx)
 
+	oldLabels, err := tq.ListWorkflowLabels(ctx, wfID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if err := tq.DeleteWorkflowLabels(ctx, wfID); err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
@@ -248,6 +254,11 @@ func (h *WorkflowsHandler) UpdateWorkflowYAML(w http.ResponseWriter, r *http.Req
 			Err(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+	}
+
+	if err := recordAutonomyChanges(ctx, tq, wfID, oldLabels, middleware.ActorFromContext(ctx), "workflow YAML update"); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
 	}
 
 	if err := tq.DeleteWorkflowTransitions(ctx, wfID); err != nil {

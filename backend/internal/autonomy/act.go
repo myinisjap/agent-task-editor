@@ -3,6 +3,7 @@ package autonomy
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 // PolicyActor is the actor id recorded in label history for moves the policy
@@ -57,4 +58,26 @@ func ApprovalNote(mode Mode, flags []string, verifyStatus string, holdSeconds in
 		parts = append(parts, "no hold")
 	}
 	return "Auto-approved: " + strings.Join(parts, "; ")
+}
+
+// Escape sources stored on autonomy_escapes.source.
+const (
+	EscapeSourceShouldHaveAsked = "should_have_asked"
+	EscapeSourceRejected        = "rejected_later"
+	EscapeSourceReopened        = "reopened"
+)
+
+// EscapeWindow is how long after a policy approval a reject or reopen still
+// counts as an escape.
+const EscapeWindow = 14 * 24 * time.Hour
+
+// StepDownMode returns the next mode down (auto → on_flags → ask); false for ask.
+func StepDownMode(m Mode) (Mode, bool) {
+	switch m {
+	case ModeAuto:
+		return ModeOnFlags, true
+	case ModeOnFlags:
+		return ModeAsk, true
+	}
+	return "", false
 }

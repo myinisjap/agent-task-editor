@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy"
+	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/escape"
 	"github.com/myinisjap/agent-task-editor/backend/internal/needsme"
 	"github.com/myinisjap/agent-task-editor/backend/internal/reviewbrief"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -53,6 +54,7 @@ type Service struct {
 
 	approver Approver
 	pub      publisher
+	rec      *escape.Recorder
 	// SweepInterval is the period of the due-approval sweep (default 10s).
 	SweepInterval time.Duration
 	now           func() time.Time
@@ -71,6 +73,11 @@ func (r *Service) SetApprover(a Approver) { r.approver = a }
 // only reacts to task.label_changed, so publishing through the fan-out that
 // contains this Service cannot loop.
 func (r *Service) SetPublisher(p publisher) { r.pub = p }
+
+// SetEscapeRecorder wires the escape recorder used for automatic escape
+// sources (a later reject or reopen of a policy-approved task). Without it
+// escape detection is off.
+func (r *Service) SetEscapeRecorder(rec *escape.Recorder) { r.rec = rec }
 
 func (r *Service) publish(eventType string, payload any) {
 	if r.pub != nil {
@@ -144,6 +151,7 @@ func (r *Service) handle(ctx context.Context, taskID, toLabel string) error {
 		}
 		return err
 	}
+	r.detectEscape(ctx, task, toLabel)
 	// A pending approval for any other label is stale (a person moved the task).
 	now := r.now()
 	if err := r.q.SupersedePendingAutonomy(ctx, gen.SupersedePendingAutonomyParams{OutcomeAt: &now, TaskID: task.ID, Label: toLabel}); err != nil {
@@ -182,6 +190,12 @@ func (r *Service) handle(ctx context.Context, taskID, toLabel string) error {
 	if err := r.q.CreateAutonomyDecision(ctx, row); err != nil {
 		r.publishAsked(task.ID, toLabel, "", wsevent.AskedEvaluationError, nil)
 		return err
+	}
+	if ids := matchedRuleIDs(row.Reasons); len(ids) > 0 {
+		at := r.now()
+		if err := r.q.RecordAskRuleHits(ctx, gen.RecordAskRuleHitsParams{At: &at, Ids: ids}); err != nil {
+			slog.Warn("autonomy policy: record rule hits failed", "task_id", task.ID, "err", err)
+		}
 	}
 	if row.Decision == autonomy.DecisionAsk {
 		r.publishAsked(task.ID, toLabel, row.ID, wsevent.AskedPolicy, reasonCodes(row.Reasons))
@@ -248,14 +262,29 @@ func (r *Service) evaluate(ctx context.Context, task gen.Task, label gen.Workflo
 			return zero, err
 		}
 	}
-	if mode == autonomy.ModeOnFlags {
+	rules, err := LoadApplicableRules(ctx, r.q, task)
+	if err != nil {
+		return zero, err
+	}
+	in.Rules = rules
+	needDiff := mode == autonomy.ModeOnFlags
+	for _, ru := range rules {
+		needDiff = needDiff || ru.NeedsDiff()
+	}
+	in.Facts.TaskType = task.Type
+	if needDiff {
 		res, err := r.cache.Diff(ctx, r.q, task)
 		if err != nil {
 			slog.Warn("autonomy policy: diff failed", "task_id", task.ID, "err", err)
 		} else if res.Available && res.Changed.Files > 0 {
-			in.HasDiff = true
-			for _, f := range res.Flags {
-				in.Flags = append(in.Flags, f.Code)
+			in.Facts.HasDiff = true
+			in.Facts.Files = res.Paths
+			in.Facts.ChangedLines = res.Changed.Additions + res.Changed.Deletions
+			if mode == autonomy.ModeOnFlags {
+				in.HasDiff = true
+				for _, f := range res.Flags {
+					in.Flags = append(in.Flags, f.Code)
+				}
 			}
 		}
 	}
@@ -408,4 +437,136 @@ func (r *Service) process(ctx context.Context, row gen.AutonomyDecision) {
 	r.publish(wsevent.TypeTaskAutonomyApproved, wsevent.TaskAutonomyApproved{
 		TaskID: task.ID, DecisionID: row.ID, From: row.Label, To: target, Note: note,
 	})
+}
+
+// LoadApplicableRules returns the stored ask rules that apply to a task's
+// gate (workflow, current label, repo), converted for the evaluator.
+func LoadApplicableRules(ctx context.Context, q *gen.Queries, task gen.Task) ([]autonomy.AskRule, error) {
+	label := task.Label
+	repo := task.RepoID
+	rows, err := q.ListApplicableAskRules(ctx, gen.ListApplicableAskRulesParams{WorkflowID: task.WorkflowID, Label: &label, RepoID: &repo})
+	if err != nil {
+		return nil, err
+	}
+	return RulesFromRows(rows), nil
+}
+
+// RulesFromRows converts stored rules; a row with unparseable globs is
+// skipped (it could never match).
+func RulesFromRows(rows []gen.AutonomyAskRule) []autonomy.AskRule {
+	out := make([]autonomy.AskRule, 0, len(rows))
+	for _, row := range rows {
+		var globs []string
+		if err := json.Unmarshal([]byte(row.PathGlobs), &globs); err != nil {
+			slog.Warn("autonomy: bad ask rule path_globs", "rule_id", row.ID, "err", err)
+			continue
+		}
+		ru := autonomy.AskRule{ID: row.ID, RepoID: row.RepoID, Label: row.Label, PathGlobs: globs, TaskType: row.TaskType}
+		if row.MinChangedLines != nil {
+			n := int(*row.MinChangedLines)
+			ru.MinChangedLines = &n
+		}
+		out = append(out, ru)
+	}
+	return out
+}
+
+func matchedRuleIDs(reasonsJSON string) []string {
+	var rs []autonomy.Reason
+	_ = json.Unmarshal([]byte(reasonsJSON), &rs)
+	var ids []string
+	for _, x := range rs {
+		if x.Code == autonomy.ReasonAskRule && x.RuleID != "" {
+			ids = append(ids, x.RuleID)
+		}
+	}
+	return ids
+}
+
+// detectEscape records an automatic escape when a person has just moved a
+// policy-approved task out of a later human gate (a reject) or out of a
+// terminal label (a reopen), within autonomy.EscapeWindow of the approval.
+// Best effort: the policy queue drops events when full. It never fails the
+// caller.
+func (r *Service) detectEscape(ctx context.Context, task gen.Task, toLabel string) {
+	if r.rec == nil {
+		return
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			slog.Error("autonomy policy: escape detection panic", "task_id", task.ID, "panic", rec)
+		}
+	}()
+	if err := r.doDetectEscape(ctx, task, toLabel); err != nil {
+		slog.Warn("autonomy policy: escape detection failed", "task_id", task.ID, "err", err)
+	}
+}
+
+func (r *Service) doDetectEscape(ctx context.Context, task gen.Task, toLabel string) error {
+	h, err := r.q.GetLatestTaskLabelHistory(ctx, task.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if h.ToLabel != toLabel || h.FromLabel == nil || h.Trigger != "human" {
+		return nil
+	}
+	if h.ActorID != nil && *h.ActorID == autonomy.PolicyActor {
+		return nil
+	}
+	if h.Note != nil && *h.Note == autonomy.UndoNote {
+		return nil // undo records its own escape
+	}
+	from := *h.FromLabel
+	d, err := r.q.GetLatestApprovedAutonomyDecision(ctx, task.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if d.OutcomeAt == nil || d.OutcomeAt.After(h.CreatedAt) || h.CreatedAt.Sub(*d.OutcomeAt) > autonomy.EscapeWindow {
+		return nil
+	}
+	labels, err := r.q.ListWorkflowLabels(ctx, task.WorkflowID)
+	if err != nil {
+		return err
+	}
+	transitions, err := r.q.ListWorkflowTransitions(ctx, task.WorkflowID)
+	if err != nil {
+		return err
+	}
+	terminal := map[string]bool{}
+	for _, l := range labels {
+		terminal[l.Name] = l.IsTerminal != 0
+	}
+	source, note := "", ""
+	if needsme.IsHumanGate(needsme.WorkflowDef{Labels: labels, Transitions: transitions}, from) {
+		for _, t := range transitions {
+			if t.FromLabel == from && t.ToLabel == toLabel && t.TriggerType == "human" && t.Path != nil && *t.Path == "failure" {
+				source, note = autonomy.EscapeSourceRejected, "Rejected at "+from
+				break
+			}
+		}
+	}
+	if source == "" && terminal[from] && !terminal[toLabel] {
+		source, note = autonomy.EscapeSourceReopened, "Reopened from "+from
+	}
+	if source == "" {
+		return nil
+	}
+	existing, err := r.q.ListAutonomyEscapesForDecision(ctx, &d.ID)
+	if err != nil {
+		return err
+	}
+	if len(existing) > 0 {
+		return nil
+	}
+	_, _, err = r.rec.Record(ctx, escape.Input{
+		TaskID: task.ID, WorkflowID: d.WorkflowID, Label: d.Label, Source: source,
+		DecisionID: &d.ID, Actor: h.ActorID, Note: &note,
+	})
+	return err
 }

@@ -43,7 +43,8 @@ type DiffResult struct {
 	Available bool // false: no branch, invalid ref, or refs not resolvable
 	Changed   ChangeSummary
 	Flags     []Flag
-	Truncated bool // diff exceeded the size limit; summary is best effort
+	Truncated bool     // diff exceeded the size limit; summary is best effort
+	Paths     []string // every changed file path, in diff order (ask rules, suggestions)
 }
 
 type entry struct {
@@ -146,7 +147,9 @@ func compute(diff, notes string) DiffResult {
 	files := ParseUnifiedDiff(diff)
 	cs := ChangeSummary{Files: len(files), TopFiles: []FileStat{}}
 	stats := make([]FileStat, 0, len(files))
+	paths := make([]string, 0, len(files))
 	for _, f := range files {
+		paths = append(paths, f.Path)
 		cs.Additions += f.Added
 		cs.Deletions += f.Removed
 		stats = append(stats, FileStat{Path: f.Path, Status: f.Status, Added: f.Added, Removed: f.Removed})
@@ -163,5 +166,6 @@ func compute(diff, notes string) DiffResult {
 		Changed:   cs,
 		Flags:     ComputeFlags(files, notes),
 		Truncated: len(diff) > maxDiffBytes,
+		Paths:     paths,
 	}
 }

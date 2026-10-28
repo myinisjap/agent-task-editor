@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
+	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/escape"
+	"github.com/myinisjap/agent-task-editor/backend/internal/reviewbrief"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
@@ -97,10 +100,21 @@ type TasksHandler struct {
 	// apub receives autonomy hold/undo events (main passes the fan-out so the
 	// notifier sees task.autonomy_held). Falls back to pub.
 	apub TaskEventPublisher
+
+	// Autonomy escapes / should-have-asked (SetAutonomyDeps).
+	db    *sql.DB
+	rec   *escape.Recorder
+	brief *reviewbrief.Cache
 }
 
 func NewTasksHandler(q *gen.Queries, engine *workflow.Engine, uploadDir string, canceller RunCanceller, dispatcher ReplyDispatcher, blockReasons BlockReasonResolver) *TasksHandler {
 	return &TasksHandler{q: q, engine: engine, uploadDir: uploadDir, canceller: canceller, dispatcher: dispatcher, blockReasons: blockReasons, wb: writeback.New(q)}
+}
+
+// SetAutonomyDeps wires what the escape-recording autonomy endpoints need: the
+// raw DB (for transactions), the escape recorder and the diff cache.
+func (h *TasksHandler) SetAutonomyDeps(db *sql.DB, rec *escape.Recorder, cache *reviewbrief.Cache) {
+	h.db, h.rec, h.brief = db, rec, cache
 }
 
 // SetAutonomyPublisher sets the publisher for autonomy hold/undo events.

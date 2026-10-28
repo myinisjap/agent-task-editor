@@ -28,7 +28,7 @@ SQLite with WAL (Write-Ahead Logging) enabled for better concurrent read perform
 - `tasks.sql` — task CRUD + label moves + dispatch queries
 - `human_decisions.sql` — one row per waiting_human run; question written at escalation, reply on DispatchReply; read by startRun for the HUMAN DECISIONS prompt section; not pruned by log retention
 - `workflows.sql` — workflow, label, transition, history CRUD
-- `autonomy.sql` — per-label autonomy config write, `tasks.always_ask` write, `autonomy_decisions` insert/latest plus pending/claim/hold/outcome queries, `autonomy_escapes` (undo records)
+- `autonomy.sql` — per-label autonomy config write, `tasks.always_ask` write, `autonomy_decisions` insert/latest plus pending/claim/hold/outcome queries, `autonomy_escapes` (decision_id, actor, note, rule_id, reset_by_change_id; insert/list/step-down count/reset), `autonomy_ask_rules` CRUD + applicable + hit counts, `autonomy_changes`, pending-at-gate supersede, step-down label update; `autonomy_settings.sql` — singleton step-down N/W
 - `agents.sql` — agent config CRUD
 - `providers.sql` — provider config CRUD (provider/model/env, shared by agent configs and chat sessions)
 - `chat.sql` — chat session CRUD (interactive PTY terminal sessions)
@@ -91,6 +91,8 @@ task_writeback      — task_id, writeback_in_progress_sent/_pr_commented/_close
 tasks_full (view)   — tasks + task_git + task_writeback, the flat 37-column read model
 workflow_labels     — name, color, sort_order, agent_ignore, is_terminal, verify_mode/verify_command (per-label verify override); autonomy_mode ask|on_flags|auto, autonomy_ask_on (JSON), autonomy_hold_seconds, autonomy_max_cost_usd (written by SetWorkflowLabelAutonomy, not CreateWorkflowLabel)
 autonomy_decisions  — task_id, workflow_id, label, run_id, mode, decision approve|ask, reasons JSON [{code, detail}]; tasks.always_ask is a tasks column (in tasks_full)
+autonomy_escapes   — task_id, workflow_id, label, source undo|should_have_asked|rejected_later|reopened, decision_id, actor, note, rule_id, reset_by_change_id
+autonomy_ask_rules  — repo_id? workflow_id label? path_globs JSON task_type? min_changed_lines? hit_count; autonomy_changes — from_mode, to_mode, actor, reason; autonomy_settings — singleton (step_down_escapes, step_down_window_days)
 workflow_transitions — from_label, to_label, trigger_type (agent|human|both)
 agent_runs          — task_id, status, feedback, started_at, completed_at
 run_verifications   — run_id (PK), task_id, command, status pass|fail|timeout|error, exit_code, output tail (ADR 0038)

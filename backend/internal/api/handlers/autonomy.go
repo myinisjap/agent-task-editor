@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy"
+	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/escape"
 	"github.com/myinisjap/agent-task-editor/backend/internal/needsme"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
@@ -201,12 +201,17 @@ func (h *TasksHandler) UndoAutonomy(w http.ResponseWriter, r *http.Request) {
 	}
 	// A create_pr side effect that is still pending becomes a no-op: the outbox
 	// re-checks that the task's current label has create_pr before running it.
-	if err := h.q.CreateAutonomyEscape(ctx, gen.CreateAutonomyEscapeParams{
-		ID: uuid.NewString(), TaskID: task.ID, WorkflowID: task.WorkflowID, Label: gate, Source: autonomy.EscapeSourceUndo,
-	}); err != nil {
+	// Record the escape against the policy approval (if any) so the step-down
+	// counter counts one bad approval once however it is reported.
+	esc := escape.Input{TaskID: task.ID, WorkflowID: task.WorkflowID, Label: gate, Source: autonomy.EscapeSourceUndo, Actor: &actor}
+	d, derr := h.q.GetLatestApprovedAutonomyDecision(ctx, task.ID)
+	if derr == nil {
+		esc.DecisionID = &d.ID
+	}
+	if _, _, err := h.recorder().Record(ctx, esc); err != nil {
 		slog.Warn("autonomy undo: record escape failed", "task_id", task.ID, "err", err)
 	}
-	if d, err := h.q.GetLatestApprovedAutonomyDecision(ctx, task.ID); err == nil {
+	if derr == nil {
 		now := time.Now().UTC()
 		out := autonomy.OutcomeUndone
 		if err := h.q.SetAutonomyOutcome(ctx, gen.SetAutonomyOutcomeParams{Outcome: &out, OutcomeAt: &now, OutcomeActor: &actor, ID: d.ID}); err != nil {
@@ -224,4 +229,21 @@ func (h *TasksHandler) UndoAutonomy(w http.ResponseWriter, r *http.Request) {
 		msg = fmt.Sprintf("Moved back to %s. The pull request %s was already opened and was left as is.", gate, updated.PrUrl)
 	}
 	JSON(w, http.StatusOK, autonomyUndoResponse{Task: toTaskResponse(updated), PRLeftOpen: updated.PrUrl != "", Message: msg})
+}
+
+// recorder returns the wired escape recorder, or a fallback built from the
+// handler's own publisher (tests construct handlers without the router).
+func (h *TasksHandler) recorder() *escape.Recorder {
+	if h.rec != nil {
+		return h.rec
+	}
+	p := h.apub
+	if p == nil {
+		p = h.pub
+	}
+	var ep escape.Publisher
+	if p != nil {
+		ep = p
+	}
+	return escape.New(h.q, ep)
 }

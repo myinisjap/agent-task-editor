@@ -24,6 +24,9 @@ POST /api/v1/intake/{endpoint_id}  IntakeEndpointsHandler.Receive (outside Beare
   tasks/{id}/review-brief      ReviewBriefHandler (deterministic risk flags + verification summary; internal/reviewbrief)
   tasks/{id}/autonomy-decision AutonomyHandler (latest shadow autonomy decision for the current label)
   tasks/{id}/always-ask        TasksHandler.SetAlwaysAsk (per-task autonomy override)
+  tasks/{id}/autonomy/suggestions, tasks/{id}/autonomy/should-have-asked  TasksHandler (autonomy_should_ask.go)
+  autonomy/ask-rules[/{id}], workflows/{id}/labels/{label}/autonomy/history  AutonomyRulesHandler
+  settings/autonomy            AutonomySettingsHandler (step-down N/W)
   templates/*                  TemplatesHandler
   lessons/*, repos/{id}/lessons LessonsHandler
   uploads/{task_id}/{filename} UploadsHandler (serve attachment images)
