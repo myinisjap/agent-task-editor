@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { bucketize } from './taskBuckets'
-import { composeFrame, actionFrameCount, GRID_W, GRID_H } from './pixelSprites'
+import { composeFrame, actionFrameCount, actionFrameDur, WALK_FRAME_COUNT, GRID_W, GRID_H, type Action } from './pixelSprites'
 import type { Workflow } from '../api/client'
 
 function label(overrides: Partial<Workflow['labels'][number]>): Workflow['labels'][number] {
@@ -86,7 +86,7 @@ describe('composeFrame', () => {
     const dirs = ['front', 'side', 'back'] as const
     for (const action of actions) {
       for (const dir of dirs) {
-        for (const leg of [-1, 0, 1, 2]) {
+        for (const leg of [-1, ...Array.from({ length: WALK_FRAME_COUNT }, (_, i) => i)]) {
           const f = composeFrame(action, 0, leg, undefined, dir, true) // robot = true
           expect(f.rows).toHaveLength(GRID_H)
           expect(f.rows.every((r) => r.length === GRID_W)).toBe(true)
@@ -130,5 +130,63 @@ describe('composeFrame', () => {
 
     const robot = composeFrame('robot', 0, -1, { h: '#00ff00' })
     expect(robot.palette.h).toBeUndefined() // robot has no variant keys
+  })
+
+  const ACTIONS: Action[] = ['idle', 'drawing', 'inspecting', 'hammering', 'testing', 'robot', 'approving', 'celebrating', 'waving']
+  const wellFormed = (f: { rows: string[]; palette: Record<string, string> }) => {
+    expect(f.rows).toHaveLength(GRID_H)
+    for (const row of f.rows) {
+      expect(row).toHaveLength(GRID_W)
+      for (const ch of row) if (ch !== '.' && ch !== ' ') expect(typeof f.palette[ch]).toBe('string')
+    }
+  }
+
+  it('has a >=4 frame walk cycle and >=6 frame action loops', () => {
+    expect(WALK_FRAME_COUNT).toBeGreaterThanOrEqual(4)
+    for (const a of ACTIONS) expect(actionFrameCount(a)).toBeGreaterThanOrEqual(6)
+  })
+
+  it('walk frames, back-work frames, blink and breath are well-formed (human + robot)', () => {
+    for (const robot of [false, true]) {
+      for (const dir of ['front', 'side', 'back'] as const) {
+        for (let leg = 0; leg < WALK_FRAME_COUNT; leg++) wellFormed(composeFrame('idle', 0, leg, undefined, dir, robot))
+        for (const a of ACTIONS.filter((x) => x !== 'robot')) {
+          for (let i = 0; i < 8; i++) {
+            for (const opts of [{}, { blink: true }, { breath: true }, { blink: true, breath: true }]) {
+              wellFormed(composeFrame(a, i, -1, undefined, dir, robot, opts))
+            }
+          }
+        }
+      }
+    }
+  })
+
+  it('back-view work frames differ from the plain back body', () => {
+    const plainBack = composeFrame('hammering', 0, 0, undefined, 'back').rows // walking back view differs only in legs
+    for (const a of ACTIONS.filter((x) => x !== 'robot' && x !== 'idle')) {
+      const frames = [0, 1, 2, 3].map((i) => composeFrame(a, i, -1, undefined, 'back').rows.join('\n'))
+      expect(new Set(frames).size).toBeGreaterThan(1) // animated
+      expect(frames.some((f) => f !== plainBack.join('\n'))).toBe(true)
+    }
+  })
+
+  it('blink closes the eyes and breath shifts the head', () => {
+    const open = composeFrame('idle', 0)
+    const shut = composeFrame('idle', 0, -1, undefined, 'front', false, { blink: true })
+    expect(open.rows[6]).toContain('e')
+    expect(shut.rows[6]).not.toContain('e')
+    const breath = composeFrame('idle', 0, -1, undefined, 'front', false, { breath: true })
+    expect(breath.rows.slice(0, 11)).not.toEqual(open.rows.slice(0, 11))
+    expect(breath.rows.slice(11)).toEqual(open.rows.slice(11))
+  })
+
+  it('keeps raised tools visible in robot mode (head no longer erases them)', () => {
+    const robot = composeFrame('hammering', 2, -1, undefined, 'front', true) // peak of the swing
+    expect(robot.rows.slice(0, 8).some((r) => r.includes('m'))).toBe(true)
+    expect(robot.palette.m).toBeTruthy()
+  })
+
+  it('has a positive per-action frame duration', () => {
+    for (const a of ACTIONS) expect(actionFrameDur(a)).toBeGreaterThan(0)
   })
 })

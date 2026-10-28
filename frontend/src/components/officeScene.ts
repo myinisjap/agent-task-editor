@@ -9,11 +9,23 @@
 // Each station has ONE shared workstation (a desk/bench/anvil/…): sprites
 // take turns walking up to a work slot beside it, act facing it, then step
 // aside so the next worker can use it.
+//
+// ZOOM: the simulation runs in "base units" (CSS px at the default zoom 3, so
+// one art pixel = ART_PX = 3 units). Zoom is only a render scale
+// (scale = zoom / 3): positions/tweens never depend on it, so a zoom change
+// cannot strand sprites, and one art pixel is always `zoom` whole CSS px.
+//
+// HAND-OFFS: setStations() diffs instead of rebuilding. A station whose count
+// drops paired with one whose count rises sends a sprite walking between them
+// (mode 'handoff'); unpaired changes fade sprites in/out.
 import {
   composeFrame,
   actionFrameCount,
+  actionFrameDur,
+  actionBob,
   VARIANTS,
   WALK_FRAME_COUNT,
+  WALK_BOB,
   GRID_W,
   GRID_H,
   type Action,
@@ -28,36 +40,55 @@ export type Station = {
   color: string
   action: Action
   count: number
+  gate?: boolean // human gate: the crew waves for attention instead of working
 }
 
-// One character on the floor. Positions are in CSS pixels (top-left of the
-// sprite's grid box). A sprite is either walking to its target, or parked
-// (acting). If it holds the work slot it acts facing the workstation, then
-// yields the slot and wanders to an idle spot before queueing again.
+export type SpriteMode = 'local' | 'handoff' | 'fadeIn' | 'fadeOut'
+
+// One character on the floor. Positions are in base units (top-left of the
+// sprite's grid box). A sprite is either walking (an eased tween from→to) or
+// parked (acting). If it holds the work slot it acts facing the workstation,
+// then yields the slot and wanders to an idle spot before queueing again.
 type Sprite = {
   stationIndex: number
+  stationKey: string
+  mode: SpriteMode
+  alpha: number
+  overflow: boolean // handoff walker bound for a full station: fades on arrival
   x: number
   y: number
+  fromX: number
+  fromY: number
   tx: number
   ty: number
-  speed: number // px/sec
+  t: number // tween clock (s)
+  dur: number // tween length (s)
+  speed: number // units/sec (sizes the tween duration)
   facing: 1 | -1
   moving: boolean
   atWork: boolean // currently occupying this station's work slot
   pause: number // seconds left parked before next move
   frameTimer: number
-  frameDur: number
+  jitter: number // per-sprite action tempo multiplier
   frame: number
-  legTimer: number
+  legDist: number // distance walked since the last leg step
   leg: number // walk-cycle index (0..WALK_FRAME_COUNT-1)
   dir: Dir // facing: front (toward viewer) / side / back (away/at station)
   variant: Variant
+  blinkTimer: number
+  blinkLeft: number
+  breathPhase: number
 }
 
-// Layout constants (CSS px). ZOOM is the integer pixel-art scale.
-const ZOOM = 3
-const SPRITE_W = GRID_W * ZOOM // 48
-const SPRITE_H = GRID_H * ZOOM // 72
+// Zoom. ART_PX is base units per art pixel; DEFAULT_ZOOM is CSS px per art
+// pixel at scale 1. MIN_AUTO_ZOOM is the floor for 'auto' (so phones/laptops
+// never get smaller sprites than the default); MAX_ZOOM caps everything.
+export const DEFAULT_ZOOM = 3
+export const MIN_AUTO_ZOOM = 3
+export const MAX_ZOOM = 6
+const ART_PX = 3
+const SPRITE_W = GRID_W * ART_PX // 48
+const SPRITE_H = GRID_H * ART_PX // 72
 const CAP = 6 // max sprites drawn per station
 const STATION_W = 168
 const STATION_GAP = 0 // no gap: adjacent stations abut into one continuous scene
@@ -68,24 +99,207 @@ const SIGN_H = 30 // room above the desk reserved for the name/count plaque
 const FLOOR_H = 190 // patch height sprites roam within
 const CELL_H = SIGN_H + FLOOR_H // full vertical footprint of one station
 
+const STRIDE = 4 // base units walked per walk-cycle frame
+const FADE_S = 0.35
+const HANDOFF_SPEED = 70
+const BREATH_PERIOD = 2.4
+
 type Patch = { x: number; y: number; w: number; h: number }
+
+// ---- pure helpers (unit-tested) -------------------------------------------
+
+/** easeInOutSine on [0,1]. */
+export function ease(u: number): number {
+  const c = Math.max(0, Math.min(1, u))
+  return 0.5 - Math.cos(Math.PI * c) / 2
+}
+
+/** Largest integer zoom in [MIN_AUTO_ZOOM, MAX_ZOOM] whose single-row layout fits. */
+export function autoZoom(availWidth: number, stationCount: number): number {
+  const n = Math.max(1, stationCount)
+  const baseW = PAD * 2 + n * STATION_W
+  for (let z = MAX_ZOOM; z > MIN_AUTO_ZOOM; z--) {
+    if ((baseW * z) / DEFAULT_ZOOM <= availWidth) return z
+  }
+  return MIN_AUTO_ZOOM
+}
+
+/** Resolve the zoom option: 'auto', or a number rounded and clamped to [1, MAX_ZOOM]. */
+export function resolveZoom(zoom: number | 'auto', availWidth: number, stationCount: number): number {
+  if (zoom === 'auto') return autoZoom(availWidth, stationCount)
+  if (!Number.isFinite(zoom)) return DEFAULT_ZOOM
+  return Math.max(1, Math.min(MAX_ZOOM, Math.round(zoom)))
+}
+
+/** Grid columns that fit `availWidth` CSS px at `zoom` (always in [1, n]). */
+export function columnsFor(availWidth: number, zoom: number, stationCount: number): number {
+  const baseAvail = availWidth / (zoom / DEFAULT_ZOOM)
+  const usable = Math.max(STATION_W, baseAvail - PAD * 2)
+  const fit = Math.floor((usable + STATION_GAP) / (STATION_W + STATION_GAP))
+  return Math.max(1, Math.min(stationCount || 1, fit))
+}
+
+export type Handoffs = { moves: { from: string; to: string }[]; spawns: string[]; despawns: string[] }
+
+/**
+ * Pair count decrements with increments between two station snapshots. Each
+ * unit of change is one entry; a decrement walks to the first remaining
+ * increment DOWNSTREAM of it (higher station index — tasks mostly move
+ * forward), else to the first remaining increment. Unpaired increments are
+ * spawns, unpaired decrements despawns. Deterministic and pure; uses true
+ * counts (not the capped visible ones).
+ */
+export function pairHandoffs(prev: Station[], next: Station[]): Handoffs {
+  const before = new Map(prev.map((s) => [s.key, s.count]))
+  const dec: { key: string; i: number }[] = []
+  let inc: { key: string; i: number }[] = []
+  next.forEach((s, i) => {
+    const d = s.count - (before.get(s.key) ?? 0)
+    for (let k = 0; k < Math.abs(d); k++) (d < 0 ? dec : inc).push({ key: s.key, i })
+  })
+  const moves: Handoffs['moves'] = []
+  for (const d of dec) {
+    if (!inc.length) break
+    let j = inc.findIndex((u) => u.i > d.i)
+    if (j < 0) j = 0
+    moves.push({ from: d.key, to: inc[j].key })
+    inc = inc.filter((_, idx) => idx !== j)
+  }
+  return {
+    moves,
+    spawns: inc.map((u) => u.key),
+    despawns: dec.slice(moves.length).map((u) => u.key),
+  }
+}
+
+const rand = (a: number, b: number) => a + Math.random() * (b - a)
+const actionOf = (st: Station): Action => (st.gate ? 'waving' : st.action)
 
 export class OfficeScene {
   stations: Station[] = []
   robots = false // render the crew as robots (all-robot version)
   private sprites: Sprite[] = []
   private aisle = 0
+  private clock = 0
   private cols = 1
   private layoutW = STATION_W + PAD * 2
+  private zoomOpt: number | 'auto' = DEFAULT_ZOOM
+  private zoom = DEFAULT_ZOOM
+  private scale = 1
+  private availW = STATION_W + PAD * 2
 
   setRobots(on: boolean) {
     this.robots = on
   }
 
-  setStations(stations: Station[]) {
-    this.stations = stations
+  // Zoom option: integer (rounded, clamped to [1, 6]) or 'auto'. Only changes
+  // the render scale; TaskFactory re-runs layout()/resize afterwards.
+  setZoom(z: number | 'auto') {
+    this.zoomOpt = z
+    this.applyZoom()
+  }
+
+  private applyZoom() {
+    this.zoom = resolveZoom(this.zoomOpt, this.availW, this.stations.length)
+    this.scale = this.zoom / DEFAULT_ZOOM
+  }
+
+  setStations(next: Station[]) {
+    const prev = this.stations
+    const sameKeys =
+      prev.length > 0 && prev.length === next.length && next.every((s) => prev.some((p) => p.key === s.key))
+    this.stations = next
+    this.applyZoom()
     this.relayout()
-    this.rebuildSprites()
+    if (!sameKeys) {
+      this.rebuildSprites() // first call or workflow switch: no fades
+      return
+    }
+    const orderChanged = next.some((s, i) => prev[i].key !== s.key)
+    const index = new Map(next.map((s, i) => [s.key, i]))
+    for (const s of this.sprites) s.stationIndex = index.get(s.stationKey) ?? s.stationIndex
+    if (orderChanged) this.replaceSprites()
+
+    const { moves, spawns, despawns } = pairHandoffs(prev, next)
+    for (const m of moves) this.applyMove(m.from, m.to)
+    for (const key of spawns) if (this.live(key) < this.want(key)) this.spawnFade(key)
+    for (const key of despawns) if (this.live(key) > this.want(key)) this.fadeOutOne(key)
+    this.reconcile()
+  }
+
+  // ---- hand-off bookkeeping ------------------------------------------------
+
+  private want(key: string): number {
+    const st = this.stations.find((s) => s.key === key)
+    return st ? Math.min(st.count, CAP) : 0
+  }
+
+  // Sprites that count toward a station's visible crew (walkers count toward
+  // their destination; overflow walkers and fading-out sprites don't).
+  private live(key: string): number {
+    let n = 0
+    for (const s of this.sprites) if (s.stationKey === key && s.mode !== 'fadeOut' && !s.overflow) n++
+    return n
+  }
+
+  private pickLocal(key: string): Sprite | undefined {
+    const c = this.sprites.filter((s) => s.stationKey === key && (s.mode === 'local' || s.mode === 'fadeIn'))
+    const free = c.filter((s) => !s.atWork)
+    const pool = free.length ? free : c
+    return pool[Math.floor(Math.random() * pool.length)]
+  }
+
+  private applyMove(fromKey: string, toKey: string) {
+    const di = this.stations.findIndex((s) => s.key === toKey)
+    const si = this.stations.findIndex((s) => s.key === fromKey)
+    if (di < 0 || si < 0) return
+    let w: Sprite | undefined
+    if (this.live(fromKey) > this.want(fromKey)) w = this.pickLocal(fromKey)
+    if (!w) {
+      // Source is still at CAP (overflow): the walker leaves from its work slot.
+      const slot = this.workSlot(si)
+      w = this.makeSprite(si, slot.x, slot.y)
+      this.sprites.push(w)
+    }
+    w.overflow = this.live(toKey) >= this.want(toKey)
+    w.mode = 'handoff'
+    w.alpha = 1
+    w.atWork = false
+    w.stationIndex = di
+    w.stationKey = toKey
+    w.speed = HANDOFF_SPEED + Math.random() * 10
+    const spot = this.idleTarget(di)
+    this.startMove(w, spot.x, spot.y, 0.8, 4)
+  }
+
+  private spawnFade(key: string) {
+    const i = this.stations.findIndex((s) => s.key === key)
+    if (i < 0) return
+    const spot = this.idleTarget(i)
+    const s = this.makeSprite(i, spot.x, spot.y)
+    s.mode = 'fadeIn'
+    s.alpha = 0
+    this.sprites.push(s)
+  }
+
+  private fadeOutOne(key: string) {
+    const v = this.pickLocal(key) ?? this.sprites.find((s) => s.stationKey === key && s.mode === 'handoff' && !s.overflow)
+    if (!v) return
+    v.mode = 'fadeOut'
+    v.atWork = false
+    v.moving = false
+  }
+
+  // Enforce min(count, CAP) visible per station against whatever drifted.
+  private reconcile() {
+    for (const st of this.stations) {
+      while (this.live(st.key) < this.want(st.key)) this.spawnFade(st.key)
+      while (this.live(st.key) > this.want(st.key)) {
+        const before = this.live(st.key)
+        this.fadeOutOne(st.key)
+        if (this.live(st.key) === before) break
+      }
+    }
   }
 
   // Choose column count from available width, then remember the resulting
@@ -94,9 +308,9 @@ export class OfficeScene {
   // existing sprites must be re-snapped into their (new) patch or they'd be
   // left stranded outside it (invisible).
   layout(availWidth: number) {
-    const usable = Math.max(STATION_W, availWidth - PAD * 2)
-    const fit = Math.floor((usable + STATION_GAP) / (STATION_W + STATION_GAP))
-    const cols = Math.max(1, Math.min(this.stations.length || 1, fit))
+    this.availW = availWidth
+    this.applyZoom()
+    const cols = columnsFor(availWidth, this.zoom, this.stations.length)
     const changed = cols !== this.cols
     this.cols = cols
     this.relayout()
@@ -105,11 +319,18 @@ export class OfficeScene {
 
   // Drop every sprite onto a fresh idle spot inside its current patch. Used
   // after a column-count change so nobody is left in a stale grid cell.
+  // Hand-off walkers keep walking, just toward a spot in the new patch.
   private replaceSprites() {
     for (const s of this.sprites) {
       const spot = this.idleTarget(s.stationIndex)
+      if (s.mode === 'handoff') {
+        this.startMove(s, spot.x, spot.y, 0.8, 4)
+        continue
+      }
       s.x = spot.x
       s.y = spot.y
+      s.fromX = spot.x
+      s.fromY = spot.y
       s.tx = spot.x
       s.ty = spot.y
       s.moving = false
@@ -123,13 +344,14 @@ export class OfficeScene {
     this.layoutW = PAD * 2 + cols * STATION_W + (cols - 1) * STATION_GAP
   }
 
+  /** CSS px width of the canvas (base layout × zoom scale). */
   width(): number {
-    return this.layoutW
+    return Math.ceil(this.layoutW * this.scale)
   }
 
   height(): number {
     const rows = Math.max(1, Math.ceil((this.stations.length || 1) / Math.max(1, this.cols)))
-    return PAD * 2 + rows * CELL_H
+    return Math.ceil((PAD * 2 + rows * CELL_H) * this.scale)
   }
 
   private patch(i: number): Patch {
@@ -176,34 +398,95 @@ export class OfficeScene {
     }
   }
 
+  private makeSprite(i: number, x: number, y: number): Sprite {
+    const st = this.stations[i]
+    return {
+      stationIndex: i,
+      stationKey: st.key,
+      mode: 'local',
+      alpha: 1,
+      overflow: false,
+      x, y, fromX: x, fromY: y, tx: x, ty: y,
+      t: 0,
+      dur: 1,
+      speed: 16 + Math.random() * 14,
+      facing: 1,
+      moving: false,
+      atWork: false,
+      pause: Math.random() * 1.5,
+      frameTimer: Math.random(),
+      jitter: rand(0.85, 1.15),
+      frame: Math.floor(Math.random() * 8),
+      legDist: 0,
+      leg: 0,
+      dir: 'front',
+      variant: VARIANTS[Math.floor(Math.random() * VARIANTS.length)],
+      blinkTimer: rand(2, 5),
+      blinkLeft: 0,
+      breathPhase: Math.random() * BREATH_PERIOD,
+    }
+  }
+
   private rebuildSprites() {
     this.sprites = []
     this.stations.forEach((st, i) => {
       const n = Math.min(st.count, CAP)
       for (let k = 0; k < n; k++) {
         const start = this.idleTarget(i)
+        const s = this.makeSprite(i, start.x, start.y)
         const t = this.idleTarget(i)
-        this.sprites.push({
-          stationIndex: i,
-          x: start.x,
-          y: start.y,
-          tx: t.x,
-          ty: t.y,
-          speed: 16 + Math.random() * 14,
-          facing: 1,
-          moving: true,
-          atWork: false,
-          pause: Math.random() * 1.5,
-          frameTimer: Math.random(),
-          frameDur: 0.22 + Math.random() * 0.12,
-          frame: Math.floor(Math.random() * 4),
-          legTimer: 0,
-          leg: 0,
-          dir: 'front',
-          variant: VARIANTS[Math.floor(Math.random() * VARIANTS.length)],
-        })
+        this.startMove(s, t.x, t.y)
+        this.sprites.push(s)
       }
     })
+  }
+
+  // Begin an eased move toward (tx,ty). Duration = distance / speed, clamped.
+  // Facing comes from the whole leg of travel (to - from), not per-frame dx.
+  private startMove(s: Sprite, tx: number, ty: number, minDur = 0.4, maxDur = Infinity) {
+    s.fromX = s.x
+    s.fromY = s.y
+    s.tx = tx
+    s.ty = ty
+    const dx = tx - s.x
+    const dy = ty - s.y
+    const dist = Math.hypot(dx, dy)
+    s.t = 0
+    s.dur = Math.max(minDur, Math.min(maxDur, dist / s.speed))
+    s.moving = true
+    s.legDist = 0
+    // Dominant axis: mostly-horizontal → side profile (mirrored via facing);
+    // mostly-vertical → back if walking up, front if walking down.
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      s.dir = 'side'
+      if (Math.abs(dx) > 0.5) s.facing = dx < 0 ? -1 : 1
+    } else {
+      s.dir = dy < 0 ? 'back' : 'front'
+    }
+  }
+
+  // Tween finished (or settled): park, and for hand-off walkers join the crew.
+  private arrive(s: Sprite) {
+    s.x = s.tx
+    s.y = s.ty
+    s.moving = false
+    if (s.mode === 'handoff') {
+      const key = s.stationKey
+      s.speed = 16 + Math.random() * 14
+      s.atWork = false
+      if (s.overflow && this.live(key) >= this.want(key)) {
+        s.mode = 'fadeOut' // destination is full: join the overflow
+      } else {
+        s.overflow = false
+        s.mode = 'local'
+      }
+    }
+    const st = this.stations[s.stationIndex]
+    // At the work slot: face the station (back to viewer) and stay a while to
+    // act; otherwise idle facing the viewer (front). Gate crews linger waving.
+    s.pause = s.atWork ? 2.5 + Math.random() * 3 : st?.gate ? 2.5 + Math.random() * 3 : 0.6 + Math.random() * 1.8
+    s.dir = s.atWork ? 'back' : 'front'
+    if (s.atWork) s.facing = 1
   }
 
   // True if any sprite currently owns station i's work slot.
@@ -211,87 +494,120 @@ export class OfficeScene {
     return this.sprites.some((s) => s.stationIndex === stationIndex && s.atWork)
   }
 
+  /** Test introspection only (read-only): the current sprite roster. */
+  spriteStates(): { stationKey: string; mode: SpriteMode; alpha: number; atWork: boolean }[] {
+    return this.sprites.map((s) => ({ stationKey: s.stationKey, mode: s.mode, alpha: s.alpha, atWork: s.atWork }))
+  }
+
+  // Finish everything instantly (reduced motion / static frame): tweens snap,
+  // fades complete, walkers join their crew, blink/breath off.
+  settle() {
+    for (const s of this.sprites) {
+      if (s.mode === 'fadeOut') continue
+      if (s.mode === 'fadeIn') {
+        s.mode = 'local'
+        s.alpha = 1
+      }
+      if (s.moving) this.arrive(s)
+      s.blinkLeft = 0
+      s.breathPhase = 0
+    }
+    this.sprites = this.sprites.filter((s) => s.mode !== 'fadeOut')
+    this.reconcile()
+    this.sprites = this.sprites.filter((s) => s.mode !== 'fadeOut')
+    for (const s of this.sprites) { s.mode = 'local'; s.alpha = 1 }
+  }
+
   step(dt: number) {
     this.aisle = (this.aisle + dt * 18) % 12
+    this.clock += dt
+    let anyGone = false
     for (const s of this.sprites) {
       const st = this.stations[s.stationIndex]
       if (!st) continue
 
-      s.frameTimer += dt
-      if (s.frameTimer >= s.frameDur) {
-        s.frameTimer -= s.frameDur
-        s.frame = (s.frame + 1) % actionFrameCount(st.action)
+      if (s.mode === 'fadeIn') {
+        s.alpha = Math.min(1, s.alpha + dt / FADE_S)
+        if (s.alpha >= 1) s.mode = 'local'
+      } else if (s.mode === 'fadeOut') {
+        s.alpha = Math.max(0, s.alpha - dt / FADE_S)
+        if (s.alpha <= 0) anyGone = true
       }
 
+      const act = actionOf(st)
+      s.frameTimer += dt
+      const fd = actionFrameDur(act) * s.jitter
+      if (s.frameTimer >= fd) {
+        s.frameTimer -= fd
+        s.frame = (s.frame + 1) % actionFrameCount(act)
+      }
+      if (s.mode === 'fadeOut') continue
+
+      // A gate crew never queues for the workstation.
+      if (st.gate && s.atWork && !s.moving) s.atWork = false
+
       if (s.moving) {
-        const dx = s.tx - s.x
-        const dy = s.ty - s.y
-        const dist = Math.hypot(dx, dy)
-        const move = s.speed * dt
-        if (dist <= move || dist === 0) {
-          s.x = s.tx
-          s.y = s.ty
-          s.moving = false
-          // Arrived. At the work slot: face the station (back to viewer) and
-          // stay a while to act; otherwise idle facing the viewer (front).
-          s.pause = s.atWork ? 2.5 + Math.random() * 3 : 0.6 + Math.random() * 1.8
-          s.dir = s.atWork ? 'back' : 'front'
-          if (s.atWork) s.facing = 1
-        } else {
-          s.x += (dx / dist) * move
-          s.y += (dy / dist) * move
-          // Pick facing from the dominant travel axis: mostly-horizontal → side
-          // profile (mirror via facing); mostly-vertical → back if walking up,
-          // front if walking down.
-          if (Math.abs(dx) >= Math.abs(dy)) {
-            s.dir = 'side'
-            if (Math.abs(dx) > 0.5) s.facing = dx < 0 ? -1 : 1
-          } else {
-            s.dir = dy < 0 ? 'back' : 'front'
-          }
-          s.legTimer += dt
-          if (s.legTimer >= 0.15) {
-            s.legTimer -= 0.15
-            s.leg = (s.leg + 1) % WALK_FRAME_COUNT
+        s.t += dt
+        const u = s.t >= s.dur ? 1 : s.t / s.dur
+        const e = ease(u)
+        const nx = s.fromX + (s.tx - s.fromX) * e
+        const ny = s.fromY + (s.ty - s.fromY) * e
+        // Feet follow distance covered, so eased starts/stops slow the steps.
+        s.legDist += Math.hypot(nx - s.x, ny - s.y)
+        while (s.legDist >= STRIDE) {
+          s.legDist -= STRIDE
+          s.leg = (s.leg + 1) % WALK_FRAME_COUNT
+        }
+        s.x = nx
+        s.y = ny
+        if (u >= 1) this.arrive(s)
+      } else {
+        // Idle life: breathing settle + occasional blink.
+        s.breathPhase += dt
+        if (s.blinkLeft > 0) s.blinkLeft -= dt
+        else {
+          s.blinkTimer -= dt
+          if (s.blinkTimer <= 0) {
+            s.blinkLeft = 0.12
+            s.blinkTimer = rand(2, 5)
           }
         }
-      } else {
         s.pause -= dt
         if (s.pause <= 0) {
           if (s.atWork) {
             // Done working: yield the slot and step aside to idle.
             s.atWork = false
             const t = this.idleTarget(s.stationIndex)
-            s.tx = t.x
-            s.ty = t.y
-            s.moving = true
-          } else if (!this.slotTaken(s.stationIndex)) {
+            this.startMove(s, t.x, t.y)
+          } else if (!st.gate && !this.slotTaken(s.stationIndex)) {
             // Slot free: claim it and walk up to the workstation.
             s.atWork = true
             const slot = this.workSlot(s.stationIndex)
-            s.tx = slot.x
-            s.ty = slot.y
-            s.moving = true
+            this.startMove(s, slot.x, slot.y)
           } else {
-            // Slot busy: mill around and re-check next pause.
+            // Slot busy (or human gate): mill around and re-check next pause.
             const t = this.idleTarget(s.stationIndex)
-            s.tx = t.x
-            s.ty = t.y
-            s.moving = true
+            this.startMove(s, t.x, t.y)
           }
         }
       }
     }
+    if (anyGone) this.sprites = this.sprites.filter((s) => !(s.mode === 'fadeOut' && s.alpha <= 0))
   }
 
   draw(ctx: CanvasRenderingContext2D, cssW: number, cssH: number) {
+    const scale = this.scale
     ctx.imageSmoothingEnabled = false
     ctx.clearRect(0, 0, cssW, cssH)
+    ctx.save()
+    ctx.scale(scale, scale)
+    const w = cssW / scale
+    const h = cssH / scale
 
     // ONE continuous warm wood floor across the whole scene. Stations abut with
     // no gap, so with a single floor the whole thing reads as one open room
     // rather than a grid of boxes.
-    drawSharedFloor(ctx, cssW, cssH)
+    drawSharedFloor(ctx, w, h)
 
     // Short back-props (behind the desk), then workstations + signs.
     this.stations.forEach((st, i) => {
@@ -316,12 +632,29 @@ export class OfficeScene {
     for (const s of ordered) {
       const st = this.stations[s.stationIndex]
       if (!st) continue
-      const walkLeg = s.moving && st.action !== 'robot' ? s.leg : -1
-      const f = composeFrame(st.action, s.frame, walkLeg, s.variant, s.dir, this.robots)
+      const act = actionOf(st)
+      const walking = s.moving && act !== 'robot'
+      const walkLeg = walking ? s.leg : -1
+      const parked = !s.moving
+      const breath = parked && Math.sin((2 * Math.PI * s.breathPhase) / BREATH_PERIOD) > 0.6
+      const f = composeFrame(act, s.frame, walkLeg, s.variant, s.dir, this.robots, {
+        blink: parked && s.blinkLeft > 0,
+        breath,
+      })
       // 'side' is authored facing right; mirror for leftward travel. Front and
       // back are symmetric, so only side needs the facing flip.
       const flip = s.dir === 'side' && s.facing === -1
-      drawSprite(ctx, f, s.x, s.y, flip ? -1 : 1)
+      const bob = walking ? WALK_BOB[s.leg % WALK_BOB.length] : parked ? actionBob(act, s.frame) : 0
+      // Snap the origin to whole CSS px so every art pixel lands on integer px.
+      const sx = Math.round(s.x * scale) / scale
+      const sy = Math.round(s.y * scale) / scale
+      if (s.alpha < 1) ctx.globalAlpha = s.alpha
+      drawSprite(ctx, f, sx, sy, bob * ART_PX, flip ? -1 : 1)
+      if (st.gate && parked && s.mode !== 'fadeOut') {
+        const hop = Math.floor(this.clock * 2.5) % 2 ? -ART_PX : 0
+        drawAlert(ctx, sx + SPRITE_W / 2, sy - 16 + hop, st.color)
+      }
+      if (s.alpha < 1) ctx.globalAlpha = 1
     }
 
     // Front-props: near the bottom edge, drawn last so they overlap sprites
@@ -331,6 +664,7 @@ export class OfficeScene {
       const rng = mulberry32(0x51ed + i * 2654435761)
       drawScatter(ctx, p, rng, 'front')
     })
+    ctx.restore()
   }
 }
 
@@ -600,18 +934,20 @@ function drawWorkstation(
   ctx.restore()
 }
 
-// Blit one composed frame at (px, py) top-left, scaled ZOOM×, optionally
-// mirrored horizontally. One filled rect per opaque pixel.
-function drawSprite(ctx: CanvasRenderingContext2D, f: Frame, px: number, py: number, facing: 1 | -1) {
+// Blit one composed frame at (px, py) top-left, ART_PX base units per art
+// pixel (= `zoom` CSS px after the scene scale), optionally mirrored
+// horizontally. `bob` (base units) lifts the body but not its ground shadow.
+// One filled rect per opaque pixel.
+function drawSprite(ctx: CanvasRenderingContext2D, f: Frame, px: number, py: number, bob: number, facing: 1 | -1) {
   ctx.fillStyle = 'rgba(0,0,0,0.28)'
-  ctx.fillRect(px + ZOOM * 2, py + SPRITE_H - ZOOM, SPRITE_W - ZOOM * 4, ZOOM)
+  ctx.fillRect(px + ART_PX * 2, py + SPRITE_H - ART_PX, SPRITE_W - ART_PX * 4, ART_PX)
 
   ctx.save()
   if (facing === -1) {
-    ctx.translate(px + SPRITE_W, py)
+    ctx.translate(px + SPRITE_W, py + bob)
     ctx.scale(-1, 1)
   } else {
-    ctx.translate(px, py)
+    ctx.translate(px, py + bob)
   }
   for (let y = 0; y < f.rows.length; y++) {
     const row = f.rows[y]
@@ -619,8 +955,18 @@ function drawSprite(ctx: CanvasRenderingContext2D, f: Frame, px: number, py: num
       const color = f.palette[row[x]]
       if (!color) continue
       ctx.fillStyle = color
-      ctx.fillRect(x * ZOOM, y * ZOOM, ZOOM, ZOOM)
+      ctx.fillRect(x * ART_PX, y * ART_PX, ART_PX, ART_PX)
     }
   }
   ctx.restore()
+}
+
+// A tiny pixel "!" bubble above a waiting (human-gate) sprite, in the station
+// accent colour on a dark chip. Rects only.
+function drawAlert(ctx: CanvasRenderingContext2D, cx: number, y: number, color: string) {
+  ctx.fillStyle = 'rgba(15,23,42,0.85)'
+  ctx.fillRect(cx - ART_PX * 2, y - ART_PX, ART_PX * 4, ART_PX * 6)
+  ctx.fillStyle = color
+  ctx.fillRect(cx - ART_PX / 2, y, ART_PX, ART_PX * 3)
+  ctx.fillRect(cx - ART_PX / 2, y + ART_PX * 3 + ART_PX / 3, ART_PX, ART_PX)
 }

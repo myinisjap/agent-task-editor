@@ -2077,6 +2077,17 @@ components:
             - daily_spent_usd
             - monthly_spent_usd
             - tripped
+        today:
+          type: object
+          description: >-
+            Activity since local midnight in the server's timezone (window is
+            [midnight, next midnight)). Feeds the control-room Today panel.
+          properties:
+            done_count: { type: integer, description: "Distinct non-archived tasks that entered a terminal (is_terminal) label today, counted from task label history. A task that reached done more than once today counts once." }
+            verify_total: { type: integer, description: "Verification results recorded today (run_verifications rows; same source as the task.verification WS event)." }
+            verify_passed: { type: integer, description: "How many of verify_total have status pass. The client computes the pass rate." }
+            runs_started: { type: integer, description: "Agent runs whose started_at is today." }
+          required: [done_count, verify_total, verify_passed, runs_started]
       required:
         - label_counts
         - workflow_label_counts
@@ -2090,6 +2101,7 @@ components:
         - cost_by_repo
         - claude_usage
         - repo_concurrency
+        - today
 
     OutcomeQuality:
       type: object
