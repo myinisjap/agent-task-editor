@@ -186,7 +186,7 @@ func TestE2E_NoLadder_RungNull(t *testing.T) {
 	fp := &fakeProvider{steps: []fakeStep{{result: Result{Status: "completed", Outcome: "success"}}}}
 	h := newE2EHarness(t, fp)
 	wfID := seedE2EWorkflow(t, h.q)
-	taskID, _, _, _ := h.seedTaskWithProviderList(t, wfID)
+	taskID, _, _, _ := h.seedTaskWithProviderList(t, wfID, nil)
 	run := h.firstRun(t, taskID)
 	if run.LadderRung != nil {
 		t.Errorf("ladder_rung = %v, want NULL", *run.LadderRung)

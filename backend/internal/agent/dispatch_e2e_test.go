@@ -741,7 +741,7 @@ func TestE2E_ReplyResumesSession(t *testing.T) {
 // seedTaskWithTwoConfigs creates a repo, two enabled "ready"-triggered agent
 // configs (priorities 0 and 1, so config0 is tried first), and a task on
 // "ready". Returns the task id plus both config ids.
-func (h *e2eHarness) seedTaskWithTwoConfigs(t *testing.T, wfID string) (taskID, config0ID, config1ID string) {
+func (h *e2eHarness) seedTaskWithTwoConfigs(t *testing.T, wfID string, before func(config0ID, config1ID string)) (taskID, config0ID, config1ID string) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -771,6 +771,11 @@ func (h *e2eHarness) seedTaskWithTwoConfigs(t *testing.T, wfID string) (taskID, 
 		t.Fatalf("create agent config 1: %v", err)
 	}
 
+	// before runs ahead of task creation: the dispatcher is already sweeping,
+	// so any rate-limit blocks must be in place before the task exists.
+	if before != nil {
+		before(config0ID, config1ID)
+	}
 	taskID = uuid.NewString()
 	if _, err := h.q.CreateTask(ctx, gen.CreateTaskParams{
 		ID: taskID, Title: "do the thing", WorkflowID: wfID, RepoID: repoID, Label: "ready",
@@ -795,10 +800,10 @@ func TestE2E_FailoverToBackupConfig(t *testing.T) {
 	h := newE2EHarness(t, fp)
 	h.disp.RateLimits = NewRateLimitRegistry()
 	wfID := seedE2EWorkflow(t, h.q)
-	taskID, config0ID, config1ID := h.seedTaskWithTwoConfigs(t, wfID)
-
-	// Block the primary (priority 0) config before the dispatcher ever sweeps.
-	h.disp.RateLimits.Block(poolOfAgentConfig(t, h.q, config0ID), time.Now().Add(time.Hour))
+	// Block the primary (priority 0) config before the task exists, so no sweep can pick it.
+	taskID, _, config1ID := h.seedTaskWithTwoConfigs(t, wfID, func(config0ID, _ string) {
+		h.disp.RateLimits.Block(poolOfAgentConfig(t, h.q, config0ID), time.Now().Add(time.Hour))
+	})
 
 	select {
 	case <-step.started:
@@ -825,10 +830,10 @@ func TestE2E_FailoverAllBlocked_NoDispatch(t *testing.T) {
 	h := newE2EHarness(t, fp)
 	h.disp.RateLimits = NewRateLimitRegistry()
 	wfID := seedE2EWorkflow(t, h.q)
-	taskID, config0ID, config1ID := h.seedTaskWithTwoConfigs(t, wfID)
-
-	h.disp.RateLimits.Block(poolOfAgentConfig(t, h.q, config0ID), time.Now().Add(time.Hour))
-	h.disp.RateLimits.Block(poolOfAgentConfig(t, h.q, config1ID), time.Now().Add(time.Hour))
+	taskID, _, _ := h.seedTaskWithTwoConfigs(t, wfID, func(config0ID, config1ID string) {
+		h.disp.RateLimits.Block(poolOfAgentConfig(t, h.q, config0ID), time.Now().Add(time.Hour))
+		h.disp.RateLimits.Block(poolOfAgentConfig(t, h.q, config1ID), time.Now().Add(time.Hour))
+	})
 
 	// Give the dispatcher several sweeps' worth of time to (not) act.
 	h.waitForSweeps(t, 5)
