@@ -248,6 +248,12 @@ function TerminalView({ sessionId, fontSize }: { sessionId: string; fontSize: nu
     term.loadAddon(fit)
     term.open(container)
 
+    // Copy-on-select. Ignore failures (clipboard needs a secure context/focus).
+    term.onSelectionChange(() => {
+      const sel = term.getSelection()
+      if (sel) navigator.clipboard?.writeText(sel).catch(() => {})
+    })
+
     let ws: WebSocket | null = null
     let closedByUs = false
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
