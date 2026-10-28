@@ -1,8 +1,8 @@
 import { useState } from 'react'
+import { PageFrame } from '../components/ui'
 import { useNavigate } from 'react-router-dom'
 import { useDashboard } from '../lib/useDashboard'
 import HelpModal from '../components/shared/HelpModal'
-import HelpButton from '../components/shared/HelpButton'
 import { UsageHelp } from '../components/shared/pageHelp'
 
 export default function UsagePage() {
@@ -11,11 +11,7 @@ export default function UsagePage() {
   const [showHelp, setShowHelp] = useState(false)
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-xl font-semibold text-slate-100">Cost &amp; Usage</h1>
-        <HelpButton onClick={() => setShowHelp(true)} title="About cost & usage" />
-      </div>
+    <PageFrame title="Cost & Usage" help={{ onClick: () => setShowHelp(true), title: 'About cost & usage' }}>
 
       {showHelp && (
         <HelpModal title="About Cost & Usage" onClose={() => setShowHelp(false)}>
@@ -26,9 +22,9 @@ export default function UsagePage() {
       {/* Claude usage (live 5-hour / weekly rate-limit utilization) */}
       {dash && (dash.claude_usage?.available || dash.claude_usage?.rate_limited) && (
         <section className="mb-8">
-          <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Claude usage</h2>
+          <h2 className="text-xs font-medium text-fg-subtle uppercase tracking-wide mb-3">Claude usage</h2>
           {dash.claude_usage.available ? (
-            <div className="bg-slate-900 rounded-lg border border-slate-800 p-4 flex flex-col gap-4">
+            <div className="bg-surface-raised rounded-lg border border-border p-4 flex flex-col gap-4">
               <UsageBar
                 label="5-hour window"
                 percent={dash.claude_usage.five_hour_percent ?? 0}
@@ -41,10 +37,10 @@ export default function UsagePage() {
               />
             </div>
           ) : (
-            <div className="bg-slate-900 rounded-lg border border-slate-800 p-4">
-              <p className="text-sm text-slate-400">
+            <div className="bg-surface-raised rounded-lg border border-border p-4">
+              <p className="text-sm text-fg-muted">
                 Usage temporarily unavailable —{' '}
-                <span className="text-slate-500">
+                <span className="text-fg-subtle">
                   Claude's usage API is rate-limiting requests. This will refresh automatically.
                 </span>
               </p>
@@ -56,10 +52,10 @@ export default function UsagePage() {
       {/* Global daily/monthly spend ceiling, if configured (MAX_DAILY_COST_USD / MAX_MONTHLY_COST_USD) */}
       {dash && dash.global_cost_budget && (
         <section className="mb-8">
-          <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Global spend ceiling</h2>
-          <div className="bg-slate-900 rounded-lg border border-slate-800 p-4 flex flex-col gap-4">
+          <h2 className="text-xs font-medium text-fg-subtle uppercase tracking-wide mb-3">Global spend ceiling</h2>
+          <div className="bg-surface-raised rounded-lg border border-border p-4 flex flex-col gap-4">
             {dash.global_cost_budget.tripped && (
-              <div className="text-sm text-red-400 bg-red-950/40 border border-red-900 rounded px-3 py-2">
+              <div className="text-sm text-danger bg-red-950/40 border border-red-900 rounded px-3 py-2">
                 Dispatch is halted: the {dash.global_cost_budget.tripped_reason} spend cap has been reached.
                 Running work will finish, but no new runs will start until spend drops back under the cap.
               </div>
@@ -87,29 +83,29 @@ export default function UsagePage() {
       {/* Cost & usage */}
       {dash && dash.cost_total && (dash.cost_total.input_tokens > 0 || dash.cost_total.output_tokens > 0 || (dash.cost_by_provider?.length ?? 0) > 0) && (
         <section className="mb-8">
-          <h2 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Cost &amp; usage</h2>
-          <div className="bg-slate-900 rounded-lg border border-slate-800 p-4 mb-3">
+          <h2 className="text-xs font-medium text-fg-subtle uppercase tracking-wide mb-3">Cost &amp; usage</h2>
+          <div className="bg-surface-raised rounded-lg border border-border p-4 mb-3">
             <div className="flex flex-wrap gap-6">
               <div>
-                <div className="text-xs text-slate-500">Total cost</div>
-                <div className="text-lg font-semibold text-slate-100">
+                <div className="text-xs text-fg-subtle">Total cost</div>
+                <div className="text-lg font-semibold text-fg">
                   {dash.cost_total.cost_usd > 0 ? `$${dash.cost_total.cost_usd.toFixed(4)}` : '$0.00'}
                 </div>
               </div>
               <div>
-                <div className="text-xs text-slate-500">Input tokens</div>
-                <div className="text-lg font-semibold text-slate-100">
+                <div className="text-xs text-fg-subtle">Input tokens</div>
+                <div className="text-lg font-semibold text-fg">
                   {dash.cost_total.input_tokens.toLocaleString()}
                 </div>
               </div>
               <div>
-                <div className="text-xs text-slate-500">Output tokens</div>
-                <div className="text-lg font-semibold text-slate-100">
+                <div className="text-xs text-fg-subtle">Output tokens</div>
+                <div className="text-lg font-semibold text-fg">
                   {dash.cost_total.output_tokens.toLocaleString()}
                 </div>
               </div>
             </div>
-            <p className="text-xs text-slate-500 mt-3">
+            <p className="text-xs text-fg-subtle mt-3">
               claude and opencode report their own authoritative cost (which may be $0 under a
               subscription plan); codex_cli is
               estimated from a token-based pricing table; qwen_code reports tokens but no cost, so
@@ -118,10 +114,10 @@ export default function UsagePage() {
           </div>
 
           {dash.cost_by_provider && dash.cost_by_provider.length > 0 && (
-            <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto">
+            <div className="bg-surface-raised rounded-lg border border-border overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-xs text-slate-500 border-b border-slate-800">
+                  <tr className="text-xs text-fg-subtle border-b border-border">
                     <th className="text-left px-4 py-2">Provider</th>
                     <th className="text-right px-4 py-2">Runs</th>
                     <th className="text-right px-4 py-2">Input tok</th>
@@ -131,12 +127,12 @@ export default function UsagePage() {
                 </thead>
                 <tbody>
                   {dash.cost_by_provider.map((p) => (
-                    <tr key={p.provider} className="border-b border-slate-800 last:border-0">
-                      <td className="px-4 py-2.5 text-slate-200">{p.provider}</td>
-                      <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{p.run_count.toLocaleString()}</td>
-                      <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{p.input_tokens.toLocaleString()}</td>
-                      <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{p.output_tokens.toLocaleString()}</td>
-                      <td className="px-4 py-2.5 text-slate-200 text-xs text-right">
+                    <tr key={p.provider} className="border-b border-border last:border-0">
+                      <td className="px-4 py-2.5 text-fg">{p.provider}</td>
+                      <td className="px-4 py-2.5 text-fg-muted text-xs text-right">{p.run_count.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-fg-muted text-xs text-right">{p.input_tokens.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-fg-muted text-xs text-right">{p.output_tokens.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-fg text-xs text-right">
                         {p.cost_usd > 0 ? `$${p.cost_usd.toFixed(4)}` : '$0.00'}
                       </td>
                     </tr>
@@ -147,10 +143,10 @@ export default function UsagePage() {
           )}
 
           {dash.cost_by_day && dash.cost_by_day.length > 0 && (
-            <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto mt-3">
+            <div className="bg-surface-raised rounded-lg border border-border overflow-x-auto mt-3">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-xs text-slate-500 border-b border-slate-800">
+                  <tr className="text-xs text-fg-subtle border-b border-border">
                     <th className="text-left px-4 py-2">Day</th>
                     <th className="text-right px-4 py-2">Runs</th>
                     <th className="text-right px-4 py-2">Input tok</th>
@@ -163,16 +159,16 @@ export default function UsagePage() {
                   {(() => {
                     const maxDayCost = Math.max(...dash.cost_by_day.map((d) => d.cost_usd), 0.0001)
                     return dash.cost_by_day.map((d) => (
-                      <tr key={d.day} className="border-b border-slate-800 last:border-0">
-                        <td className="px-4 py-2.5 text-slate-200 text-xs">{d.day}</td>
-                        <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{d.run_count.toLocaleString()}</td>
-                        <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{d.input_tokens.toLocaleString()}</td>
-                        <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{d.output_tokens.toLocaleString()}</td>
-                        <td className="px-4 py-2.5 text-slate-200 text-xs text-right">
+                      <tr key={d.day} className="border-b border-border last:border-0">
+                        <td className="px-4 py-2.5 text-fg text-xs">{d.day}</td>
+                        <td className="px-4 py-2.5 text-fg-muted text-xs text-right">{d.run_count.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-fg-muted text-xs text-right">{d.input_tokens.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-fg-muted text-xs text-right">{d.output_tokens.toLocaleString()}</td>
+                        <td className="px-4 py-2.5 text-fg text-xs text-right">
                           {d.cost_usd > 0 ? `$${d.cost_usd.toFixed(4)}` : '$0.00'}
                         </td>
                         <td className="px-4 py-2.5">
-                          <div className="w-28 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                          <div className="w-28 h-1.5 rounded-full bg-surface-sunken overflow-hidden">
                             <div
                               className="h-full rounded-full bg-indigo-500"
                               style={{ width: `${(d.cost_usd / maxDayCost) * 100}%` }}
@@ -188,11 +184,11 @@ export default function UsagePage() {
           )}
 
           {dash.cost_by_repo && dash.cost_by_repo.length > 0 && (
-            <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto mt-3">
-              <div className="px-4 pt-3 pb-1 text-xs text-slate-500">Cost by repo</div>
+            <div className="bg-surface-raised rounded-lg border border-border overflow-x-auto mt-3">
+              <div className="px-4 pt-3 pb-1 text-xs text-fg-subtle">Cost by repo</div>
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-xs text-slate-500 border-b border-slate-800">
+                  <tr className="text-xs text-fg-subtle border-b border-border">
                     <th className="text-left px-4 py-2">Repo</th>
                     <th className="text-right px-4 py-2">Runs</th>
                     <th className="text-right px-4 py-2">Input tok</th>
@@ -202,12 +198,12 @@ export default function UsagePage() {
                 </thead>
                 <tbody>
                   {dash.cost_by_repo.map((rc) => (
-                    <tr key={rc.repo_id} className="border-b border-slate-800 last:border-0">
-                      <td className="px-4 py-2.5 text-slate-200">{rc.repo_name || rc.repo_id}</td>
-                      <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{rc.run_count.toLocaleString()}</td>
-                      <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{rc.input_tokens.toLocaleString()}</td>
-                      <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{rc.output_tokens.toLocaleString()}</td>
-                      <td className="px-4 py-2.5 text-slate-200 text-xs text-right">
+                    <tr key={rc.repo_id} className="border-b border-border last:border-0">
+                      <td className="px-4 py-2.5 text-fg">{rc.repo_name || rc.repo_id}</td>
+                      <td className="px-4 py-2.5 text-fg-muted text-xs text-right">{rc.run_count.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-fg-muted text-xs text-right">{rc.input_tokens.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-fg-muted text-xs text-right">{rc.output_tokens.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-fg text-xs text-right">
                         {rc.cost_usd > 0 ? `$${rc.cost_usd.toFixed(4)}` : '$0.00'}
                       </td>
                     </tr>
@@ -218,11 +214,11 @@ export default function UsagePage() {
           )}
 
           {dash.cost_by_task && dash.cost_by_task.length > 0 && (
-            <div className="bg-slate-900 rounded-lg border border-slate-800 overflow-x-auto mt-3">
-              <div className="px-4 pt-3 pb-1 text-xs text-slate-500">Top tasks by cost</div>
+            <div className="bg-surface-raised rounded-lg border border-border overflow-x-auto mt-3">
+              <div className="px-4 pt-3 pb-1 text-xs text-fg-subtle">Top tasks by cost</div>
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-xs text-slate-500 border-b border-slate-800">
+                  <tr className="text-xs text-fg-subtle border-b border-border">
                     <th className="text-left px-4 py-2">Task</th>
                     <th className="text-right px-4 py-2">Input tok</th>
                     <th className="text-right px-4 py-2">Output tok</th>
@@ -231,18 +227,18 @@ export default function UsagePage() {
                 </thead>
                 <tbody>
                   {dash.cost_by_task.map((tc) => (
-                    <tr key={tc.task_id} className="border-b border-slate-800 last:border-0">
-                      <td className="px-4 py-2.5 text-slate-200">
+                    <tr key={tc.task_id} className="border-b border-border last:border-0">
+                      <td className="px-4 py-2.5 text-fg">
                         <button
                           onClick={() => navigate(`/tasks/${tc.task_id}`)}
-                          className="hover:text-white hover:underline truncate max-w-xs text-left"
+                          className="hover:text-slate-50 hover:underline truncate max-w-xs text-left"
                         >
                           {tc.task_title || tc.task_id}
                         </button>
                       </td>
-                      <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{tc.input_tokens.toLocaleString()}</td>
-                      <td className="px-4 py-2.5 text-slate-400 text-xs text-right">{tc.output_tokens.toLocaleString()}</td>
-                      <td className="px-4 py-2.5 text-slate-200 text-xs text-right">
+                      <td className="px-4 py-2.5 text-fg-muted text-xs text-right">{tc.input_tokens.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-fg-muted text-xs text-right">{tc.output_tokens.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-fg text-xs text-right">
                         {tc.cost_usd > 0 ? `$${tc.cost_usd.toFixed(4)}` : '$0.00'}
                       </td>
                     </tr>
@@ -258,13 +254,13 @@ export default function UsagePage() {
         !dash.claude_usage?.available &&
         !dash.claude_usage?.rate_limited &&
         !(dash.cost_total && (dash.cost_total.input_tokens > 0 || dash.cost_total.output_tokens > 0 || (dash.cost_by_provider?.length ?? 0) > 0)) && (
-          <p className="text-sm text-slate-500">No usage data yet.</p>
+          <p className="text-sm text-fg-subtle">No usage data yet.</p>
         )}
 
       {!dash && (
-        <p className="text-sm text-slate-400">Loading…</p>
+        <p className="text-sm text-fg-muted">Loading…</p>
       )}
-    </div>
+    </PageFrame>
   )
 }
 
@@ -287,21 +283,21 @@ function CostBudgetBar({
 }) {
   const percent = limit > 0 ? Math.min(100, Math.max(0, (spent / limit) * 100)) : 0
   const barColor = percent >= 100 ? 'bg-red-500' : percent >= 80 ? 'bg-amber-500' : 'bg-emerald-500'
-  const textColor = percent >= 100 ? 'text-red-400' : percent >= 80 ? 'text-amber-400' : 'text-slate-300'
+  const textColor = percent >= 100 ? 'text-danger' : percent >= 80 ? 'text-warning' : 'text-fg-muted'
 
   return (
     <div>
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-sm text-slate-300">{label}</span>
+        <span className="text-sm text-fg-muted">{label}</span>
         <span className={`text-sm font-semibold ${textColor}`}>
           ${spent.toFixed(2)} / ${limit.toFixed(2)}
         </span>
       </div>
-      <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+      <div className="w-full h-2 rounded-full bg-surface-sunken overflow-hidden">
         <div className={`h-full rounded-full ${barColor}`} style={{ width: `${percent}%` }} />
       </div>
       {typeof forecast === 'number' && (
-        <div className="text-xs text-slate-500 mt-1">
+        <div className="text-xs text-fg-subtle mt-1">
           Projected at current burn: ${forecast.toFixed(2)}
           {forecast > limit ? ' (on track to exceed the cap)' : ''}
         </div>
@@ -314,22 +310,22 @@ function CostBudgetBar({
 function UsageBar({ label, percent, resetsAt }: { label: string; percent: number; resetsAt?: string | null }) {
   const clamped = Math.min(100, Math.max(0, percent))
   const barColor = clamped >= 95 ? 'bg-red-500' : clamped >= 80 ? 'bg-amber-500' : 'bg-emerald-500'
-  const textColor = clamped >= 95 ? 'text-red-400' : clamped >= 80 ? 'text-amber-400' : 'text-slate-300'
+  const textColor = clamped >= 95 ? 'text-danger' : clamped >= 80 ? 'text-warning' : 'text-fg-muted'
 
   return (
     <div>
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-sm text-slate-300">{label}</span>
+        <span className="text-sm text-fg-muted">{label}</span>
         <span className={`text-sm font-semibold ${textColor}`}>{clamped.toFixed(0)}%</span>
       </div>
-      <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+      <div className="w-full h-2 rounded-full bg-surface-sunken overflow-hidden">
         <div
           className={`h-full rounded-full ${barColor}`}
           style={{ width: `${clamped}%` }}
         />
       </div>
       {resetsAt && (
-        <div className="text-xs text-slate-500 mt-1">
+        <div className="text-xs text-fg-subtle mt-1">
           Resets {new Date(resetsAt).toLocaleString()}
         </div>
       )}

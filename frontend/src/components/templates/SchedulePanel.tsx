@@ -1,5 +1,8 @@
+import { TriangleAlert } from 'lucide-react'
+import Icon from '../ui/Icon'
 import { useEffect, useState } from 'react'
 import { api, type TaskSchedule, type Repo, type Workflow } from '../../api/client'
+import ConfirmDialog from '../shared/ConfirmDialog'
 import { inputCls } from '../../pages/TemplatesPage'
 
 // Cron presets shown in the schedule editor. "custom" reveals a raw cron
@@ -37,6 +40,7 @@ export default function SchedulePanel({
   const [enabled, setEnabled] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [toDelete, setToDelete] = useState<TaskSchedule | null>(null)
 
   // target_label must be one of the selected repo's workflow's labels (the
   // API rejects anything else with a 400) — drive the picker off that
@@ -104,9 +108,9 @@ export default function SchedulePanel({
     onChange()
   }
 
-  async function handleDelete(sched: TaskSchedule) {
-    if (!confirm('Delete this schedule?')) return
+  async function performDelete(sched: TaskSchedule) {
     await api.schedules.delete(sched.id)
+    setToDelete(null)
     onChange()
   }
 
@@ -115,27 +119,27 @@ export default function SchedulePanel({
   }
 
   return (
-    <div className="border-t border-slate-700 bg-slate-950/50 px-5 py-4 flex flex-col gap-4">
-      <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Schedules</h3>
+    <div className="border-t border-border bg-surface/50 px-5 py-4 flex flex-col gap-4">
+      <h3 className="text-xs font-semibold text-fg-muted uppercase tracking-wide">Schedules</h3>
 
       {schedules.length === 0 ? (
-        <p className="text-xs text-slate-500">No schedules for this template yet.</p>
+        <p className="text-xs text-fg-subtle">No schedules for this template yet.</p>
       ) : (
         <div className="flex flex-col gap-2">
           {schedules.map((s) => (
-            <div key={s.id} className="flex items-center gap-3 text-xs bg-slate-900 border border-slate-800 rounded-lg px-3 py-2">
+            <div key={s.id} className="flex items-center gap-3 text-xs bg-surface-raised border border-border rounded-lg px-3 py-2">
               <div className="flex-1 min-w-0">
-                <div className="text-slate-200 font-mono">{s.cron_expr}</div>
-                <div className="text-slate-500 mt-0.5">
-                  {repoName(s.repo_id)} → <span className="text-slate-400">{s.target_label}</span>
-                  {s.last_run_at && <span className="ml-2 text-slate-600">last run {new Date(s.last_run_at).toLocaleString()}</span>}
+                <div className="text-fg font-mono">{s.cron_expr}</div>
+                <div className="text-fg-subtle mt-0.5">
+                  {repoName(s.repo_id)} → <span className="text-fg-muted">{s.target_label}</span>
+                  {s.last_run_at && <span className="ml-2 text-fg-subtle">last run {new Date(s.last_run_at).toLocaleString()}</span>}
                 </div>
               </div>
-              <label className="flex items-center gap-1.5 text-slate-400 cursor-pointer shrink-0">
+              <label className="flex items-center gap-1.5 text-fg-muted cursor-pointer shrink-0">
                 <input type="checkbox" checked={s.enabled} onChange={() => handleToggle(s)} className="accent-indigo-500" />
                 Enabled
               </label>
-              <button onClick={() => handleDelete(s)} className="text-slate-600 hover:text-red-400 transition-colors shrink-0">
+              <button onClick={() => setToDelete(s)} className="text-fg-subtle hover:text-danger transition-colors shrink-0">
                 Delete
               </button>
             </div>
@@ -143,10 +147,10 @@ export default function SchedulePanel({
         </div>
       )}
 
-      <form onSubmit={handleAdd} className="flex flex-col gap-3 border-t border-slate-800 pt-4">
+      <form onSubmit={handleAdd} className="flex flex-col gap-3 border-t border-border pt-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400">Repo</label>
+            <label className="text-xs font-medium text-fg-muted">Repo</label>
             <select value={repoId} onChange={(e) => setRepoId(e.target.value)} className={inputCls}>
               <option value="">Select a repo…</option>
               {repos.map((r) => (
@@ -155,7 +159,7 @@ export default function SchedulePanel({
             </select>
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400">Repeat</label>
+            <label className="text-xs font-medium text-fg-muted">Repeat</label>
             <select value={preset} onChange={(e) => handlePresetChange(e.target.value)} className={inputCls}>
               {CRON_PRESETS.map((p) => (
                 <option key={p.key} value={p.key}>{p.label}</option>
@@ -163,8 +167,8 @@ export default function SchedulePanel({
             </select>
           </div>
           <div className="flex flex-col gap-1.5 sm:col-span-2">
-            <label className="text-xs font-medium text-slate-400">
-              Cron expression <span className="text-slate-600">(minute hour day-of-month month day-of-week)</span>
+            <label className="text-xs font-medium text-fg-muted">
+              Cron expression <span className="text-fg-subtle">(minute hour day-of-month month day-of-week)</span>
             </label>
             <input
               value={cronExpr}
@@ -178,8 +182,8 @@ export default function SchedulePanel({
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400">
-              Target label <span className="text-slate-600">(default {gateLabel || 'human-gate label'})</span>
+            <label className="text-xs font-medium text-fg-muted">
+              Target label <span className="text-fg-subtle">(default {gateLabel || 'human-gate label'})</span>
             </label>
             {workflowLabels.length > 0 ? (
               <select value={targetLabel} onChange={(e) => setTargetLabel(e.target.value)} className={inputCls}>
@@ -199,22 +203,22 @@ export default function SchedulePanel({
               />
             )}
           </div>
-          <label className="flex items-center gap-2 text-xs font-medium text-slate-400 cursor-pointer self-end">
+          <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer self-end">
             <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="accent-indigo-500" />
             Enabled
           </label>
         </div>
 
         {targetLabel.trim() !== '' && gateLabel !== '' && targetLabel.trim() !== gateLabel && (
-          <p className="text-[11px] text-amber-400/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
-            ⚠ Starting on label <span className="font-mono">{targetLabel.trim()}</span> instead of{' '}
+          <p className="text-[11px] text-warning/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
+            <Icon icon={TriangleAlert} size="sm" className="inline -mt-0.5 mr-1" />Starting on label <span className="font-mono">{targetLabel.trim()}</span> instead of{' '}
             <span className="font-mono">{gateLabel}</span> skips human review — the created task goes straight to an
             agent. This enables fully unattended maintenance loops; pair it with a cost budget on the target agent
             config as a safety net.
           </p>
         )}
 
-        {error && <p className="text-xs text-red-400">{error}</p>}
+        {error && <p className="text-xs text-danger">{error}</p>}
 
         <div className="flex justify-end">
           <button
@@ -226,6 +230,21 @@ export default function SchedulePanel({
           </button>
         </div>
       </form>
+
+      {toDelete && (
+        <ConfirmDialog
+          destructive
+          title="Delete schedule?"
+          confirmLabel="Delete schedule"
+          onCancel={() => setToDelete(null)}
+          onConfirm={() => performDelete(toDelete)}
+        >
+          <p>
+            The schedule <span className="font-mono text-fg">{toDelete.cron_expr}</span> ({repoName(toDelete.repo_id)} →{' '}
+            {toDelete.target_label}) will be deleted and no more tasks will be created from it.
+          </p>
+        </ConfirmDialog>
+      )}
     </div>
   )
 }

@@ -279,3 +279,77 @@ describe('AgentConfigForm fallback providers', () => {
     expect(setForm.mock.calls.length).toBe(2)
   })
 })
+
+describe('AgentConfigForm escalation ladder', () => {
+  it('adds a rung via setForm updater', () => {
+    const setForm = vi.fn()
+    render(
+      <MemoryRouter>
+        <AgentConfigForm
+          selected={null}
+          form={baseForm()}
+          setForm={setForm}
+          availableLabels={[]}
+          providerConfigs={[providerConfig('pc-1', 'claude')]}
+          claudeOptions={null}
+          saving={false}
+          deleting={false}
+          onSave={vi.fn()}
+          onDelete={vi.fn()}
+          onToggleEnabled={vi.fn()}
+        />
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByText('Add rung'))
+    const updater = setForm.mock.calls[0][0] as (f: FormState) => FormState
+    expect(updater(baseForm()).escalation_ladder).toEqual([{ provider_config_id: 'pc-1', effort: '' }])
+  })
+
+  it('renders existing rungs with reorder and remove controls', () => {
+    renderForm(
+      baseForm({ escalation_ladder: [{ provider_config_id: 'pc-1', effort: 'max' }, { provider_config_id: 'pc-1' }] }),
+      [providerConfig('pc-1', 'claude')],
+    )
+    expect(screen.getByLabelText('Rung 1 effort')).toHaveValue('max')
+    expect(screen.getByLabelText('Move rung 2 up')).toBeEnabled()
+    expect(screen.getByLabelText('Remove rung 2')).toBeInTheDocument()
+  })
+})
+
+describe('AgentConfigForm — Skills', () => {
+  const skill = { id: 's1', name: 'alpha', description: '', enabled: true, created_at: '', updated_at: '' }
+  const renderForm = (provider: string, onSkillIdsChange = vi.fn()) =>
+    render(
+      <MemoryRouter>
+        <AgentConfigForm
+          selected={null}
+          form={baseForm()}
+          setForm={vi.fn()}
+          availableLabels={[]}
+          providerConfigs={[providerConfig('pc-1', provider)]}
+          claudeOptions={null}
+          saving={false}
+          deleting={false}
+          onSave={vi.fn()}
+          onDelete={vi.fn()}
+          onToggleEnabled={vi.fn()}
+          skills={[skill]}
+          skillIds={[]}
+          onSkillIdsChange={onSkillIdsChange}
+        />
+      </MemoryRouter>,
+    )
+
+  it('renders the picker and reports changes', () => {
+    const onChange = vi.fn()
+    renderForm('claude', onChange)
+    fireEvent.click(screen.getByRole('button', { name: 'alpha' }))
+    expect(onChange).toHaveBeenCalledWith(['s1'])
+    expect(screen.queryByText(/no skills support/)).toBeNull()
+  })
+
+  it('warns when the provider lacks skills support', () => {
+    renderForm('anthropic')
+    expect(screen.getByText(/anthropic provider has no skills support/)).toBeInTheDocument()
+  })
+})

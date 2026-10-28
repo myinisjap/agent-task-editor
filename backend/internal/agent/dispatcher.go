@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent/runtime"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
+	"github.com/myinisjap/agent-task-editor/backend/internal/skills"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
@@ -32,6 +33,8 @@ type Dispatcher struct {
 	engine    *workflow.Engine
 	interval  time.Duration
 	uploadDir string
+	// skillsDir is the skills library root (see internal/skills).
+	skillsDir string
 	// ProviderFactory builds a Provider for a given AgentConfig.
 	ProviderFactory func(cfg AgentConfig) Provider
 	// RateLimits is the shared rate-limit registry (optional — no-op when nil).
@@ -91,6 +94,33 @@ func (d *Dispatcher) SetUploadDir(dir string) {
 	d.uploadDir = dir
 }
 
+// SetSkillsDir configures the directory holding the skills library.
+func (d *Dispatcher) SetSkillsDir(dir string) { d.skillsDir = dir }
+
+// materializeSkills copies the union of the agent config's and repo's enabled
+// skills into the worktree directory the provider scans, excluding them from
+// git. Best-effort: failures are logged, never fail the run.
+func (d *Dispatcher) materializeSkills(ctx context.Context, workDir, provider, agentID, repoID string, log *slog.Logger) {
+	if d.skillsDir == "" || workDir == "" {
+		return
+	}
+	if _, ok := skills.ProviderDir(provider); !ok {
+		return
+	}
+	list, err := d.q.ListEnabledSkillsForRun(ctx, gen.ListEnabledSkillsForRunParams{AgentConfigID: agentID, RepoID: repoID})
+	if err != nil {
+		log.Warn("dispatcher: list skills", "err", err)
+		return
+	}
+	names := make([]string, 0, len(list))
+	for _, s := range list {
+		names = append(names, s.Name)
+	}
+	if _, err := skills.Materialize(ctx, skills.Store{Dir: d.skillsDir}, workDir, provider, names, log); err != nil {
+		log.Warn("dispatcher: materialize skills", "err", err)
+	}
+}
+
 // Run sweeps on interval until ctx is cancelled.
 func (d *Dispatcher) Run(ctx context.Context) {
 	// Record an initial heartbeat before the loop starts so /readyz doesn't
@@ -145,6 +175,16 @@ func (d *Dispatcher) sweep(ctx context.Context) {
 		return
 	}
 
+	// A burst of memory-guard cancels pauses *starting* new work for a short
+	// while. Like the cost ceiling, this gates only the sweep; human-reply
+	// dispatch (DispatchReply) is never gated.
+	if until, active := d.pool.MemoryPressurePause(); active {
+		metrics.DispatchMemoryPauseActive.Set(1)
+		slog.Debug("dispatcher: new dispatch paused after a burst of low-memory cancels", "component", "dispatcher", "paused_until", until)
+		return
+	}
+	metrics.DispatchMemoryPauseActive.Set(0)
+
 	tasks, err := d.q.ListAgentPickupTasks(ctx)
 	if err != nil {
 		slog.Error("dispatcher sweep failed", "component", "dispatcher", "err", err)
@@ -181,8 +221,9 @@ func (d *Dispatcher) sweep(ctx context.Context) {
 		return
 	}
 
+	exps := d.loadRunningExperiments(ctx)
 	for _, t := range tasks {
-		d.dispatch(ctx, t, configs, pools, inUse)
+		d.dispatch(ctx, t, configs, pools, inUse, exps)
 	}
 }
 
@@ -215,7 +256,7 @@ func (d *Dispatcher) repoAtLimit(repo gen.Repo, inUse map[string]int64) bool {
 	return inUse[repo.ID] >= int64(limit)
 }
 
-func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.AgentConfig, pools usagePools, inUse map[string]int64) {
+func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.AgentConfig, pools usagePools, inUse map[string]int64, exps map[string]*gen.AgentExperiment) {
 	log := slog.With("component", "dispatcher", "task_id", t.ID)
 
 	if t.Paused != 0 { // defense-in-depth; ListAgentPickupTasks already filters paused tasks
@@ -252,9 +293,26 @@ func (d *Dispatcher) dispatch(ctx context.Context, t gen.Task, configs []gen.Age
 	// agent config is considered.
 	var matched *gen.AgentConfig
 	var providerConfigID string
+	var ladderRung *int
+	var chosenArm experimentArm
+	failedAttempts := -1 // computed lazily, once per task per sweep
 candidates:
-	for _, cand := range matches {
-		for _, pcID := range agentProviderIDs(cand) {
+	for _, base := range matches {
+		// Overlay the experiment candidate (if this task is in that arm) on a
+		// copy; never mutate the shared configs slice.
+		eff, arm := d.resolveExperiment(ctx, t, *base, exps[base.ID])
+		cand := &eff
+		pcIDs := agentProviderIDs(cand)
+		ladder := ParseLadder(cand.EscalationLadder)
+		rung := 0
+		if len(ladder) > 0 {
+			if failedAttempts < 0 {
+				failedAttempts = d.failedAttempts(ctx, t)
+			}
+			rung = selectRung(failedAttempts, len(ladder))
+			pcIDs = rungProviderIDs(cand, ladder, rung)
+		}
+		for _, pcID := range pcIDs {
 			if d.RateLimits != nil {
 				if blocked, until := d.RateLimits.IsBlocked(pools.ofProvider(pcID)); blocked {
 					log.Info("dispatcher: skipping rate-limited provider, trying next", "agent_config_id", cand.ID, "provider_config_id", pcID, "usage_pool", pools.ofProvider(pcID), "unblocked_at", until)
@@ -265,7 +323,14 @@ candidates:
 				log.Info("dispatcher: skipping provider that is paused, trying next", "agent_config_id", cand.ID, "provider_config_id", pcID)
 				continue
 			}
-			matched, providerConfigID = cand, pcID
+			matched, providerConfigID, chosenArm = cand, pcID, arm
+			if len(ladder) > 0 {
+				r := rung
+				ladderRung = &r
+				if r > 0 {
+					log.Info("dispatcher: escalating to ladder rung", "agent_config_id", cand.ID, "rung", r, "provider_config_id", pcID)
+				}
+			}
 			break candidates
 		}
 	}
@@ -281,7 +346,7 @@ candidates:
 	// phantom-run write fails, and a read failure while computing spend
 	// returns (false, err). Either way an unverifiable budget must not let a
 	// run start, so any error skips dispatch this sweep (retried next sweep).
-	if blocked, err := d.checkCostBudget(ctx, t, *matched); err != nil {
+	if blocked, err := d.checkCostBudget(ctx, t, *matched, chosenArm); err != nil {
 		log.Error("dispatcher: cost budget check failed, skipping dispatch this sweep", "err", err, "blocked", blocked)
 		return
 	} else if blocked {
@@ -303,7 +368,7 @@ candidates:
 		return
 	}
 
-	if _, err := d.startRun(ctx, t, *matched, runOptions{providerConfigID: providerConfigID}); err != nil {
+	if _, err := d.startRun(ctx, t, *matched, runOptions{providerConfigID: providerConfigID, ladderRung: ladderRung, experiment: chosenArm}); err != nil {
 		if errors.Is(err, ErrDispatchConflict) {
 			log.Debug("dispatcher: skipping, task changed since it was listed (lost dispatch claim)")
 			return
@@ -423,7 +488,7 @@ func (d *Dispatcher) resolveCostWarnRatio(ctx context.Context) float64 {
 // own (possibly incomplete) recorded spend, the ordinary "budget exhausted"
 // escalation below already covers it, so unknown-cost runs are never used
 // to mask an otherwise-exhausted budget.
-func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched gen.AgentConfig) (bool, error) {
+func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched gen.AgentConfig, arm experimentArm) (bool, error) {
 	budget := effectiveBudget(t.MaxCostUsd, matched.MaxCostUsd)
 	if budget <= 0 {
 		return false, nil
@@ -444,7 +509,7 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 		if unknownRuns > 0 {
 			msg := fmt.Sprintf("cost budget cannot be enforced: %d run(s) have unknown cost - add pricing for the model at Configuration -> Pricing", unknownRuns)
 			log.Warn("dispatcher: skipping dispatch, task has cost-unknown runs under an active budget", "spent", spent, "budget", budget, "unknown_runs", unknownRuns)
-			return d.escalateCostBudget(ctx, t, matched, ReasonCostUnknown, msg, "cost-unknown")
+			return d.escalateCostBudget(ctx, t, matched, arm, ReasonCostUnknown, msg, "cost-unknown")
 		}
 
 		warnRatio := d.resolveCostWarnRatio(ctx)
@@ -465,7 +530,7 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 	}
 	msg := fmt.Sprintf("budget exhausted: $%.2f of $%.2f", spent, budget)
 	log.Warn("dispatcher: skipping dispatch, cost budget exhausted", "spent", spent, "budget", budget)
-	return d.escalateCostBudget(ctx, t, matched, ReasonCostBudget, msg, "budget-exhausted")
+	return d.escalateCostBudget(ctx, t, matched, arm, ReasonCostBudget, msg, "budget-exhausted")
 }
 
 // escalateCostBudget creates a "phantom" agent_runs row directly in
@@ -477,7 +542,7 @@ func (d *Dispatcher) checkCostBudget(ctx context.Context, t gen.Task, matched ge
 // Returns true (skip dispatch) alongside any error, matching
 // checkCostBudget's contract that a failure here should still prevent
 // dispatch this sweep.
-func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched gen.AgentConfig, code EscalationReason, msg, reason string) (bool, error) {
+func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched gen.AgentConfig, arm experimentArm, code EscalationReason, msg, reason string) (bool, error) {
 	runID := uuid.NewString()
 	if _, err := d.q.CreateAgentRun(ctx, gen.CreateAgentRunParams{
 		ID:            runID,
@@ -485,6 +550,16 @@ func (d *Dispatcher) escalateCostBudget(ctx context.Context, t gen.Task, matched
 		AgentConfigID: &matched.ID,
 	}); err != nil {
 		return true, fmt.Errorf("create %s run: %w", reason, err)
+	}
+	if arm.Arm != ArmCandidate {
+		if err := d.q.SetAgentRunConfigVersion(ctx, gen.SetAgentRunConfigVersionParams{AgentConfigID: matched.ID, ID: runID}); err != nil {
+			slog.Warn("tag cost-budget run with config version", "run", runID, "err", err)
+		}
+	}
+	if arm.ExperimentID != "" {
+		if err := d.q.SetAgentRunExperiment(ctx, gen.SetAgentRunExperimentParams{ExperimentID: &arm.ExperimentID, ExperimentArm: &arm.Arm, ID: runID}); err != nil {
+			slog.Warn("tag cost-budget run with experiment", "run", runID, "err", err)
+		}
 	}
 	// Lock the task on this run, same as a real waiting_human escalation —
 	// stays locked until a human acts (raises the budget, or replies via
@@ -776,15 +851,55 @@ func (d *Dispatcher) DispatchReply(ctx context.Context, taskID, message string) 
 	// Reply on the provider that asked, so its session can be resumed, as
 	// long as it is still in the agent config's list.
 	opts := runOptions{humanReply: &message}
+	if exp, eerr := d.q.GetRunningAgentExperiment(ctx, matched.ID); eerr == nil {
+		eff, arm := d.resolveExperiment(ctx, t, *matched, &exp)
+		matched = &eff
+		opts.experiment = arm
+	}
 	if run.ProviderConfigID != nil && run.AgentConfigID != nil && *run.AgentConfigID == matched.ID {
-		for _, id := range agentProviderIDs(matched) {
+		ladder := ParseLadder(matched.EscalationLadder)
+		pcIDs := agentProviderIDs(matched)
+		if len(ladder) > 0 {
+			rung := 0
+			if run.LadderRung != nil {
+				rung = selectRung(int(*run.LadderRung), len(ladder))
+			}
+			opts.ladderRung = &rung
+			pcIDs = rungProviderIDs(matched, ladder, rung)
+		}
+		for _, id := range pcIDs {
 			if id == *run.ProviderConfigID {
 				opts.providerConfigID = id
 				break
 			}
 		}
 	}
-	return d.startRun(ctx, t, *matched, opts)
+	newRunID, err := d.startRun(ctx, t, *matched, opts)
+	if err != nil {
+		return newRunID, err
+	}
+	// Record after startRun so the reply run's own prompt does not list the
+	// current reply twice (it carries RESPONSE FROM HUMAN) and a failed
+	// dispatch records nothing. Every later run sees it.
+	question := run.Notes
+	if run.Feedback != nil && *run.Feedback != "" {
+		question = run.Feedback
+	}
+	reason := ""
+	if run.EscalationReason != nil {
+		reason = *run.EscalationReason
+	}
+	q := ""
+	if question != nil {
+		q = *question
+	}
+	if rerr := d.q.RecordHumanReply(ctx, gen.RecordHumanReplyParams{
+		RunID: run.ID, TaskID: t.ID, Label: t.Label, EscalationReason: reason,
+		Question: q, Reply: &message, ReplyRunID: &newRunID,
+	}); rerr != nil {
+		slog.Warn("dispatcher: record human reply", "component", "dispatcher", "task_id", taskID, "err", rerr)
+	}
+	return newRunID, nil
 }
 
 // runOptions carries the extras a non-sweep dispatch (currently only the
@@ -794,6 +909,11 @@ type runOptions struct {
 	// providerConfigID is the provider (from the agent config's list) the run
 	// uses; empty means the agent config's primary.
 	providerConfigID string
+	// ladderRung is the escalation-ladder rung in effect (nil = agent config has
+	// no ladder).
+	ladderRung *int
+	// experiment is the A/B experiment arm the run belongs to (zero = none).
+	experiment experimentArm
 }
 
 // startRun creates the run row,
@@ -821,10 +941,11 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 	if pcID == "" {
 		pcID = matched.ProviderConfigID
 	}
-	agentCfg, resumeSessionID, err := d.resolveAgentConfig(ctx, t, matched, pcID)
+	agentCfg, resumeSessionID, err := d.resolveAgentConfig(ctx, t, matched, pcID, opts.ladderRung)
 	if err != nil {
 		return "", err
 	}
+	resumeSessionCostUSD := d.sessionCostBaseline(ctx, t.ID, resumeSessionID)
 
 	var feedback *string
 	if t.CurrentAgentRunID != nil {
@@ -832,7 +953,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		feedback = prior.Feedback
 	}
 
-	if err := d.persistRunRow(ctx, t, matched, pcID, runID, feedback); err != nil {
+	if err := d.persistRunRow(ctx, t, matched, pcID, runID, feedback, opts.ladderRung, opts.experiment); err != nil {
 		return "", err
 	}
 
@@ -856,6 +977,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			Timestamp:  time.Now(),
 			Type:       "system",
 			Content:    "Human reply: " + *opts.humanReply,
+			Seq:        NextLogSeq(),
 		}); err != nil {
 			log.Warn("dispatcher: record human reply log", "err", err)
 		}
@@ -864,10 +986,13 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 	attachmentRels, attachmentAbsPaths := d.resolveAttachments(t, workDir, log)
 	var setup func(context.Context) (WorktreeResult, error)
 	if !haveWorktree {
-		setup = d.worktreeSetup(t, repo, attachmentAbsPaths, log)
+		setup = d.worktreeSetup(t, repo, attachmentAbsPaths, agentCfg.Provider, matched.ID, log)
+	} else {
+		d.materializeSkills(ctx, workDir, agentCfg.Provider, matched.ID, repo.ID, log)
 	}
 	reviewComments := d.loadReviewComments(ctx, t.ID, log)
 	sourceComments := d.loadSourceComments(ctx, t.ID, log)
+	humanDecisions := d.loadHumanDecisions(ctx, t.ID, log)
 
 	var agentNotes *string
 	if t.AgentNotes != "" {
@@ -916,11 +1041,20 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		return "", fmt.Errorf("%w: %q", ErrProviderUnavailable, agentCfg.Provider)
 	}
 
+	var fileScope []string
+	if fo, ferr := d.q.GetTaskFanout(ctx, t.ID); ferr == nil {
+		fileScope = splitFileScope(fo.FileScope)
+	}
+
 	// If this is a parent with subtasks that conflicted on merge-back, hand the
 	// work agent the conflict context so it resolves the merges on this branch.
+	var subtaskIntegration *string
 	var subtaskConflicts *string
 	if d.Subtasks != nil {
-		subtaskConflicts = d.Subtasks.BuildConflictContext(ctx, t.ID)
+		subtaskIntegration = d.Subtasks.BuildIntegrationContext(ctx, t.ID, repo.VerifyCommand)
+		if subtaskIntegration == nil {
+			subtaskConflicts = d.Subtasks.BuildConflictContext(ctx, t.ID)
+		}
 	}
 
 	// Cost-budget plumbing for the provider's mid-run kill switch (see
@@ -945,25 +1079,29 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		RunID:         runID,
 		Provider:      provider,
 		SetupWorktree: setup,
+		SelectLessons: d.lessonSelector(t, log),
 		Input: RunInput{
-			RunID:              runID,
-			Task:               Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Branch: t.Branch, ParentID: derefStr(t.ParentTaskID), RepoPath: repo.Path, Attachments: attachmentRels},
-			AgentConfig:        agentCfg,
-			RepoPath:           workDir,
-			RepoRemoteURL:      derefStr(repo.RemoteUrl),
-			Transitions:        transitions,
-			Feedback:           feedback,
-			PriorPlan:          agentNotes,
-			OpenReviewComments: reviewComments,
-			SourceComments:     sourceComments,
-			AttachmentAbsPaths: attachmentAbsPaths,
-			ResumeSessionID:    resumeSessionID,
-			HumanReply:         opts.humanReply,
-			SubtaskConflicts:   subtaskConflicts,
-			CostBudgetUSD:      costBudgetUSD,
-			CostSpentUSD:       costSpentUSD,
-			CostWarnRatio:      d.resolveCostWarnRatio(ctx),
-			Runtime:            runtimeSpec,
+			RunID:                runID,
+			Task:                 Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Branch: t.Branch, ParentID: derefStr(t.ParentTaskID), FileScope: fileScope, RepoPath: repo.Path, Attachments: attachmentRels},
+			AgentConfig:          agentCfg,
+			RepoPath:             workDir,
+			RepoRemoteURL:        derefStr(repo.RemoteUrl),
+			Transitions:          transitions,
+			Feedback:             feedback,
+			PriorPlan:            agentNotes,
+			OpenReviewComments:   reviewComments,
+			SourceComments:       sourceComments,
+			HumanDecisions:       humanDecisions,
+			AttachmentAbsPaths:   attachmentAbsPaths,
+			ResumeSessionID:      resumeSessionID,
+			ResumeSessionCostUSD: resumeSessionCostUSD,
+			HumanReply:           opts.humanReply,
+			SubtaskConflicts:     subtaskConflicts,
+			SubtaskIntegration:   subtaskIntegration,
+			CostBudgetUSD:        costBudgetUSD,
+			CostSpentUSD:         costSpentUSD,
+			CostWarnRatio:        d.resolveCostWarnRatio(ctx),
+			Runtime:              runtimeSpec,
 		},
 	})
 	if !enqueued {
@@ -1083,7 +1221,7 @@ func existingWorktree(t gen.Task) (string, bool) {
 // provisionWorktree itself, since subtasks.go already holds it around calls to
 // provisionWorktree/RemoveWorktree. The task row is updated while the lock is
 // still held so the sweeper never sees a directory without its recorded owner.
-func (d *Dispatcher) worktreeSetup(t gen.Task, repo gen.Repo, attachmentAbsPaths []string, log *slog.Logger) func(context.Context) (WorktreeResult, error) {
+func (d *Dispatcher) worktreeSetup(t gen.Task, repo gen.Repo, attachmentAbsPaths []string, provider, agentID string, log *slog.Logger) func(context.Context) (WorktreeResult, error) {
 	return func(ctx context.Context) (WorktreeResult, error) {
 		// parentBranchBase does a DB read; resolve it before taking the repo git
 		// lock so a slow DB doesn't hold the lock.
@@ -1115,6 +1253,7 @@ func (d *Dispatcher) worktreeSetup(t gen.Task, repo gen.Repo, attachmentAbsPaths
 				log.Warn("dispatcher: copy attachments to worktree", "err", err)
 			}
 		}
+		d.materializeSkills(ctx, wtPath, provider, agentID, repo.ID, log)
 		return WorktreeResult{Path: wtPath, Branch: branch}, nil
 	}
 }
@@ -1136,12 +1275,15 @@ func providerSupportsResume(provider string) bool {
 // the provider session to resume, if any. Resume is honored for claude,
 // qwen_code, codex_cli, and opencode (and only when the config hasn't opted
 // out); the runner falls back to a cold start if the session no longer exists.
-func (d *Dispatcher) resolveAgentConfig(ctx context.Context, t gen.Task, matched gen.AgentConfig, providerConfigID string) (AgentConfig, string, error) {
+func (d *Dispatcher) resolveAgentConfig(ctx context.Context, t gen.Task, matched gen.AgentConfig, providerConfigID string, ladderRung *int) (AgentConfig, string, error) {
 	pc, err := d.q.GetProviderConfig(ctx, providerConfigID)
 	if err != nil {
 		return AgentConfig{}, "", fmt.Errorf("get provider config: %w", err)
 	}
 	agentCfg := toAgentConfig(matched, pc)
+	if ladderRung != nil {
+		agentCfg.Effort = rungEffort(matched, ParseLadder(matched.EscalationLadder), *ladderRung)
+	}
 
 	var resumeSessionID string
 	if agentCfg.ResumeSessions && providerSupportsResume(agentCfg.Provider) {
@@ -1156,6 +1298,21 @@ func (d *Dispatcher) resolveAgentConfig(ctx context.Context, t gen.Task, matched
 	return agentCfg, resumeSessionID, nil
 }
 
+// sessionCostBaseline returns the cumulative session cost recorded by the
+// latest earlier run of sessionID on this task, or 0 when there is no session
+// to resume or none was recorded. Best-effort: a lookup error degrades to 0,
+// which records the provider's full session total as before.
+func (d *Dispatcher) sessionCostBaseline(ctx context.Context, taskID, sessionID string) float64 {
+	if sessionID == "" {
+		return 0
+	}
+	v, err := d.q.GetSessionCostBaseline(ctx, gen.GetSessionCostBaselineParams{TaskID: taskID, SessionID: sessionID})
+	if err != nil || v == nil {
+		return 0
+	}
+	return *v
+}
+
 // persistRunRow creates the run row and claims the task's dispatch lock in a
 // single transaction. These two writes must be atomic: if the run were created
 // but the task never pointed at it (a crash or error between the statements), an
@@ -1168,7 +1325,7 @@ func (d *Dispatcher) resolveAgentConfig(ctx context.Context, t gen.Task, matched
 // meantime, zero rows are affected, the transaction (including the just-created
 // run row) is rolled back, and ErrDispatchConflict is returned so the caller
 // does not start the run.
-func (d *Dispatcher) persistRunRow(ctx context.Context, t gen.Task, matched gen.AgentConfig, providerConfigID, runID string, feedback *string) error {
+func (d *Dispatcher) persistRunRow(ctx context.Context, t gen.Task, matched gen.AgentConfig, providerConfigID, runID string, feedback *string, ladderRung *int, arm experimentArm) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
@@ -1189,6 +1346,32 @@ func (d *Dispatcher) persistRunRow(ctx context.Context, t gen.Task, matched gen.
 	}); err != nil {
 		_ = tx.Rollback()
 		return fmt.Errorf("set agent run provider config: %w", err)
+	}
+	// Tag with the config's latest version at dispatch time (a concurrent edit
+	// racing this is negligible). Stays NULL when the config has no versions.
+	// Candidate-arm runs stay NULL until the experiment is promoted (which
+	// backfills the new version).
+	if arm.Arm != ArmCandidate {
+		if err := tq.SetAgentRunConfigVersion(ctx, gen.SetAgentRunConfigVersionParams{
+			AgentConfigID: matched.ID,
+			ID:            runID,
+		}); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("set agent run config version: %w", err)
+		}
+	}
+	if arm.ExperimentID != "" {
+		if err := tq.SetAgentRunExperiment(ctx, gen.SetAgentRunExperimentParams{ExperimentID: &arm.ExperimentID, ExperimentArm: &arm.Arm, ID: runID}); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("set agent run experiment: %w", err)
+		}
+	}
+	if ladderRung != nil {
+		r := int64(*ladderRung)
+		if err := tq.SetAgentRunLadderRung(ctx, gen.SetAgentRunLadderRungParams{LadderRung: &r, ID: runID}); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("set agent run ladder rung: %w", err)
+		}
 	}
 	// Claim the task's active run so the next sweep skips it.
 	var claimed int64
@@ -1267,6 +1450,34 @@ func (d *Dispatcher) loadReviewComments(ctx context.Context, taskID string, log 
 		}
 	}
 	return reviewComments
+}
+
+// loadHumanDecisions loads the human replies given on this task so far.
+// Best-effort: a query failure is logged and yields none.
+func (d *Dispatcher) loadHumanDecisions(ctx context.Context, taskID string, log *slog.Logger) []HumanDecision {
+	rows, err := d.q.ListTaskHumanDecisions(ctx, taskID)
+	if err != nil {
+		log.Warn("dispatcher: list task human decisions", "err", err)
+		return nil
+	}
+	var out []HumanDecision
+	for _, r := range rows {
+		if r.Reply == nil || *r.Reply == "" {
+			continue
+		}
+		at := r.AskedAt
+		if r.RepliedAt != nil {
+			at = *r.RepliedAt
+		}
+		out = append(out, HumanDecision{
+			Question:  r.Question,
+			Reply:     *r.Reply,
+			RepliedAt: at.UTC().Format("2006-01-02 15:04 UTC"),
+			Label:     r.Label,
+			AgentName: r.AgentName,
+		})
+	}
+	return out
 }
 
 // loadSourceComments loads the task's ingested source-issue comment thread

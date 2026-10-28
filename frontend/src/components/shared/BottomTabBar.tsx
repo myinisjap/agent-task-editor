@@ -1,5 +1,7 @@
 import { NavLink } from 'react-router-dom'
+import { Inbox, Menu, MessageSquare, SquareKanban } from 'lucide-react'
 import { useInboxCount } from '../../stores/inbox'
+import { Badge, Icon } from '../ui'
 
 interface BottomTabBarProps {
   onMore: () => void
@@ -7,7 +9,7 @@ interface BottomTabBarProps {
 
 const tabClassName = ({ isActive }: { isActive: boolean }) =>
   `flex-1 min-h-[3.5rem] min-w-[44px] flex flex-col items-center justify-center gap-0.5 text-xs font-medium transition-colors ${
-    isActive ? 'text-white bg-slate-800' : 'text-slate-400 hover:text-slate-100'
+    isActive ? 'text-fg bg-surface-sunken' : 'text-fg-muted hover:text-fg'
   }`
 
 /** Phone-only fixed bottom navigation. Hidden at md and up (the sidebar takes over). */
@@ -16,24 +18,35 @@ export default function BottomTabBar({ onMore }: BottomTabBarProps) {
   return (
     <nav
       aria-label="Primary"
-      className="fixed bottom-0 inset-x-0 z-30 md:hidden flex bg-slate-900 border-t border-slate-700 pb-[env(safe-area-inset-bottom)]"
+      className="fixed bottom-0 inset-x-0 z-30 md:hidden flex bg-surface-raised border-t border-border pb-[env(safe-area-inset-bottom)]"
     >
       <NavLink to="/inbox" className={tabClassName}>
+        <Icon icon={Inbox} size="lg" />
         <span className="relative">
           Inbox
           {inboxCount > 0 && (
-            <span
-              className="absolute -top-2 left-full ml-1 inline-flex items-center justify-center min-w-[1.25rem] px-1.5 py-0.5 rounded-full bg-pink-600 text-white text-[10px] font-semibold"
+            <Badge
+              tone="accent"
+              variant="solid"
+              size="xs"
+              className="absolute -top-2 left-full ml-1 justify-center min-w-[1.25rem] rounded-full font-semibold"
               aria-label={`${inboxCount} items waiting on you`}
             >
               {inboxCount}
-            </span>
+            </Badge>
           )}
         </span>
       </NavLink>
-      <NavLink to="/board" className={tabClassName}>Board</NavLink>
-      <NavLink to="/chat" className={tabClassName}>Chat</NavLink>
+      <NavLink to="/board" className={tabClassName}>
+        <Icon icon={SquareKanban} size="lg" />
+        Board
+      </NavLink>
+      <NavLink to="/chat" className={tabClassName}>
+        <Icon icon={MessageSquare} size="lg" />
+        Chat
+      </NavLink>
       <button type="button" onClick={onMore} aria-label="More" className={tabClassName({ isActive: false })}>
+        <Icon icon={Menu} size="lg" />
         More
       </button>
     </nav>

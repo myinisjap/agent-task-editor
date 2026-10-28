@@ -41,6 +41,7 @@ const ROWS = [
   ['subtasks', 'Subtasks (`create_subtask`)'],
   ['effort', 'Effort (reasoning level)'],
   ['permissionMode', 'Permission mode'],
+  ['skills', 'Skills library'],
 ]
 
 function cell(entry) {

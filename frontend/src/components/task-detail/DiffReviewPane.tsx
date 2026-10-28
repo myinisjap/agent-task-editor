@@ -1,9 +1,13 @@
+import { RefreshCw } from 'lucide-react'
+import Icon from '../ui/Icon'
 import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import { parseDiff, type FileDiff } from '../../lib/parseDiff'
 import type { DiffComment } from '../../lib/diffComments'
 import FileDiffViewer from '../diff/FileDiffViewer'
 import VerificationPanel from './VerificationPanel'
+import ReviewBriefCard from './ReviewBriefCard'
+import PreviewStrip from './PreviewStrip'
 
 // DiffReviewPane renders the Diff tab: PR link/Create PR/Refresh header plus
 // the file diff viewer wired to review comments. Diff files/loading state are
@@ -20,6 +24,11 @@ export default function DiffReviewPane({
   onRemoveComment,
   onReopenComment,
   verificationRefreshKey,
+  showBrief,
+  briefRefreshKey,
+  hideVerification,
+  showPreview,
+  previewRefreshKey,
 }: {
   taskId: string | undefined
   prUrl?: string
@@ -30,6 +39,12 @@ export default function DiffReviewPane({
   onRemoveComment: (commentId: string) => void
   onReopenComment: (commentId: string) => void
   verificationRefreshKey?: number
+  showBrief?: boolean
+  briefRefreshKey?: string
+  // Review layout: verification lives in the rail; preview strip sits above the diff.
+  hideVerification?: boolean
+  showPreview?: boolean
+  previewRefreshKey?: string | number
 }) {
   const [diffFiles, setDiffFiles] = useState<FileDiff[]>([])
   const [diffLoading, setDiffLoading] = useState(false)
@@ -50,16 +65,22 @@ export default function DiffReviewPane({
 
   return (
     <div className="h-full overflow-y-auto p-4" data-testid="diff-review-pane">
-      <VerificationPanel taskId={taskId} refreshKey={verificationRefreshKey} />
+      {showBrief && (
+        <div className="mb-3">
+          <ReviewBriefCard taskId={taskId} refreshKey={briefRefreshKey} />
+        </div>
+      )}
+      {showPreview && <PreviewStrip taskId={taskId} refreshKey={previewRefreshKey ?? ''} />}
+      {!hideVerification && <VerificationPanel taskId={taskId} refreshKey={verificationRefreshKey} />}
       <div className="flex items-center justify-between mb-3">
-        <p className="text-xs text-slate-500">Changes on this task's branch</p>
+        <p className="text-xs text-fg-subtle">Changes on this task's branch</p>
         <div className="flex items-center gap-3">
           {prUrl ? (
             <a
               href={prUrl}
               target="_blank"
               rel="noreferrer"
-              className="px-3 py-1.5 text-xs font-medium rounded bg-indigo-600 hover:bg-indigo-500 text-white"
+              className="px-3 py-1.5 text-xs font-medium rounded bg-accent hover:bg-accent/90 text-on-accent"
             >
               View PR ↗
             </a>
@@ -67,7 +88,7 @@ export default function DiffReviewPane({
             <button
               onClick={onCreatePR}
               disabled={creatingPR}
-              className="px-3 py-1.5 text-xs font-medium rounded bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50"
+              className="px-3 py-1.5 text-xs font-medium rounded bg-accent hover:bg-accent/90 text-on-accent disabled:opacity-50"
               title="Push the branch and open a GitHub pull request"
             >
               {creatingPR ? 'Creating PR…' : 'Create PR'}
@@ -75,9 +96,9 @@ export default function DiffReviewPane({
           )}
           <button
             onClick={loadDiff}
-            className="px-3 py-1.5 text-xs font-medium rounded bg-slate-700 hover:bg-slate-600 text-slate-200"
+            className="px-3 py-1.5 text-xs font-medium rounded bg-border hover:bg-slate-600 text-fg"
           >
-            ↻ Refresh
+            <Icon icon={RefreshCw} size="sm" className="inline -mt-0.5 mr-1" />Refresh
           </button>
         </div>
       </div>

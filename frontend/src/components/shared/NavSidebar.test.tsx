@@ -73,6 +73,25 @@ describe('NavSidebar', () => {
     useHealthStore.setState({ checks: [] })
   })
 
+  it('shows a count pill and ignores snoozed advice', () => {
+    useHealthStore.setState({
+      checks: [
+        { id: 'mcp_sidecar', name: 'MCP', status: 'warn', detail: '' },
+        { id: 'auto_backup', name: 'Backup', status: 'warn', detail: '' },
+      ] as never,
+      snoozed: ['auto_backup'],
+      paused: [],
+    })
+    render(
+      <MemoryRouter initialEntries={['/board']}>
+        <NavSidebar />
+      </MemoryRouter>,
+    )
+    const dot = screen.getByRole('img', { name: 'Health check warning' })
+    expect(dot).toHaveTextContent('1')
+    useHealthStore.setState({ checks: [], snoozed: [] })
+  })
+
   it('closes the mobile drawer when a nav link is clicked', () => {
     const onOpenChange = vi.fn()
     render(
@@ -139,7 +158,7 @@ describe('NavSidebar', () => {
       expect(FakeNotification.requestPermission).not.toHaveBeenCalled()
     })
 
-    it('shows a disabled, blocked state when permission is denied', () => {
+    it('shows an actionable blocked state that explains how to re-enable', () => {
       useNotificationsStore.setState({ enabled: false, permission: 'denied' })
       render(
         <MemoryRouter initialEntries={['/settings/health']}>
@@ -147,9 +166,16 @@ describe('NavSidebar', () => {
         </MemoryRouter>,
       )
 
-      const toggle = screen.getByRole('button', { name: 'Enable notifications' })
-      expect(toggle).toBeDisabled()
-      expect(screen.getByText('Notifications blocked')).toBeInTheDocument()
+      const btn = screen.getByRole('button', { name: /Notifications blocked/ })
+      expect(btn).toBeEnabled()
+      expect(btn).toHaveAttribute('aria-expanded', 'false')
+      expect(screen.queryByRole('dialog', { name: 'How to enable notifications' })).not.toBeInTheDocument()
+      fireEvent.click(btn)
+      expect(btn).toHaveAttribute('aria-expanded', 'true')
+      expect(screen.getByRole('dialog', { name: 'How to enable notifications' })).toHaveTextContent(/site-settings icon/)
+      expect(FakeNotification.requestPermission).not.toHaveBeenCalled()
+      fireEvent.keyDown(document, { key: 'Escape' })
+      expect(screen.queryByRole('dialog', { name: 'How to enable notifications' })).not.toBeInTheDocument()
     })
 
     it('explains instead of offering the toggle when the Notifications API is unsupported', () => {

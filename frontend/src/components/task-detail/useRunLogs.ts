@@ -3,7 +3,8 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { api, type AgentLog } from '../../api/client'
 import { wsClient } from '../../api/ws'
 import { LOG_PAGE_SIZE, mergeLogs, toLog } from '../../lib/agentLogMerge'
-import { groupLogRows } from '../../lib/groupAgentLog'
+import { groupLogRows, type LogRow } from '../../lib/groupAgentLog'
+import { groupSteps, type StepGroup } from '../../lib/runTimeline'
 
 // useRunLogs owns the log list, pagination, and virtualizer for a single
 // (taskId, runId) pair, including live updates via the WS message bus.
@@ -35,14 +36,31 @@ export function useRunLogs(taskId: string | undefined, runId: string | null, isR
 
   // Display rows: a tool result is folded into the call that produced it, so a
   // call and its output are one row rather than two. See groupAgentLog.
-  const rows = useMemo(() => groupLogRows(logs, debug, isRunning), [logs, debug, isRunning])
+  // `baseRows` (debug off) feeds the summary and the grouped timeline, so the
+  // Debug toggle never changes the counts. With Debug on, the flat list shows
+  // every raw event exactly as before.
+  const baseRows = useMemo(() => groupLogRows(logs, false, isRunning), [logs, isRunning])
+  const debugRows = useMemo(() => (debug ? groupLogRows(logs, true, isRunning) : null), [logs, debug, isRunning])
+  const rows: LogRow[] = debugRows ?? baseRows
+  const groups = useMemo<StepGroup[]>(() => groupSteps(baseRows), [baseRows])
+  // What the virtualizer lists: flat rows in Debug, step groups otherwise.
+  const items: (LogRow | StepGroup)[] = debug ? rows : groups
+
+  // Ticks once a second while the run is live so its duration advances.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!isRunning) return
+    setNow(Date.now())
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [isRunning])
 
   // Virtualize the log list: only entries near the viewport are mounted, so a
   // run with thousands of entries stays smooth. Rows are variable-height
   // (markdown, expandable tool results), so heights are measured dynamically
   // via measureElement rather than estimated up front.
   const logVirtualizer = useVirtualizer({
-    count: rows.length,
+    count: items.length,
     getScrollElement: () => logScrollRef.current,
     estimateSize: () => 44,
     overscan: 12,
@@ -73,7 +91,7 @@ export function useRunLogs(taskId: string | undefined, runId: string | null, isR
     try {
       const res = await api.tasks.runLogs(taskId, runId, { before: oldest, limit: LOG_PAGE_SIZE })
       autoScrollRef.current = false
-      anchorRef.current = rows[0] ? { key: rows[0].key, rowCount: rows.length } : null
+      anchorRef.current = items[0] ? { key: items[0].key, rowCount: items.length } : null
       for (const x of res.items) seenIdsRef.current.add(x.id)
       setLogs((prev) => mergeLogs(prev, res.items))
       setLogsHasEarlier(res.hasMore)
@@ -82,7 +100,7 @@ export function useRunLogs(taskId: string | undefined, runId: string | null, isR
     } finally {
       setLoadingEarlier(false)
     }
-  }, [taskId, runId, logs, rows, loadingEarlier])
+  }, [taskId, runId, logs, items, loadingEarlier])
 
   // WS subscription (message-bus only — see doc comment above).
   useEffect(() => {
@@ -152,19 +170,23 @@ export function useRunLogs(taskId: string | undefined, runId: string | null, isR
     const anchor = anchorRef.current
     if (anchor) {
       anchorRef.current = null
-      const found = rows.findIndex((r) => r.key === anchor.key)
-      const idx = found >= 0 ? found : rows.length - anchor.rowCount
+      const found = items.findIndex((r) => r.key === anchor.key)
+      const idx = found >= 0 ? found : items.length - anchor.rowCount
       if (idx > 0) logVirtualizer.scrollToIndex(idx, { align: 'start' })
       return
     }
-    if (autoScrollRef.current && rows.length > 0) {
-      logVirtualizer.scrollToIndex(rows.length - 1, { align: 'end' })
+    if (autoScrollRef.current && items.length > 0) {
+      logVirtualizer.scrollToIndex(items.length - 1, { align: 'end' })
     }
-  }, [rows, logVirtualizer])
+  }, [items, logVirtualizer])
 
   return {
     logs,
     rows,
+    baseRows,
+    groups,
+    items,
+    now,
     logsHasEarlier,
     loadingEarlier,
     handleLoadEarlier,

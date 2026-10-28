@@ -153,10 +153,12 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		runStatuses := h.activeRunStatusMap(r.Context(), ids)
 		effects := h.sideEffectMap(r.Context(), ids)
 		pendings := h.sourcePendingMap(r.Context(), ids)
+		fanouts := h.fanoutMap(r.Context(), ids)
 		resp := toTaskResponses(children)
 		for i := range resp {
 			resp[i] = applySideEffects(resp[i], effects)
 			resp[i] = applySourcePending(resp[i], pendings)
+			resp[i] = applyFanout(resp[i], fanouts)
 			resp[i] = applyActiveRunStatus(applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons), runStatuses)
 		}
 		JSON(w, http.StatusOK, resp)
@@ -190,11 +192,13 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	blockReasons := h.blockReasonMap(r.Context(), tasks)
 	runStatuses := h.activeRunStatusMap(r.Context(), ids)
 	effects := h.sideEffectMap(r.Context(), ids)
+	fanouts := h.fanoutMap(r.Context(), ids)
 	pendings := h.sourcePendingMap(r.Context(), ids)
 	resp := toTaskResponses(tasks)
 	for i := range resp {
 		resp[i] = applySideEffects(resp[i], effects)
 		resp[i] = applySourcePending(resp[i], pendings)
+		resp[i] = applyFanout(resp[i], fanouts)
 		resp[i] = applyActiveRunStatus(applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons), runStatuses)
 	}
 	JSON(w, http.StatusOK, resp)
@@ -418,6 +422,7 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	ids := []string{task.ID}
 	resp := applyDepCounts(toTaskResponse(task), h.dependencyCountMap(r.Context(), ids))
 	resp = applyRollup(resp, h.subtaskRollupMap(r.Context(), ids))
+	resp = applyFanout(resp, h.fanoutMap(r.Context(), ids))
 	resp = applyQueuePosition(resp, h.queuePositionMap(r.Context()))
 	resp = applyBlockReason(resp, h.blockReasonMap(r.Context(), []gen.Task{task}))
 	resp = applyActiveRunStatus(resp, h.activeRunStatusMap(r.Context(), ids))
@@ -988,6 +993,26 @@ func (h *TasksHandler) ListSourceComments(w http.ResponseWriter, r *http.Request
 		comments = []gen.TaskSourceComment{}
 	}
 	JSON(w, http.StatusOK, comments)
+}
+
+// ListHumanDecisions returns the human replies to the task's waiting_human
+// runs (oldest first); question-only rows are excluded.
+// Route: GET /tasks/{id}/human-decisions
+func (h *TasksHandler) ListHumanDecisions(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	if _, err := h.q.GetTask(r.Context(), taskID); err != nil {
+		Err(w, http.StatusNotFound, "task not found")
+		return
+	}
+	rows, err := h.q.ListTaskHumanDecisions(r.Context(), taskID)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if rows == nil {
+		rows = []gen.ListTaskHumanDecisionsRow{}
+	}
+	JSON(w, http.StatusOK, rows)
 }
 
 func handleTransitionError(w http.ResponseWriter, err error) {

@@ -142,6 +142,17 @@ func isYAMLType(mt string) bool {
 }
 
 var jsonExemptions = []jsonExemption{
+	// Skill create/replace accepts a zip of a skill folder.
+	{
+		method: http.MethodPost,
+		match:  func(p string) bool { return p == "/api/v1/skills" },
+		accept: func(mt string) bool { return mt == "application/zip" },
+	},
+	{
+		method: http.MethodPatch,
+		match:  func(p string) bool { return strings.HasPrefix(p, "/api/v1/skills/") },
+		accept: func(mt string) bool { return mt == "application/zip" },
+	},
 	// Task create accepts multipart/form-data (image attachments).
 	{
 		method: http.MethodPost,

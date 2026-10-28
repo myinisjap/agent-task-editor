@@ -31,6 +31,7 @@ labels:            # columns, left to right by sort_order
     sort_order: 1
   - name: review
     color: "#EC4899"
+    display_name: Human review   # optional column title shown in the UI; defaults to a humanized name
     sort_order: 2
     create_pr: true      # entering it pushes the branch and opens a PR (at most one label)
     wip_limit: 5         # optional; wip_limit_hard: true also stops dispatch into it when full
@@ -44,7 +45,7 @@ transitions:       # the only moves allowed
   - {from: review, to: work, trigger: human, path: failure}   # reject_task
   - {from: review, to: done, trigger: human, path: success}   # approve_task
 trigger is agent, human or both; path (success|failure) is the outcome approve/reject and agents follow.
-Labels may also set verify_mode (custom|disabled) with verify_command to override the repo's verify command.`
+Labels may also set display_name (UI title, max 64 chars; name stays the identifier) and verify_mode (custom|disabled) with verify_command to override the repo's verify command.`
 
 func init() {
 	register(Tool{
@@ -120,6 +121,9 @@ func repoProps(create bool) map[string]any {
 		"workflow_id":            str("Workflow new tasks in this repo use (from list_workflows; on update, empty string clears it)"),
 		"verify_command":         str("Shell command run in the task's worktree after an agent reports success, e.g. \"make test\"; non-zero exit sends the work back. Empty disables it."),
 		"verify_timeout_seconds": map[string]any{"type": "integer", "description": "Verify command timeout, 1-3600 (default 600)"},
+		"preview_command":        str("Shell command that starts the app's dev server in the task worktree; must listen on $PORT (127.0.0.1). With preview_routes it enables screenshots in the review brief."),
+		"preview_routes":         str("Newline-separated paths to screenshot, e.g. \"/\\n/tasks\""),
+		"preview_paths_glob":     str("Newline-separated globs deciding when a diff is a UI change (empty = frontend/**, web/**, src/**/*.{tsx,jsx,vue,svelte,css})"),
 		"max_concurrent_runs":    map[string]any{"type": "integer", "description": "Max agent runs at once in this repo (default: the server's MAX_WORKERS)"},
 		"runtime_languages": map[string]any{
 			"type":        "array",
@@ -146,6 +150,7 @@ func withRepoID(p map[string]any) map[string]any {
 // repoFields are the add_repo/update_repo arguments forwarded to the API.
 var repoFields = []string{
 	"name", "path", "remote_url", "workflow_id", "verify_command", "verify_timeout_seconds",
+	"preview_command", "preview_routes", "preview_paths_glob",
 	"max_concurrent_runs", "runtime_languages", "issue_sync_enabled", "issue_sync_label",
 }
 

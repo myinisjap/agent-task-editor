@@ -26,13 +26,16 @@ SQLite with WAL (Write-Ahead Logging) enabled for better concurrent read perform
 `sqlc.yaml` configures codegen. SQL query files are in `queries/`:
 
 - `tasks.sql` — task CRUD + label moves + dispatch queries
+- `human_decisions.sql` — one row per waiting_human run; question written at escalation, reply on DispatchReply; read by startRun for the HUMAN DECISIONS prompt section; not pruned by log retention
 - `workflows.sql` — workflow, label, transition, history CRUD
 - `agents.sql` — agent config CRUD
 - `providers.sql` — provider config CRUD (provider/model/env, shared by agent configs and chat sessions)
 - `chat.sql` — chat session CRUD (interactive PTY terminal sessions)
 - `repos.sql` — repository CRUD
 - `runs.sql` — agent run CRUD and log storage
+- `previews.sql` — task preview screenshot captures + images
 - `dashboard.sql` — aggregate queries for the dashboard
+- `repo_lessons.sql` — curated per-repo/global lessons injected into agent prompts
 - `review_comments.sql` — inline diff review comment CRUD, both locally-created and GitHub-ingested
 - `pr_review_state.sql` — per-task GitHub PR review/check ingestion cursor (`task_pr_review_state`)
 
@@ -55,6 +58,7 @@ Long or paginated queries use positional `?N` params, not `@named` (ADR 0020). A
 **Ingestion and sync (ADR 0036)**
 - `ListGhSyncEligibleTasks` filters in SQL to keep `gh` calls bounded.
 - Tasks dedupe by `(source, source_ref)` partial unique index; schedule firings use `source_ref = "<schedule_id>#<marker>"` and `HasOpenTaskForSchedule` (`LIKE '<id>#%'`).
+- Intake webhooks (`intake_endpoints.sql`): tasks use `source = 'webhook'`, `source_ref = "<endpoint_id>#<keyhash>#<nanos>"` (or `<endpoint_id>#<uuid>` with no dedupe key); `GetOpenIntakeTaskIDByRefPrefix` finds the open task for a dedupe key. `intake_endpoints.secret` is plaintext (HMAC needs it) and is never returned by list/get.
 - `SetTaskPR` (now an upsert into `task_git`) sets `git_state` + `pr_url` together; callers preserve an existing URL when the live query surfaces none. `SetTaskPRMergeable` leaves `updated_at` alone.
 - `repos.clone_status` (`ready`/`cloning`/`error`) + `clone_error` are written by `SetRepoCloneStatus` (async auto-clone).
 - Repo-create/update handlers name every column, so defaults don't apply; see ADR 0036.

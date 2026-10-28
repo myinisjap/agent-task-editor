@@ -1,6 +1,7 @@
 // Station layout for the "factory assembly line" dashboard visualization. Kept
 // out of FactoryLine.tsx so that file only exports a component (Fast Refresh
 // rule), mirroring taskBuckets.ts alongside TaskFactory.tsx.
+import { labelDisplayName } from '../lib/labelDisplay'
 import type { Workflow } from '../api/client'
 import { bucketize } from './taskBuckets'
 import { DEFAULT_FACTORY_ACTIONS, BUCKET_FACTORY_ACTIONS, type FactoryAction } from './factoryMachines'
@@ -30,7 +31,7 @@ export function stationsFor(workflow: Workflow, labelCounts: Record<string, numb
     .sort((a, b) => a.sort_order - b.sort_order)
     .map((label) => ({
       key: label.id,
-      name: label.name,
+      name: labelDisplayName(label),
       color: label.color,
       action: DEFAULT_FACTORY_ACTIONS[label.name] ?? 'idle',
       count: labelCounts[label.name] ?? 0,

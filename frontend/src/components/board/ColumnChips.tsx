@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react'
+
 export type ColumnChip = {
   key: string
   label: string
@@ -15,8 +17,14 @@ export default function ColumnChips({
   currentIndex: number
   onSelect: (i: number) => void
 }) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([])
+  useEffect(() => {
+    refs.current[currentIndex]?.scrollIntoView?.({ block: 'nearest', inline: 'center', behavior: 'smooth' })
+  }, [currentIndex])
   return (
     <div
+      role="group"
+      aria-label="Board columns"
       data-testid="column-chips"
       className="flex gap-2 overflow-x-auto mb-2 pb-1"
       style={{ touchAction: 'pan-x' }}
@@ -24,6 +32,9 @@ export default function ColumnChips({
       {chips.map((c, i) => (
         <button
           key={c.key}
+          ref={(el) => {
+            refs.current[i] = el
+          }}
           type="button"
           data-needs-human={c.needsHuman ? 'true' : undefined}
           aria-current={i === currentIndex ? 'true' : undefined}

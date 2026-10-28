@@ -34,6 +34,43 @@ type AgentConfig struct {
 	Effort                    string    `json:"effort"`
 	PermissionMode            string    `json:"permission_mode"`
 	FallbackProviderConfigIds string    `json:"fallback_provider_config_ids"`
+	EscalationLadder          string    `json:"escalation_ladder"`
+}
+
+type AgentConfigSkill struct {
+	AgentConfigID string `json:"agent_config_id"`
+	SkillID       string `json:"skill_id"`
+}
+
+type AgentConfigVersion struct {
+	ID            string    `json:"id"`
+	AgentConfigID string    `json:"agent_config_id"`
+	Version       int64     `json:"version"`
+	Snapshot      string    `json:"snapshot"`
+	ActorID       *string   `json:"actor_id"`
+	Note          *string   `json:"note"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+type AgentExperiment struct {
+	ID                string     `json:"id"`
+	AgentConfigID     string     `json:"agent_config_id"`
+	CandidateSnapshot string     `json:"candidate_snapshot"`
+	BaseVersion       *int64     `json:"base_version"`
+	SharePercent      int64      `json:"share_percent"`
+	Status            string     `json:"status"`
+	Note              *string    `json:"note"`
+	ActorID           *string    `json:"actor_id"`
+	PromotedVersion   *int64     `json:"promoted_version"`
+	StartedAt         time.Time  `json:"started_at"`
+	StoppedAt         *time.Time `json:"stopped_at"`
+}
+
+type AgentExperimentAssignment struct {
+	ExperimentID string    `json:"experiment_id"`
+	TaskID       string    `json:"task_id"`
+	Arm          string    `json:"arm"`
+	AssignedAt   time.Time `json:"assigned_at"`
 }
 
 type AgentLog struct {
@@ -42,6 +79,7 @@ type AgentLog struct {
 	Timestamp  time.Time `json:"timestamp"`
 	Type       string    `json:"type"`
 	Content    string    `json:"content"`
+	Seq        int64     `json:"seq"`
 }
 
 type AgentRateLimit struct {
@@ -52,24 +90,29 @@ type AgentRateLimit struct {
 }
 
 type AgentRun struct {
-	ID               string     `json:"id"`
-	TaskID           string     `json:"task_id"`
-	AgentConfigID    *string    `json:"agent_config_id"`
-	Status           string     `json:"status"`
-	Feedback         *string    `json:"feedback"`
-	StoredInfo       *string    `json:"stored_info"`
-	StartedAt        *time.Time `json:"started_at"`
-	CompletedAt      *time.Time `json:"completed_at"`
-	CreatedAt        time.Time  `json:"created_at"`
-	Notes            *string    `json:"notes"`
-	InputTokens      int64      `json:"input_tokens"`
-	OutputTokens     int64      `json:"output_tokens"`
-	CostUsd          float64    `json:"cost_usd"`
-	SessionID        string     `json:"session_id"`
-	CostUnknown      int64      `json:"cost_unknown"`
-	TurnsUsed        int64      `json:"turns_used"`
-	EscalationReason *string    `json:"escalation_reason"`
-	ProviderConfigID *string    `json:"provider_config_id"`
+	ID                 string     `json:"id"`
+	TaskID             string     `json:"task_id"`
+	AgentConfigID      *string    `json:"agent_config_id"`
+	Status             string     `json:"status"`
+	Feedback           *string    `json:"feedback"`
+	StoredInfo         *string    `json:"stored_info"`
+	StartedAt          *time.Time `json:"started_at"`
+	CompletedAt        *time.Time `json:"completed_at"`
+	CreatedAt          time.Time  `json:"created_at"`
+	Notes              *string    `json:"notes"`
+	InputTokens        int64      `json:"input_tokens"`
+	OutputTokens       int64      `json:"output_tokens"`
+	CostUsd            float64    `json:"cost_usd"`
+	SessionID          string     `json:"session_id"`
+	CostUnknown        int64      `json:"cost_unknown"`
+	TurnsUsed          int64      `json:"turns_used"`
+	EscalationReason   *string    `json:"escalation_reason"`
+	ProviderConfigID   *string    `json:"provider_config_id"`
+	SessionCostUsd     *float64   `json:"session_cost_usd"`
+	LadderRung         *int64     `json:"ladder_rung"`
+	AgentConfigVersion *int64     `json:"agent_config_version"`
+	ExperimentID       *string    `json:"experiment_id"`
+	ExperimentArm      *string    `json:"experiment_arm"`
 }
 
 type BackupSetting struct {
@@ -94,6 +137,22 @@ type CostWarningSetting struct {
 	ID        int64     `json:"id"`
 	WarnRatio float64   `json:"warn_ratio"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type IntakeEndpoint struct {
+	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
+	RepoID              string     `json:"repo_id"`
+	WorkflowID          *string    `json:"workflow_id"`
+	TargetLabel         string     `json:"target_label"`
+	Secret              string     `json:"secret"`
+	Enabled             bool       `json:"enabled"`
+	TitleTemplate       string     `json:"title_template"`
+	DescriptionTemplate string     `json:"description_template"`
+	DedupeKeyTemplate   string     `json:"dedupe_key_template"`
+	LastReceivedAt      *time.Time `json:"last_received_at"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
 type IntakeRule struct {
@@ -165,6 +224,31 @@ type Repo struct {
 	RuntimeLanguages              string    `json:"runtime_languages"`
 	VerifyCommand                 string    `json:"verify_command"`
 	VerifyTimeoutSeconds          int64     `json:"verify_timeout_seconds"`
+	PreviewCommand                string    `json:"preview_command"`
+	PreviewRoutes                 string    `json:"preview_routes"`
+	PreviewPathsGlob              string    `json:"preview_paths_glob"`
+}
+
+type RepoLesson struct {
+	ID            string     `json:"id"`
+	RepoID        *string    `json:"repo_id"`
+	Kind          string     `json:"kind"`
+	Body          string     `json:"body"`
+	PathGlobs     string     `json:"path_globs"`
+	Stages        string     `json:"stages"`
+	Citations     string     `json:"citations"`
+	Source        string     `json:"source"`
+	SourceTaskID  *string    `json:"source_task_id"`
+	Status        string     `json:"status"`
+	InjectedCount int64      `json:"injected_count"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	LastCheckedAt *time.Time `json:"last_checked_at"`
+}
+
+type RepoSkill struct {
+	RepoID  string `json:"repo_id"`
+	SkillID string `json:"skill_id"`
 }
 
 type RunVerification struct {
@@ -177,6 +261,15 @@ type RunVerification struct {
 	Truncated  int64     `json:"truncated"`
 	DurationMs int64     `json:"duration_ms"`
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+type Skill struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Enabled     int64     `json:"enabled"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type Task struct {
@@ -258,6 +351,12 @@ type TaskDependency struct {
 	CreatedAt       time.Time `json:"created_at"`
 }
 
+type TaskFanout struct {
+	TaskID            string `json:"task_id"`
+	FileScope         string `json:"file_scope"`
+	IntegrationStatus string `json:"integration_status"`
+}
+
 type TaskGit struct {
 	TaskID       string `json:"task_id"`
 	Branch       string `json:"branch"`
@@ -266,6 +365,18 @@ type TaskGit struct {
 	GitState     string `json:"git_state"`
 	PrUrl        string `json:"pr_url"`
 	PrMergeable  string `json:"pr_mergeable"`
+}
+
+type TaskHumanDecision struct {
+	RunID            string     `json:"run_id"`
+	TaskID           string     `json:"task_id"`
+	Label            string     `json:"label"`
+	EscalationReason string     `json:"escalation_reason"`
+	Question         string     `json:"question"`
+	AskedAt          time.Time  `json:"asked_at"`
+	Reply            *string    `json:"reply"`
+	ReplyRunID       *string    `json:"reply_run_id"`
+	RepliedAt        *time.Time `json:"replied_at"`
 }
 
 type TaskLabelHistory struct {
@@ -288,6 +399,28 @@ type TaskPrReviewState struct {
 	LastConflictSha       *string   `json:"last_conflict_sha"`
 	LastPrUpdatedAt       *string   `json:"last_pr_updated_at"`
 	LastChecksPolledAt    *string   `json:"last_checks_polled_at"`
+}
+
+type TaskPreviewCapture struct {
+	ID         string     `json:"id"`
+	TaskID     string     `json:"task_id"`
+	RunID      *string    `json:"run_id"`
+	Status     string     `json:"status"`
+	Error      string     `json:"error"`
+	CreatedAt  time.Time  `json:"created_at"`
+	FinishedAt *time.Time `json:"finished_at"`
+}
+
+type TaskPreviewImage struct {
+	ID        string    `json:"id"`
+	CaptureID string    `json:"capture_id"`
+	TaskID    string    `json:"task_id"`
+	Route     string    `json:"route"`
+	Variant   string    `json:"variant"`
+	Width     int64     `json:"width"`
+	Height    int64     `json:"height"`
+	Path      string    `json:"path"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type TaskReviewComment struct {
@@ -390,6 +523,7 @@ type WorkflowLabel struct {
 	WipLimitHard  int64  `json:"wip_limit_hard"`
 	VerifyMode    string `json:"verify_mode"`
 	VerifyCommand string `json:"verify_command"`
+	DisplayName   string `json:"display_name"`
 }
 
 type WorkflowTransition struct {

@@ -1,25 +1,41 @@
+import { CircleDollarSign } from 'lucide-react'
+import Icon from '../components/ui/Icon'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { api, type Task, type AgentRun, type TaskLabelHistoryEntry, type TaskSourceComment, type Workflow, type Repo } from '../api/client'
+import { api, type Task, type AgentRun, type TaskLabelHistoryEntry, type TaskSourceComment, type TaskHumanDecision, type Workflow, type Repo } from '../api/client'
 import { wsClient } from '../api/ws'
 import { useAgentsStore } from '../stores/agents'
+import { useProviderConfigsStore } from '../stores/providerConfigs'
 import DependenciesPanel from '../components/DependenciesPanel'
 import SubtasksPanel from '../components/SubtasksPanel'
 import TaskHeader from '../components/task-detail/TaskHeader'
-import { humanActionsFor } from '../lib/humanGate'
+import { humanActionsFor, isHumanGateLabel as isStrictHumanGate, humanPathTargetLabel } from '../lib/humanGate'
+import { useIsPhone, useIsWideDesktop } from '../lib/useMediaQuery'
+import DetailsDisclosure from '../components/task-detail/DetailsDisclosure'
+import ReviewLayout from '../components/task-detail/ReviewLayout'
 import TaskActions from '../components/task-detail/TaskActions'
 import RunHistoryList from '../components/task-detail/RunHistoryList'
 import ForceMoveControl from '../components/task-detail/ForceMoveControl'
+import HumanDecisionsList from '../components/task-detail/HumanDecisionsList'
+import RememberLessonModal from '../components/lessons/RememberLessonModal'
+import Toast from '../components/shared/Toast'
+import ConfirmDialog from '../components/shared/ConfirmDialog'
+import { showError, showUndoToast } from '../stores/toast'
+import { errMessage } from '../lib/errMessage'
+import { canHumanMove } from '../lib/humanMoves'
 import LabelHistoryList from '../components/task-detail/LabelHistoryList'
 import SourceUpdateNotice from '../components/task-detail/SourceUpdateNotice'
 import SourceCommentsList from '../components/task-detail/SourceCommentsList'
 import RunLogPane from '../components/task-detail/RunLogPane'
 import DiffReviewPane from '../components/task-detail/DiffReviewPane'
+import ReviewBriefCard from '../components/task-detail/ReviewBriefCard'
 import { useDiffComments } from '../components/task-detail/useDiffComments'
 import NewTaskModal from '../components/board/NewTaskModal'
 import HelpModal from '../components/shared/HelpModal'
 import HelpButton from '../components/shared/HelpButton'
 import { TaskDetailHelp } from '../components/shared/pageHelp'
+import { useCommandPaletteStore } from '../stores/commandPalette'
+import { buildTaskCommands, type TaskCommandHandlers } from '../lib/taskCommands'
 
 type Tab = 'overview' | 'logs' | 'diff'
 
@@ -30,6 +46,9 @@ export default function TaskDetailPage() {
   const [runs, setRuns] = useState<AgentRun[]>([])
   const [labelHistory, setLabelHistory] = useState<TaskLabelHistoryEntry[]>([])
   const [sourceComments, setSourceComments] = useState<TaskSourceComment[]>([])
+  const [humanDecisions, setHumanDecisions] = useState<TaskHumanDecision[]>([])
+  const [rememberText, setRememberText] = useState<string | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
   const [selectedRun, setSelectedRun] = useState<string | null>(null)
   const [rejectNote, setRejectNote] = useState('')
   const [replyText, setReplyText] = useState('')
@@ -52,6 +71,8 @@ export default function TaskDetailPage() {
   const [taskSaving, setTaskSaving] = useState(false)
   const [taskSaveError, setTaskSaveError] = useState('')
   const [actionError, setActionError] = useState('')
+  const [stopConfirmOpen, setStopConfirmOpen] = useState(false)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [duplicating, setDuplicating] = useState(false)
   // Set once a task.cost_warning event arrives for this task (crossed the
   // early-warning threshold — see GET/PUT /settings/cost-warning). Cleared
@@ -59,7 +80,11 @@ export default function TaskDetailPage() {
   // stage/run doesn't linger indefinitely.
   const [costWarning, setCostWarning] = useState<{ spentUsd: number; budgetUsd: number } | null>(null)
   const [verificationKey, setVerificationKey] = useState(0)
+  // Must stay above the `if (!task) return` early return (rules of hooks).
+  const isWide = useIsWideDesktop()
+  const isPhone = useIsPhone()
   const { configs: agentConfigs, fetch: fetchAgents } = useAgentsStore()
+  const { configs: providerConfigs, fetch: fetchProviderConfigs } = useProviderConfigsStore()
   const { diffComments, openComments, refreshComments, handleAddComment, handleRemoveComment, handleReopenComment } = useDiffComments(id)
 
   // Tracks the task id this page instance currently "owns". React Router
@@ -110,10 +135,25 @@ export default function TaskDetailPage() {
     }).catch(() => {})
   }, [id])
 
+  const refreshHumanDecisions = useCallback(() => {
+    if (!id) return
+    const taskId = id
+    api.tasks.humanDecisions(taskId).then((d) => {
+      if (currentIdRef.current !== taskId) return
+      setHumanDecisions(d ?? [])
+    }).catch(() => {})
+  }, [id])
+
+  // Human decisions load separately so a failure can't break the initial load.
+  useEffect(() => {
+    refreshHumanDecisions()
+  }, [refreshHumanDecisions])
+
   // Fetch agent configs for name lookup
   useEffect(() => {
     fetchAgents()
-  }, [fetchAgents])
+    fetchProviderConfigs()
+  }, [fetchAgents, fetchProviderConfigs])
 
   // Load repos list for the edit form
   useEffect(() => {
@@ -134,6 +174,9 @@ export default function TaskDetailPage() {
     setSelectedRun(null)
     setLabelHistory([])
     setSourceComments([])
+    setHumanDecisions([])
+    setRememberText(null)
+    setToast(null)
     setCostWarning(null)
     setEditingTask(false)
     setTaskSaveError('')
@@ -201,7 +244,7 @@ export default function TaskDetailPage() {
         )
         refreshTask()
         refreshComments()
-      } else if (event.type === 'task.verification' && event.payload.task_id === id) {
+      } else if ((event.type === 'task.verification' || event.type === 'task.preview') && event.payload.task_id === id) {
         setVerificationKey((k) => k + 1)
       } else if (event.type === 'task.review_comments_changed' && event.payload.task_id === id) {
         refreshComments()
@@ -236,6 +279,9 @@ export default function TaskDetailPage() {
   const isHumanGateLabel = task
     ? workflow?.transitions?.some((t) => t.from_label === task.label && t.trigger_type === 'human') ?? false
     : false
+
+  const showBrief = isHumanGateLabel && !needsHuman
+  const briefKey = `${task?.label ?? ''}:${task?.updated_at ?? ''}:${verificationKey}`
 
   const humanActions = humanActionsFor(workflow ?? undefined, task?.label)
 
@@ -284,19 +330,26 @@ export default function TaskDetailPage() {
 
   const handleRerun = async () => {
     if (!id) return
+    setActionError('')
     setActionPending(true)
     try {
       await api.tasks.rerun(id)
       refreshRuns()
-    } catch (e: any) {
-      alert(e.message)
+    } catch (e: unknown) {
+      setActionError(errMessage(e))
     } finally {
       setActionPending(false)
     }
   }
 
+  const focusReply = () => {
+    const el = document.getElementById('task-reply-input')
+    el?.scrollIntoView({ block: 'center' })
+    el?.focus()
+  }
+
   // Retry from an escalation banner: same re-dispatch as Rerun, but errors
-  // show inline in the banner rather than in an alert().
+  // show inline in the banner.
   const handleRetryEscalation = async () => {
     if (!id || !selectedRun) return
     setActionError('')
@@ -315,15 +368,21 @@ export default function TaskDetailPage() {
   // handleStop requests cancellation of the running agent run. The pool marks
   // the run "cancelled" and pauses the task; the resulting task.agent_done WS
   // event refreshes the run list and task, so we just fire the request.
-  const handleStop = async () => {
+  const handleStop = () => {
     if (!id || !selectedRun) return
-    if (!confirm('Stop this agent run? The task will be paused so it is not immediately re-dispatched.')) return
+    setStopConfirmOpen(true)
+  }
+
+  const performStop = async () => {
+    if (!id || !selectedRun) return
+    setStopConfirmOpen(false)
+    setActionError('')
     setActionPending(true)
     try {
       await api.tasks.cancelRun(id, selectedRun)
       refreshRuns()
-    } catch (e: any) {
-      alert(e.message)
+    } catch (e: unknown) {
+      setActionError(errMessage(e))
     } finally {
       setActionPending(false)
     }
@@ -342,6 +401,7 @@ export default function TaskDetailPage() {
       // Follow the continuation run so the user watches the agent pick the reply up.
       setSelectedRun(res.run_id)
       refreshRuns()
+      refreshHumanDecisions()
     } catch (e: any) {
       setActionError(e.message ?? String(e))
     } finally {
@@ -392,7 +452,7 @@ export default function TaskDetailPage() {
       setTask((t) => t ? { ...t, pr_url: res.pr_url, git_state: res.git_state } : t)
       if (res.pr_url) window.open(res.pr_url, '_blank', 'noopener')
     } catch (e: any) {
-      alert(`Cannot create PR: ${e.message ?? e}`)
+      showError(`Cannot create PR: ${errMessage(e)}`)
     } finally {
       setCreatingPR(false)
     }
@@ -402,10 +462,14 @@ export default function TaskDetailPage() {
     if (!id || !task) return
     setActionPending(true)
     try {
-      const updated = await api.tasks.setPaused(id, !task.paused)
+      const prev = !!task.paused
+      const updated = await api.tasks.setPaused(id, !prev)
       setTask(updated)
-    } catch (e: any) {
-      alert(e.message ?? String(e))
+      showUndoToast(`${prev ? 'Resumed' : 'Paused'} "${task.title}"`, async () => {
+        setTask(await api.tasks.setPaused(id, prev))
+      })
+    } catch (e: unknown) {
+      showError(errMessage(e))
     } finally {
       setActionPending(false)
     }
@@ -418,12 +482,21 @@ export default function TaskDetailPage() {
     if (!id || !toLabel || toLabel === task?.label) return
     setActionPending(true)
     try {
+      const fromLabel = task!.label
       const updated = await api.tasks.moveLabel(id, toLabel)
       setTask(updated)
       refreshRuns()
       refreshLabelHistory()
-    } catch (e: any) {
-      alert(e.message ?? String(e))
+      // Only offer Undo when the workflow defines the reverse human move.
+      if (canHumanMove(workflow?.transitions ?? [], toLabel, fromLabel)) {
+        showUndoToast(`Moved "${task!.title}" to ${toLabel}`, async () => {
+          setTask(await api.tasks.moveLabel(id, fromLabel, 'Undo move'))
+          refreshRuns()
+          refreshLabelHistory()
+        })
+      }
+    } catch (e: unknown) {
+      showError(errMessage(e))
     } finally {
       setActionPending(false)
     }
@@ -436,10 +509,9 @@ export default function TaskDetailPage() {
       .catch(() => {})
   }
 
-  const handleDeleteTask = async () => {
-    if (!id || !window.confirm('Delete this task?')) return
-    await api.tasks.delete(id)
-    navigate('/board')
+  const handleDeleteTask = () => {
+    if (!id) return
+    setDeleteConfirmOpen(true)
   }
 
   const handleSelectRun = (runId: string) => {
@@ -447,45 +519,68 @@ export default function TaskDetailPage() {
     setActiveTab('logs')
   }
 
-  if (!task) return <div className="p-6 text-slate-400">Loading…</div>
+  const handleToggleArchive = async () => {
+    if (!id || !task) return
+    setActionPending(true)
+    try {
+      const prev = !!task.archived
+      const updated = await api.tasks.setArchived(id, !prev)
+      setTask(updated)
+      showUndoToast(`${prev ? 'Unarchived' : 'Archived'} "${task.title}"`, async () => {
+        setTask(await api.tasks.setArchived(id, prev))
+      })
+    } catch (e: unknown) {
+      showError(errMessage(e))
+    } finally {
+      setActionPending(false)
+    }
+  }
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'logs', label: 'Logs' },
-    { id: 'diff', label: 'Diff' },
-  ]
+  // Expose this task's actions to the global command palette. Handlers are
+  // recreated every render, so commands call through a ref and the effect
+  // depends only on data.
+  const commandHandlersRef = useRef<TaskCommandHandlers>(null as unknown as TaskCommandHandlers)
+  commandHandlersRef.current = {
+    moveLabel: handleMoveLabel,
+    approve: handleApprove,
+    requestChanges: () => {
+      const el = document.querySelector<HTMLTextAreaElement>('textarea[data-reject-note]')
+      if (el) { el.scrollIntoView?.({ block: 'center' }); el.focus() }
+      else setToast('Open the Overview tab to write a change request')
+    },
+    rerun: handleRerun,
+    createPR: handleCreatePR,
+    openPR: (url) => { window.open(url, '_blank', 'noopener') },
+    togglePause: handleTogglePause,
+    toggleArchive: handleToggleArchive,
+  }
+  useEffect(() => {
+    if (!id || !task) return
+    const proxy: TaskCommandHandlers = {
+      moveLabel: (l) => commandHandlersRef.current.moveLabel(l),
+      approve: () => commandHandlersRef.current.approve(),
+      requestChanges: () => commandHandlersRef.current.requestChanges(),
+      rerun: () => commandHandlersRef.current.rerun(),
+      createPR: () => commandHandlersRef.current.createPR(),
+      openPR: (u) => commandHandlersRef.current.openPR(u),
+      togglePause: () => commandHandlersRef.current.togglePause(),
+      toggleArchive: () => commandHandlersRef.current.toggleArchive(),
+    }
+    useCommandPaletteStore.getState().setTaskContext({
+      taskId: id,
+      title: task.title,
+      commands: buildTaskCommands({ task, workflow, canRerun, handlers: proxy }),
+    })
+  }, [id, task, workflow, canRerun])
+  useEffect(() => () => useCommandPaletteStore.getState().setTaskContext(null), [id])
 
-  return (
-    <div className="flex h-full overflow-hidden flex-col min-w-0">
-      {/* Tab bar */}
-      <div className="shrink-0 flex items-center gap-2 border-b border-slate-800 px-4 pt-3 w-full overflow-x-hidden">
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setActiveTab(t.id)}
-            className={`flex-grow min-w-0 md:min-w-[100px] px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
-              activeTab === t.id
-                ? 'bg-slate-800 text-slate-100 border-b-2 border-slate-400'
-                : 'text-slate-500 hover:text-slate-300'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-        <HelpButton onClick={() => setShowHelp(true)} title="About this task" />
-      </div>
+  if (!task) return <div className="p-6 text-fg-muted">Loading…</div>
 
-      {showHelp && (
-        <HelpModal title="About Task Detail" onClose={() => setShowHelp(false)}>
-          <TaskDetailHelp />
-        </HelpModal>
-      )}
+  const canRemember = !!task.repo_id
+  const rememberRepoName = repos.find((r) => r.id === task.repo_id)?.name
 
-      {/* Tab content */}
-      <div className="flex-1 overflow-hidden">
-        {/* Overview tab */}
-        {activeTab === 'overview' && (
-          <div className="h-full overflow-y-auto overflow-x-hidden p-3 md:p-5 flex flex-col gap-4 min-w-0">
+  const overviewSections = (inReview: boolean) => (
+    <>
             <TaskHeader
               task={task}
               repos={repos}
@@ -521,6 +616,8 @@ export default function TaskDetailPage() {
               onDuplicate={() => setDuplicating(true)}
             />
 
+            {!inReview && showBrief && <ReviewBriefCard taskId={task?.id} refreshKey={briefKey} />}
+
             {duplicating && task && (
               <NewTaskModal source={task} onClose={() => setDuplicating(false)} />
             )}
@@ -531,14 +628,11 @@ export default function TaskDetailPage() {
               onChanged={() => { if (id) api.tasks.get(id).then(setTask).catch(() => {}) }}
             />
 
-            <DependenciesPanel
-              task={task}
-              onChanged={() => { if (id) api.tasks.get(id).then(setTask).catch(() => {}) }}
-            />
-
+            {!inReview && (
             <RunHistoryList
               runs={runs}
               agentConfigs={agentConfigs}
+              providerConfigs={providerConfigs}
               selectedRun={selectedRun}
               onSelectRun={handleSelectRun}
               isRunning={!!isRunning}
@@ -547,24 +641,139 @@ export default function TaskDetailPage() {
               onRerun={handleRerun}
               actionPending={actionPending}
             />
+            )}
 
             <SourceUpdateNotice task={task} onChanged={setTask} />
 
-            <ForceMoveControl
-              task={task}
-              labels={workflow?.labels ?? []}
-              onMoved={(updated) => { setTask(updated); refreshRuns(); refreshLabelHistory() }}
-            />
+            <HumanDecisionsList decisions={humanDecisions} onRemember={canRemember ? setRememberText : undefined} />
 
-            <LabelHistoryList history={labelHistory} />
+            <DetailsDisclosure>
+              <DependenciesPanel
+                task={task}
+                onChanged={() => { if (id) api.tasks.get(id).then(setTask).catch(() => {}) }}
+              />
+              <ForceMoveControl
+                task={task}
+                labels={workflow?.labels ?? []}
+                onMoved={(updated) => { setTask(updated); refreshRuns(); refreshLabelHistory() }}
+              />
+              <LabelHistoryList history={labelHistory} labels={workflow?.labels} onRemember={canRemember ? setRememberText : undefined} />
+              <SourceCommentsList comments={sourceComments} />
+            </DetailsDisclosure>
+    </>
+  )
 
-            <SourceCommentsList comments={sourceComments} />
+  const onGate = isStrictHumanGate(workflow ?? undefined, task.label)
+  // Escalated waiting_human runs need the Reply UI, so they keep the tabbed layout.
+  const useReviewLayout = onGate && !needsHuman
+  const reviewVariant: 'desktop' | 'tablet' | 'phone' = isWide ? 'desktop' : isPhone ? 'phone' : 'tablet'
+  // Heuristic: plan-review labels (e.g. review-plan) show the plan; all other gates show the diff.
+  const reviewMode: 'plan' | 'diff' = /plan/i.test(task.label) ? 'plan' : 'diff'
+  const approveTarget = humanPathTargetLabel(workflow ?? undefined, task.label, 'success')
+  const approveLabel = approveTarget?.create_pr ? 'Approve and open PR' : 'Approve'
+
+  const tabs: { id: Tab; label: string }[] = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'logs', label: 'Logs' },
+    { id: 'diff', label: 'Diff' },
+  ]
+
+  const reviewLayoutNode = (
+    <ReviewLayout
+      variant={reviewVariant}
+      task={task}
+      repoName={rememberRepoName}
+      runs={runs}
+      agentConfigs={agentConfigs}
+      providerConfigs={providerConfigs}
+      selectedRun={selectedRun}
+      onSelectRun={setSelectedRun}
+      isRunning={!!isRunning}
+      canRerun={canRerun}
+      onStop={handleStop}
+      onRerun={handleRerun}
+      labelHistory={labelHistory}
+      canApprove={humanActions.canApprove}
+      canReject={humanActions.canReject}
+      approveLabel={approveLabel}
+      onApprove={handleApprove}
+      rejectNote={rejectNote}
+      setRejectNote={setRejectNote}
+      onReject={handleReject}
+      openCommentsCount={openComments.length}
+      actionError={actionError}
+      actionPending={actionPending}
+      diffComments={diffComments}
+      onAddComment={handleAddComment}
+      onRemoveComment={handleRemoveComment}
+      onReopenComment={handleReopenComment}
+      onCreatePR={handleCreatePR}
+      creatingPR={creatingPR}
+      verificationKey={verificationKey}
+      briefKey={briefKey}
+      mode={reviewMode}
+      onBack={() => navigate('/board')}
+      onHelp={() => setShowHelp(true)}
+      details={overviewSections(true)}
+    />
+  )
+
+  return (
+    <div className="flex h-full overflow-hidden flex-col min-w-0">
+      {useReviewLayout ? (
+        <div className="flex-1 min-h-0">{reviewLayoutNode}</div>
+      ) : (
+      <>
+      {/* Tab bar */}
+      <div className="shrink-0 flex items-center gap-2 border-b border-border px-4 pt-3 w-full overflow-x-hidden">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setActiveTab(t.id)}
+            className={`flex-grow min-w-0 md:min-w-[100px] px-3 py-1.5 text-xs font-medium rounded-t transition-colors ${
+              activeTab === t.id
+                ? 'bg-surface-raised text-accent-fg border-b-2 border-accent'
+                : 'text-fg-muted hover:text-fg'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+        <HelpButton onClick={() => setShowHelp(true)} title="About this task" />
+      </div>
+
+      </>
+      )}
+
+      {showHelp && (
+        <HelpModal title="About Task Detail" onClose={() => setShowHelp(false)}>
+          <TaskDetailHelp />
+        </HelpModal>
+      )}
+
+      {!useReviewLayout && (
+      <div className="flex-1 overflow-hidden">
+        {/* Overview tab */}
+        {activeTab === 'overview' && (
+          <div className="h-full overflow-y-auto overflow-x-hidden p-3 md:p-5 flex flex-col gap-4 min-w-0">
+            {overviewSections(false)}
           </div>
         )}
 
         {/* Logs tab */}
         {activeTab === 'logs' && (
-          <RunLogPane taskId={id} runId={selectedRun} isRunning={!!isRunning} />
+          <RunLogPane
+            taskId={id}
+            runId={selectedRun}
+            isRunning={!!isRunning}
+            run={activeRun}
+            agentConfigs={agentConfigs}
+            providerConfigs={providerConfigs}
+            labelHistory={labelHistory}
+            onRetry={needsHuman ? handleRetryEscalation : canRerun ? handleRerun : undefined}
+            onReply={needsHuman ? focusReply : undefined}
+            onOpenDiff={() => setActiveTab('diff')}
+          />
         )}
 
         {/* Diff tab */}
@@ -579,21 +788,24 @@ export default function TaskDetailPage() {
             onRemoveComment={handleRemoveComment}
             onReopenComment={handleReopenComment}
             verificationRefreshKey={verificationKey}
+            showBrief={showBrief}
+            briefRefreshKey={briefKey}
           />
         )}
       </div>
+      )}
 
       {/* Cost early-warning banner — crossed the configurable warn_ratio threshold
           (default 80%) of the effective cost budget, but not yet exhausted. See
           GET/PUT /settings/cost-warning and docs/agents.md#cost-budgets. */}
       {costWarning && (
-        <div className="mb-4 px-4 py-3 rounded-lg bg-amber-900/40 border border-amber-700 text-amber-300 text-sm">
-          💰 Cost warning: this task has spent ${costWarning.spentUsd.toFixed(2)} of its ${costWarning.budgetUsd.toFixed(2)} budget.
+        <div className="mb-4 px-4 py-3 rounded-lg bg-warning-soft border border-warning/40 text-warning text-sm">
+          <Icon icon={CircleDollarSign} size="sm" className="inline -mt-0.5 mr-1" />Cost warning: this task has spent ${costWarning.spentUsd.toFixed(2)} of its ${costWarning.budgetUsd.toFixed(2)} budget.
         </div>
       )}
 
       {/* Approval panel — shown when agent needs human or task is at a human-gate label */}
-      {(needsHuman || isHumanGateLabel) && (
+      {!useReviewLayout && (needsHuman || isHumanGateLabel) && (
         <TaskActions
           activeRun={activeRun}
           needsHuman={!!needsHuman}
@@ -613,6 +825,52 @@ export default function TaskDetailPage() {
           onJumpToDiffTab={() => setActiveTab('diff')}
         />
       )}
+
+      {rememberText !== null && canRemember && (
+        <RememberLessonModal
+          repoId={task.repo_id}
+          repoName={rememberRepoName}
+          taskId={task.id}
+          text={rememberText}
+          onClose={() => setRememberText(null)}
+          onSaved={() => {
+            setRememberText(null)
+            setToast(`Lesson saved for ${rememberRepoName ?? 'this repo'}`)
+          }}
+        />
+      )}
+      {stopConfirmOpen && (
+        <ConfirmDialog
+          destructive
+          title="Stop agent run?"
+          confirmLabel="Stop run"
+          onCancel={() => setStopConfirmOpen(false)}
+          onConfirm={performStop}
+        >
+          <p>
+            The running agent is cancelled and the task is paused so it isn&apos;t immediately re-dispatched. Work the agent
+            hasn&apos;t committed yet may be lost.
+          </p>
+        </ConfirmDialog>
+      )}
+      {deleteConfirmOpen && (
+        <ConfirmDialog
+          destructive
+          title="Delete task?"
+          confirmLabel="Delete task"
+          onCancel={() => setDeleteConfirmOpen(false)}
+          onConfirm={async () => {
+            await api.tasks.delete(task.id)
+            navigate('/board')
+          }}
+        >
+          <p>
+            &quot;{task.title}&quot; and its agent runs, logs and review comments will be permanently deleted. This
+            can&apos;t be undone.
+          </p>
+        </ConfirmDialog>
+      )}
+      {toast && <Toast message={toast} onDismiss={() => setToast(null)} />}
     </div>
   )
 }

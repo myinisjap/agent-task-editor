@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"slices"
 	"strings"
@@ -41,8 +42,19 @@ func TestMain(m *testing.M) {
 		// Simulate: claude exits cleanly with a success outcome.
 		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success"}`)
 		os.Exit(0)
+	case "require_bare":
+		if !slices.Contains(os.Args, "--bare") {
+			os.Exit(1)
+		}
+		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success"}`)
+		os.Exit(0)
 	case "exit0_no_outcome":
 		// Simulate: claude exits cleanly with no outcome (empty result).
+		os.Exit(0)
+	case "exit0_resumed_session_cost":
+		// Simulate: a resumed session's terminal result, whose
+		// total_cost_usd is the whole session's running total.
+		fmt.Println(`{"type":"result","subtype":"success","result":"OUTCOME: success","session_id":"sess-resume","usage":{"input_tokens":10,"output_tokens":20},"total_cost_usd":0.95}`)
 		os.Exit(0)
 	case "exit0_success_with_usage":
 		// Simulate: claude exits cleanly with a success outcome and a
@@ -502,13 +514,13 @@ func TestClaudeExitCode1_IsFailed(t *testing.T) {
 	var found bool
 	for _, e := range logs {
 		if e.Type == agent.LogSystem {
-			if contains(e.Content, "treating as failed") {
+			if contains(e.Content, "Run failed:") {
 				found = true
 			}
 		}
 	}
 	if !found {
-		t.Logf("(optional) expected a 'treating as failed' log entry; logs: %v", logContents(logs))
+		t.Logf("(optional) expected a 'Run failed:' log entry; logs: %v", logContents(logs))
 	}
 }
 
@@ -558,6 +570,61 @@ func TestClaudeRunner_PropagatesUsageFromResultMessage(t *testing.T) {
 	}
 	if result.CostUSD != 0.05 {
 		t.Errorf("want CostUSD=0.05, got %v", result.CostUSD)
+	}
+}
+
+// TestClaudeRunner_ResumedSessionRecordsOwnCost: on a resumed session the
+// CLI's total_cost_usd is the session's running total, so the run records it
+// minus the baseline from the session's previous run, and passes the raw
+// total back as SessionCostUSD for the next resume.
+func TestClaudeRunner_ResumedSessionRecordsOwnCost(t *testing.T) {
+	input := makeInput("exit0_resumed_session_cost")
+	input.ResumeSessionID = "sess-resume"
+	input.ResumeSessionCostUSD = 0.77
+	logCh := make(chan agent.LogEntry, 256)
+	done := make(chan agent.Result, 1)
+	go func() {
+		r, _ := helperRunner("").Run(context.Background(), input, logCh)
+		close(logCh)
+		done <- r
+	}()
+	drainLogs(logCh)
+	res := <-done
+
+	if got, want := res.CostUSD, 0.18; math.Abs(got-want) > 1e-9 {
+		t.Errorf("CostUSD = %v, want %v", got, want)
+	}
+	if res.SessionCostUSD != 0.95 {
+		t.Errorf("SessionCostUSD = %v, want 0.95", res.SessionCostUSD)
+	}
+}
+
+func TestOwnSessionCost(t *testing.T) {
+	resumed := agent.RunInput{ResumeSessionID: "s1", ResumeSessionCostUSD: 0.40}
+	cases := []struct {
+		name      string
+		u         *runUsage
+		input     agent.RunInput
+		session   string
+		wantCost  float64
+		wantTotal float64
+	}{
+		{"cold start keeps the total", &runUsage{CostUSD: 0.30}, agent.RunInput{}, "s1", 0.30, 0.30},
+		{"resumed subtracts the baseline", &runUsage{CostUSD: 0.65}, resumed, "s1", 0.25, 0.65},
+		{"resume fell back to a new session", &runUsage{CostUSD: 0.10}, resumed, "s2", 0.10, 0.10},
+		{"total below the baseline clamps to zero", &runUsage{CostUSD: 0.30}, resumed, "s1", 0, 0.30},
+		{"no cost reported", &runUsage{InputTokens: 5}, resumed, "s1", 0, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, total := ownSessionCost(tc.u, tc.input, tc.session)
+			if math.Abs(got.CostUSD-tc.wantCost) > 1e-9 || total != tc.wantTotal {
+				t.Errorf("got cost %v total %v, want %v %v", got.CostUSD, total, tc.wantCost, tc.wantTotal)
+			}
+		})
+	}
+	if u, total := ownSessionCost(nil, resumed, "s1"); u != nil || total != 0 {
+		t.Errorf("nil usage: got %v %v", u, total)
 	}
 }
 
@@ -1556,5 +1623,16 @@ func TestBuildClaudeArgs_PermissionMode(t *testing.T) {
 				t.Fatalf("expected --permission-mode %q, got %q (args=%v)", mode, got, args)
 			}
 		})
+	}
+}
+
+// TestClaudeRunner_PassesBare keeps Claude Code auto-memory off for task runs.
+// `--bare` skips auto-memory and CLAUDE.md discovery (claude CLI 2.1.301). Each
+// task runs in its own worktree, so memories would be written per worktree and
+// never read again; cross-task knowledge comes from repo lessons instead.
+func TestClaudeRunner_PassesBare(t *testing.T) {
+	result, _ := runWithHelper(t, "require_bare")
+	if result.Status != "completed" || result.Outcome != "success" {
+		t.Fatalf("claude was not invoked with --bare: status=%q outcome=%q", result.Status, result.Outcome)
 	}
 }

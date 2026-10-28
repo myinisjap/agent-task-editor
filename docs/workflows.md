@@ -14,6 +14,7 @@ A workflow is the state machine that governs how tasks progress. Each workflow c
 | `agent_ignore` | bool | Agents cannot move tasks to this label; dispatcher skips tasks already here |
 | `is_terminal` | bool | No further transitions; task is complete |
 | `create_pr` | bool | Any transition into this label pushes the task's branch and auto-opens (or reuses) a PR on the repo's forge (GitHub via the REST API, or Gitea). Requires a repo `remote_url` on a supported forge and working push/auth; best-effort, so a failure is logged and the transition still commits. Equivalent to clicking "Create PR" manually. The seeded Default workflow sets it on `review`. **At most one label per workflow may set this** — saving a workflow with two is rejected. |
+| `display_name` | string, optional | Human-readable title shown in the UI (column headers, chips, graph nodes), at most 64 characters, whitespace-trimmed. Empty or omitted means the UI derives one from `name` (`-`/`_` become spaces, sentence case: `not_ready` → "Not ready"). UI-only: `name` stays the identifier in the API, URLs and transitions. The Default workflow seeds friendly names. |
 | `wip_limit` | int, nullable | Max number of (non-archived) tasks allowed on this label. `null`/unset = unlimited — a label with no limit behaves exactly as before this feature existed. Must be a positive integer when set; `0` or negative is rejected. |
 | `wip_limit_hard` | bool | Enforcement mode for `wip_limit`. **Soft (default, `false`)**: the board column header shows `count / limit` and flags the column once its count reaches or exceeds the limit, but nothing is blocked. **Hard (`true`)**: in addition to the visual flag, the dispatcher will not pick up a task whose agent "success" transition would land it on this label while the label's count is already at or over its limit — the task simply stays where it is and is re-evaluated on the next sweep (a few seconds later), so work queues upstream instead of erroring mid-run. Hard mode never blocks a run that is already in flight from landing in a full column; that stays visual-only. Setting `wip_limit_hard` without a `wip_limit` has no effect (there's nothing to enforce). |
 | `verify_mode` | `inherit` \| `custom` \| `disabled` | Per-label override of the repo's [verify command](#verify-commands). `inherit` (default, may be omitted) uses the repo command; `custom` runs this label's `verify_command` instead; `disabled` skips verification for runs that succeed on this label. |
@@ -21,7 +22,7 @@ A workflow is the state machine that governs how tasks progress. Each workflow c
 
 ## Pipeline overview
 
-The **Pipeline** page (`/pipeline`, Overview tab) draws the selected workflow as a graph: labels are nodes, transitions are edges (green success, red failure, dashed for agent-triggered). Each node shows who works it: the enabled agent config(s) whose `labels` include it, **Human gate** for labels only a human can move, or an amber **No agent assigned** chip for agent-triggerable labels nobody covers. Nodes also show a non-default verify mode, `terminal`, and `opens PR` markers. The Board shows the same chip in the header of unstaffed columns.
+The **Pipeline** page (`/pipeline`, Overview tab) draws the selected workflow as a graph, left to right in board column order (vertically on phones). Labels are nodes, transitions are edges (green success, red failure, dashed for agent-triggered); failure/rework edges loop above (human-triggered) or below (agent-triggered) the main line. Each node shows the label name and who works it: the first enabled agent config covering the label with its provider / model (`+N` for more), **Human gate** for labels only a human can move, or an amber **No agent** chip with an **Assign** button for agent-triggerable labels nobody covers. Badges show **Opens PR**, **WIP n**, a non-default **Verify** mode and **Terminal**. Text never renders below about 12px: when the pipeline is wider than the page it keeps that size and you pan (drag or scroll) instead, with a hint shown. The canvas follows the light/dark theme. The Board shows the same chip in the header of unstaffed columns.
 
 Click a node to open the assign panel: tick or untick an agent config to add or remove that label from its `labels` (the same update the Agents tab performs). Use **Edit workflow** (see below) or the Workflow tab to change the labels and transitions themselves. With several workflows, a selector above the graph switches between them.
 
@@ -32,7 +33,7 @@ The Pipeline Overview graph has an **Edit workflow** button. Edits are staged lo
 Supported edits:
 
 - **Add a label** (name and color) from the side panel; **rename** or **delete** the selected label. Renaming rewrites its transitions; deleting also removes the transitions touching it. Labels that currently have tasks on them cannot be renamed or deleted (tasks reference labels by name).
-- **Connect two labels**: drag from a stage's bottom dot to another stage's top dot (creates an agent-on-success transition), or use the **Connect labels** form (from, to, type) for keyboard use. Each transition in the **Transitions** list has a type selector (agent on success, agent on failure, agent either outcome, human, agent or human) and a delete button.
+- **Connect two labels**: drag from a stage's right dot to another stage's left dot (bottom to top on phones) (creates an agent-on-success transition), or use the **Connect labels** form (from, to, type) for keyboard use. Each transition in the **Transitions** list has a type selector (agent on success, agent on failure, agent either outcome, human, agent or human) and a delete button.
 - **Per-label settings** (select a stage): whether agents work it (`agent_ignore`), **terminal**, **open a PR on entry** (`create_pr`, at most one label), **WIP limit** (and hard limit), and **verify mode** (inherit / custom with a command / disabled).
 - **Human approval gate**: the "Human approval gate" checkbox makes every non-failure transition out of the label human-triggered (and turns them back into agent-on-success when unticked).
 
@@ -53,6 +54,8 @@ An agent's `signal_complete(outcome="success")` (or the parsed `OUTCOME: success
 - **Record**: one `RunVerification` per run (`status` `pass | fail | timeout | error`, `exit_code`, output tail, `duration_ms`, the `command` used) via `GET /tasks/{id}/verifications`, a system line in the run log, and a `task.verification` WebSocket event. The Diff tab of the task page shows the latest result (badge, command, collapsible output) above the diff.
 
 Only `success` outcomes are verified; a run that reports `failure` is not.
+
+The latest result is also summarised in the [Review brief](#review-brief) shown while a task waits for approval.
 
 ## WIP limits and the dispatcher
 
@@ -132,6 +135,50 @@ The `/tasks/{id}/approve` and `/tasks/{id}/reject` endpoints move tasks along hu
 
 If no matching transition is defined for the current label, the endpoint returns `400`.
 
+## Review brief
+
+When a task sits on a **human-gate** label (no agent-triggerable way out and at least one human transition, the same rule as `GET /needs-me` `human_gate`; `agent_ignore` backlog labels excluded), the Task Detail page shows a compact **Review brief** below the task header on the Overview tab and above the diff on the Diff tab, and the Inbox Decide rows show its one-line summary, diff size, cost, verify result, flag chips and preview count. It is computed from existing data with **no LLM calls**, and it is **advisory only**: nothing is ever approved or blocked because of a flag.
+
+On screens at least 1280px wide, a task on a human gate (strict rule: every exit is a human transition, or `agent_ignore`) gets a decision-first layout: a header with title, state, repo, cost, run count and the Approve / Request changes buttons ("Approve and open PR" when the target label opens a PR); the diff (with preview strip) or, on plan-review labels, the plan in the main pane with logs and details as tabs; and a sticky right rail with the brief, verification and runs. Tablets (768–1279px) stack the brief, verification and runs above the diff, with the buttons in the header. Phones (under 768px) show a compact brief card (changed / risks / verified, with a "Full brief" toggle), the diff or plan below it, and Approve / Request changes pinned in a bottom action bar above the tab bar. Escalated `waiting_human` runs and non-strict gates keep the tabbed layout with the reply box. Dependencies, Force move, label history and source comments sit under a collapsed **Details** toggle (remembered per browser).
+
+The brief is served by `GET /tasks/{id}/review-brief`; the Inbox gets the same context from `/needs-me` (`risk_flags`, `summary`, `changed`, `cost_usd`, `verification`, `preview_count`; human-gate items only, best effort).
+
+**Risk flags** (computed from the diff of the task's branch against its merge-base, the same diff as the Diff tab; rules live in `backend/internal/reviewbrief/flags.go`). Flags always come out in this order:
+
+| Code | Fires when |
+|---|---|
+| `migration` | a path segment is `migrations`; or a `.sql` file whose name contains `schema`; or a `.sql` file with an added/removed `CREATE\|ALTER\|DROP TABLE\|INDEX\|VIEW\|TRIGGER` line. Plain query files (SELECT/INSERT only) do not fire. |
+| `auth_or_security` | the path contains `auth`, `oauth`, `token`, `secret`, `middleware`, `crypto`, `password`, `credential`, `jwt`, `csrf`, `cors`, `permission`, `security` or `session`, or the file is `.env*`. Substring match, so e.g. `tokenizer.go` is a known false positive. |
+| `dependencies` | `go.mod/sum`, `package.json` and npm/yarn/pnpm/bun lockfiles, `Cargo.*`, `Pipfile*`, `poetry.lock`, `pyproject.toml`, `uv.lock`, `Gemfile*`, `requirements*.txt` (or `.txt` under `requirements/`), or a Dockerfile with an added/removed `FROM` line. |
+| `tests_removed` | a test file was deleted (or renamed to a non-test path); or across test files more test declarations were removed than added (`func Test…`, `it/test/describe(`, `def test_`); or an added line skips/focuses tests (`t.Skip`, `it.skip`/`.only`, `xit`, `fit`, `@pytest.mark.skip`). |
+| `ci_config` | `.github/workflows/**`, `.gitea/workflows/**`, `.gitlab-ci.yml`. |
+| `large_change` | more than 800 changed lines or more than 25 files. Lockfiles and generated files (`frontend/src/api/types.ts`) are excluded from the line count. |
+| `outside_plan_scope` | the plan in the task's `agent_notes` lists file paths (backtick spans or list items containing path-like tokens) and the diff touches other files. Skipped when the plan has no file list. Exempt: `CHANGELOG.md`, the test sibling of a planned file, `frontend/src/api/types.ts` when `openapi.yaml` is planned, `backend/internal/storage/gen/**` when a planned path is under `storage/queries/` or `storage/migrations/`, `go.sum` when `go.mod` is planned, lockfiles when `package.json` is planned. It is a heuristic and prefers under-flagging. |
+
+**Verified** shows the latest verify-command result (status, duration, output tail; see [Verify commands](#verify-commands)), plus the run count (and failures), rework loops (transitions into a label the task already visited, the same definition as the Dashboard's outcome-quality rework rate) and cost so far.
+
+**Agent summary** is the newest run's `store_info` (first 1500 characters), falling back to the tail of the task's `agent_notes`. Reviewer agents are best prompted to end with a fixed-shape `store_info`: **Changed / Risks / Verified / Not checked**.
+
+**Caching**: the diff-derived part is cached in memory per task, keyed on the branch head, base ref head and a hash of `agent_notes`; a cached entry checked in the last 15 seconds is reused without running git. Nothing is stored on the task.
+
+### Preview screenshots
+
+For UI changes, the review brief also shows screenshots of the affected pages (`GET /tasks/{id}/previews`), so a change can be reviewed from a phone. Everything is per repo and **off unless a preview command is set**:
+
+| Setting | Meaning |
+|---|---|
+| `preview_command` | Shell command that starts the app in the task's worktree, e.g. `cd frontend && npm ci && npm run dev -- --port $PORT --host 127.0.0.1`. It runs as the agent user with the same sanitized environment as the verify command, and must listen on `$PORT` (also set: `HOST=127.0.0.1`). |
+| `preview_routes` | Newline-separated paths to screenshot (`/`, `/inbox`, ...), at most 20. |
+| `preview_paths_glob` | Newline-separated globs deciding when a diff is a UI change. Empty = `frontend/**`, `web/**`, `src/**/*.{tsx,jsx,vue,svelte,css}`. `{a,b}` alternation is supported. |
+
+**When it runs.** After a run reports success (and any verify command passed) and the task lands on a **human-gate** label, if a preview command and routes are set and at least one file changed against the base branch matches the globs. Capture happens asynchronously after the transition, so it never delays the task or holds a worker slot. The app is started with a free `$PORT`, the server waits up to 120 s for the port, each route is captured with headless Chromium at **1280x800 (desktop)** and **390x844 (phone)**, then the process group is stopped (SIGTERM, then SIGKILL after 5 s). A whole capture is limited to 5 minutes.
+
+**Storage.** PNGs are stored in `UPLOAD_DIR/<task_id>/preview-<uuid>.png` and listed in `task_preview_images`; they are *not* task attachments, so they are never fed to agents. The latest 3 captures per task are kept; deleting the task removes the files. Screenshots appear in the review brief card (Task Detail and Inbox) as a thumbnail strip that opens full size.
+
+**Failures never block.** Any problem (command exits, port never opens, browser missing, one route failing) is recorded on the capture and shown as "Preview failed: ..." in the brief; the task label, failure counts and run status are untouched. A capture left `running` by a server restart is marked failed at startup.
+
+**v1 limits.** After-only: there is no base-branch "before" shot yet (the `variant` column leaves room for it). Dev servers that daemonize into a new session escape the process-group cleanup. See [runtime.md](runtime.md#preview-screenshots) for the browser setup.
+
 ## Custom Workflows
 
 Create additional workflows via Pipeline → Workflow → New Workflow in the UI, or via the REST API:
@@ -169,6 +216,7 @@ labels:
     color: "#F59E0B"
     sort_order: 1
   - name: review
+    display_name: Human review # optional UI title
     color: "#EC4899"
     sort_order: 2
     wip_limit: 5        # column shows "count / 5" and flags over-limit
@@ -219,7 +267,8 @@ without babysitting the board.
   confirmation, and the task stays un-dispatched (and visibly muted with a
   "blocked by N" badge) until the block clears.
 - **Satisfied = terminal or archived.** A blocker satisfies its edge once it
-  reaches a label with `is_terminal = true`, **or** is archived. Archiving is the
+  reaches a label with `is_terminal = true`, **or** is archived. (A blocker that
+  is a subtask must also have finished merging back; see [Subtasks](#subtasks-agent-driven-decomposition).) Archiving is the
   existing "this is over" gesture; treating an archived blocker as forever-blocking
   would create an invisible deadlock. (Un-archiving makes the edge unmet again.)
 - **Derived, never stored.** "Blocked" is computed at read time from the blocker's
@@ -230,8 +279,8 @@ without babysitting the board.
   rejected, since such an edge could never satisfy.
 - **Not parent/child.** A dependency is a peer relationship with no automation: a
   dependent task always has its own work, and simply becomes dispatch-eligible on
-  its current label once its blockers finish. (Parent/child subtask decomposition
-  is a separate, future mechanism.)
+  its current label once its blockers finish. (Agent-driven parent/child decomposition is covered under
+  [Subtasks](#subtasks-agent-driven-decomposition).)
 
 Manage dependencies from a task's detail page (the Dependencies section) or via
 `GET/POST /tasks/{id}/dependencies` and `DELETE /tasks/{id}/dependencies/{dep_id}`.
@@ -266,14 +315,65 @@ leaving prose in `agent_notes`. Subtasks build on the dependency gate above.
   satisfied and the parent becomes dispatch-eligible; the dispatcher hands the
   parent's `work` agent the conflict context to resolve the merge on the parent
   branch. A human can also resolve it manually.
-- **Auto-advance.** Once every child is terminal and merged cleanly, the parent
-  advances along its agent-success transition (`work → testing` in the seed
-  workflow), recorded in `task_label_history` with the `subtasks_complete`
-  trigger. If the parent is paused, has a run in flight, or has no agent-success
-  transition, the auto-advance is skipped and the parent is simply left
-  unblocked for a human or the next dispatch to drive.
+- **File scopes and the overlap guard.** `create_subtask` takes an optional
+  `file_scope` (repo-relative globs, e.g. `backend/internal/foo/**`). The scope
+  is stored and shown in the subtask's prompt ("only change files matching …; if
+  you must go outside it, explain in your notes"). After the subtask's work run a
+  deterministic check lists any changed files outside the scope in the subtask's
+  notes under `FILE SCOPE WARNING` (a warning, never a failure). When a new
+  subtask's scope **overlaps** a sibling's, it automatically **depends on that
+  sibling**, so the two run sequentially, and the tool result says so. Overlap is
+  deliberately conservative (a false positive only serializes two subtasks): equal
+  globs, a literal file inside the other glob, or a shared literal directory
+  prefix. A basename-only pattern such as `*.go` overlaps everything, so use
+  directory-rooted globs. A subtask with **no** scope is treated as unknown and
+  gets no overlap check; planners should give every subtask a scope. Finished
+  (terminal) and archived siblings are skipped.
+- **Stricter "satisfied" for subtask blockers.** A blocker that is itself a
+  subtask satisfies an edge only once it is archived, or is on a terminal label
+  **and** its merge-back has finished (`merge_status` `merged` or
+  `merge_conflict`). This closes a race where a parent (or an overlap-serialized
+  sibling) could be dispatched after the child went terminal but before its
+  branch was merged, so it never saw the child's work. It applies to every edge
+  whose blocker is a subtask, including human-added ones.
+- **How branches combine.** Each subtask branch is merged into the parent branch
+  as soon as that subtask reaches a terminal label — one merge at a time, in
+  completion order, under a per-parent lock. A conflicting merge is aborted, the
+  child is flagged `merge_conflict`, and resolving it goes to the parent's work
+  agent during the integration run.
+- **Integration run (replaces auto-advance).** Once every non-archived child is
+  terminal and merged (or conflicted), the parent is marked
+  `integration_status = pending` and is **not** auto-advanced. The dispatcher runs
+  the parent's agent on its current label (normally `work`) with a **SUBTASK
+  INTEGRATION** prompt section: each subtask with its label, scope, branch and
+  notes, the `git diff --stat` of the merged result, any conflicts to resolve, and
+  instructions to check cross-subtask consistency and run the repo verify command.
+  The usual verify command runs again after the agent signals success; on success
+  `integration_status = done` and the normal agent-success transition moves the
+  parent on (`work → testing`). A failed verify keeps it `pending`, so the rework
+  run gets the integration brief again. Adding a new subtask resets the status.
+  **Fallback:** if the parent sits on an `agent_ignore` label, or no agent is
+  configured for its label (so nothing would ever run), the old behaviour is kept:
+  with no conflicts the parent auto-advances along its agent-success transition,
+  recorded with the `subtasks_complete` trigger.
 
 Manage subtasks from a task's detail page (the Subtasks section) or via
 `POST /tasks/{id}/subtasks` and `GET /tasks?parent_id=`. Task responses carry
 `parent_task_id`, `merge_status`, and derived `subtask_total`/`subtask_done`/
-`subtask_conflicts`.
+`subtask_conflicts`, plus `file_scope` and (for parents) `integration_status`.
+
+### Planner prompt guidance
+
+Fan out only when it pays off: **3 or more independent parts that touch disjoint
+files.** Two parts, or parts sharing files, should stay one task (overlapping
+scopes serialize, which loses the benefit). This guidance is not applied to
+existing agent configs; copy it into a planner's system prompt if you want it:
+
+```text
+Decide whether to fan out. If the work splits into 3 or more independent parts
+that touch disjoint files, call create_subtask once per part with a clear
+description and a directory-rooted file_scope (for example
+"backend/internal/foo/**"). Give every subtask a file_scope. Subtasks whose
+scopes overlap run one after another. Otherwise do not fan out: write a single
+plan for the whole task.
+```

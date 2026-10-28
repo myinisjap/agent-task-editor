@@ -10,6 +10,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	_ "github.com/myinisjap/agent-task-editor/backend/internal/ghclient" // registers the GitHub forge.Forge implementation
 	"github.com/myinisjap/agent-task-editor/backend/internal/prflow"
+	"github.com/myinisjap/agent-task-editor/backend/internal/reviewbrief"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -31,32 +32,20 @@ func (h *TasksHandler) Diff(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Prefer the task's worktree, but once a task reaches a terminal label its
-	// worktree is torn down (the branch is kept). Fall back to the repo's main
-	// clone, which still has the branch ref.
-	gitDir := task.WorktreePath
-	if gitDir == "" || !gitcmd.DirExists(gitDir) {
-		repo, rerr := h.q.GetRepo(r.Context(), task.RepoID)
-		if rerr != nil {
-			Err(w, http.StatusInternalServerError, "failed to locate repo")
-			return
-		}
-		gitDir = repo.Path
+	// worktree is torn down (the branch is kept). GitDir falls back to the
+	// repo's main clone, which still has the branch ref.
+	gitDir, err := reviewbrief.GitDir(r.Context(), h.q, task)
+	if err != nil {
+		Err(w, http.StatusInternalServerError, "failed to locate repo")
+		return
 	}
 
-	mb, err := gitcmd.Output(r.Context(), gitDir, "merge-base", task.BaseRef, task.Branch)
-	base := task.BaseRef
-	if err == nil {
-		if s := strings.TrimSpace(string(mb)); s != "" {
-			base = s
-		}
-	}
-
-	out, err := gitcmd.Output(r.Context(), gitDir, "diff", base, task.Branch, "--")
+	out, err := reviewbrief.TaskDiff(r.Context(), gitDir, task.BaseRef, task.Branch)
 	if err != nil {
 		Err(w, http.StatusInternalServerError, "failed to compute diff")
 		return
 	}
-	JSON(w, http.StatusOK, map[string]any{"branch": task.Branch, "diff": string(out)})
+	JSON(w, http.StatusOK, map[string]any{"branch": task.Branch, "diff": out})
 }
 
 // PRURL builds a forge compare URL for the task's branch with a pre-filled PR

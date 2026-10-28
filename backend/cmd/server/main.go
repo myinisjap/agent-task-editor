@@ -107,6 +107,14 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("upload directory ready", "path", uploadDir)
+	skillsDir := cfg.SkillsDir
+	if skillsDir == "" {
+		skillsDir = "skills"
+	}
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		slog.Error("failed to create skills directory", "path", skillsDir, "err", err)
+		os.Exit(1)
+	}
 	if cfg.MCPBinary == "" {
 		slog.Warn("MCP_SERVER_PATH is not set; signal_complete/update_task_notes unavailable to claude/qwen agents")
 	} else {
@@ -308,10 +316,21 @@ func main() {
 	subtaskCoord.GitName, subtaskCoord.GitEmail = pool.GitName, pool.GitEmail
 	pool.Subtasks = subtaskCoord
 	pool.Verifier = providers.CommandVerifier{}
+	previewScript := cfg.PreviewCaptureScript
+	if previewScript == "" {
+		previewScript = "/opt/preview-capture/capture.mjs"
+	}
+	pool.Previewer = providers.PreviewCapturer{ScriptPath: previewScript}
+	pool.UploadDir = uploadDir
+	// A capture left running by a previous process can never finish.
+	if err := gen.New(db.SQL()).MarkStalePreviewCapturesFailed(context.Background()); err != nil {
+		slog.Warn("preview: mark stale captures failed", "err", err)
+	}
 	dispatcher := agent.NewDispatcher(db.SQL(), pool, engine, providerFactory)
 	dispatcher.RateLimits = rateLimits
 	dispatcher.ProviderPauses = providerPauses
 	dispatcher.SetUploadDir(uploadDir)
+	dispatcher.SetSkillsDir(skillsDir)
 	dispatcher.Subtasks = subtaskCoord
 	dispatcher.Publisher = pub
 	dispatcher.MaxDailyCostUSD = cfg.MaxDailyCostUSD
@@ -384,6 +403,7 @@ func main() {
 		RepoBaseDir:         cfg.RepoBaseDir,
 		ListenAddr:          listenAddr,
 		UploadDir:           uploadDir,
+		SkillsDir:           skillsDir,
 		MCPBinary:           cfg.MCPBinary,
 		BackupDir:           cfg.BackupDir,
 		BackupInterval:      cfg.BackupInterval,

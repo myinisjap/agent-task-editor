@@ -310,3 +310,29 @@ func TestCreateSubtask_UnreachableBackend(t *testing.T) {
 		t.Errorf("unexpected text: %q", got)
 	}
 }
+
+func TestCreateSubtask_FileScopeAndOverlap(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"c2","label":"todo","overlap_dependencies":[{"task_id":"c1","title":"First"}]}`))
+	}))
+	defer srv.Close()
+
+	cfg := subtaskConfig{enabled: true, backendURL: srv.URL, taskID: "task-1"}
+	got := createSubtask(cfg, json.RawMessage(`{"title":"Second","file_scope":["backend/a/**"]}`), log)
+	if !strings.Contains(gotBody, `"file_scope":["backend/a/**"]`) {
+		t.Errorf("request body missing file_scope: %q", gotBody)
+	}
+	want := `Created subtask c2 on label "todo". Its file scope overlaps First (c1), so it depends on it and will run after it finishes.`
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+	createSubtask(cfg, json.RawMessage(`{"title":"NoScope"}`), log)
+	if strings.Contains(gotBody, "file_scope") {
+		t.Errorf("file_scope should be omitted when empty: %q", gotBody)
+	}
+}

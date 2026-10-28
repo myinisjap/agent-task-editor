@@ -1,3 +1,4 @@
+import { humanizeLabelName } from '../lib/labelDisplay'
 import { describe, it, expect } from 'vitest'
 import { stationsFor } from './factoryStations'
 import { machineSvg, itemSvg, safeColor, FACTORY_FALLBACK_COLOR, DEFAULT_FACTORY_ACTIONS, type FactoryAction } from './factoryMachines'
@@ -34,12 +35,12 @@ describe('stationsFor', () => {
     const stations = stationsFor(wf, counts)
 
     // sorted by sort_order (reversed above), so 'done' (sort_order 1) comes first
-    expect(stations.map((s) => s.name)).toEqual([...DEFAULT_NAMES].reverse())
-    expect(stations.find((s) => s.name === 'work')!.action).toBe('hammering')
-    expect(stations.find((s) => s.name === 'agent-review')!.action).toBe('robot')
-    expect(stations.find((s) => s.name === 'done')!.action).toBe('packing')
-    expect(stations.find((s) => s.name === 'work')!.count).toBe(4)
-    expect(stations.find((s) => s.name === 'plan')!.count).toBe(0)
+    expect(stations.map((s) => s.name)).toEqual([...DEFAULT_NAMES].reverse().map(humanizeLabelName))
+    expect(stations.find((s) => s.name === 'Work')!.action).toBe('hammering')
+    expect(stations.find((s) => s.name === 'Agent review')!.action).toBe('robot')
+    expect(stations.find((s) => s.name === 'Done')!.action).toBe('packing')
+    expect(stations.find((s) => s.name === 'Work')!.count).toBe(4)
+    expect(stations.find((s) => s.name === 'Plan')!.count).toBe(0)
   })
 
   it('collapses a custom workflow into the 3 buckets with summed counts', () => {

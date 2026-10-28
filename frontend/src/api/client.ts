@@ -14,12 +14,24 @@ type Schemas = components['schemas']
 export type ProviderConfig = Schemas['ProviderConfig']
 export type ChatSession = Schemas['ChatSession']
 export type Task = Schemas['Task']
+export type Skill = Schemas['Skill']
+export type RepoLesson = Schemas['RepoLesson']
+export type RepoLessonCreate = Schemas['RepoLessonCreate']
+export type RepoLessonUpdate = Schemas['RepoLessonUpdate']
+export type TaskHumanDecision = Schemas['TaskHumanDecision']
+export type LessonStatus = RepoLesson['status']
+export type LessonKind = RepoLesson['kind']
 export type BlockReason = Schemas['BlockReason']
 export type DependencyEdge = Schemas['DependencyEdge']
 export type TaskDependencies = Schemas['TaskDependencies']
 export type TaskTemplate = Schemas['TaskTemplate']
 export type TaskSchedule = Schemas['TaskSchedule']
 export type IntakeRule = Schemas['IntakeRule']
+export type IntakeEndpoint = Schemas['IntakeEndpoint']
+export type IntakeEndpointCreated = Schemas['IntakeEndpointCreated']
+export type IntakeEndpointBody = Schemas['IntakeEndpointBody']
+export type IntakeEndpointTestRequest = Schemas['IntakeEndpointTestRequest']
+export type IntakeEndpointTestResponse = Schemas['IntakeEndpointTestResponse']
 export type BackupSettings = Schemas['BackupSettings']
 export type LogRetentionSettings = Schemas['LogRetentionSettings']
 export type ModelPricing = Schemas['ModelPricing']
@@ -27,6 +39,13 @@ export type WorkflowLabel = Schemas['WorkflowLabel']
 export type WorkflowTransition = Schemas['WorkflowTransition']
 export type Workflow = Schemas['Workflow']
 export type AgentConfig = Schemas['AgentConfig']
+export type AgentConfigVersion = Schemas['AgentConfigVersion']
+export type AgentExperiment = Schemas['AgentExperiment']
+export type AgentExperimentArmStats = Schemas['AgentExperimentArmStats']
+export type AgentExperimentStart = Schemas['AgentExperimentStart']
+export type AgentExperimentPromoteResponse = Schemas['AgentExperimentPromoteResponse']
+export type AgentConfigSnapshot = Schemas['AgentConfigSnapshot']
+export type OutcomeQualityGroupBy = 'config' | 'version' | 'provider_config' | 'repo' | 'task_type'
 export type ModelList = Schemas['ModelList']
 export type ClaudeOptions = Schemas['ClaudeOptions']
 export type Repo = Schemas['Repo']
@@ -35,6 +54,11 @@ export type ReviewComment = Schemas['ReviewComment']
 export type TaskSourceComment = Schemas['TaskSourceComment']
 export type AgentRun = Schemas['AgentRun']
 export type RunVerification = Schemas['RunVerification']
+export type TaskPreviewCapture = Schemas['TaskPreviewCapture']
+export type TaskPreviewImage = Schemas['TaskPreviewImage']
+export type ReviewBrief = Schemas['ReviewBrief']
+export type RiskFlag = Schemas['RiskFlag']
+export type RiskFlagCode = Schemas['RiskFlagCode']
 // Named *Entry historically; the schema is TaskLabelHistory.
 export type TaskLabelHistoryEntry = Schemas['TaskLabelHistory']
 export type AgentLog = Schemas['AgentLog']
@@ -87,7 +111,7 @@ export type IntakeRuleBody = {
   name: string
   enabled?: boolean
   sort_order?: number
-  match_source?: '' | 'manual' | 'issue' | 'schedule' | 'subtask'
+  match_source?: '' | 'manual' | 'issue' | 'schedule' | 'webhook' | 'subtask'
   match_repo_id?: string | null
   match_labels?: string[]
   match_title_pattern?: string
@@ -305,6 +329,12 @@ export const api = {
     // verifications returns the task's repo verify-command results, newest
     // first (empty when no verify command has run).
     verifications: (id: string) => request<RunVerification[]>(`/tasks/${id}/verifications`),
+    // reviewBrief is the deterministic risk-flag/verification summary for a
+    // task waiting on a human (GET /tasks/{id}/review-brief).
+    reviewBrief: (id: string) => request<ReviewBrief>(`/tasks/${id}/review-brief`),
+    // previews is the latest preview screenshot capture (capture is null when
+    // none was taken).
+    previews: (id: string) => request<{ capture: TaskPreviewCapture | null }>(`/tasks/${id}/previews`),
     getRun: (id: string, runId: string) => request<AgentRun>(`/tasks/${id}/runs/${runId}`),
     // listLabelHistory returns the task's label-transition audit trail
     // (oldest first), including the resolved actor for human transitions.
@@ -314,6 +344,8 @@ export const api = {
     // hasn't opted into issue_comment_sync_enabled or nothing's been
     // ingested yet.
     sourceComments: (id: string) => request<TaskSourceComment[]>(`/tasks/${id}/source-comments`),
+    // humanDecisions lists the human replies to the task's waiting_human runs.
+    humanDecisions: (id: string) => request<TaskHumanDecision[]>(`/tasks/${id}/human-decisions`),
     // cancelRun signals an in-flight run to stop. The pool marks the run
     // "cancelled" and pauses the task asynchronously, then broadcasts
     // task.agent_done, so callers rely on the WS event rather than the response.
@@ -365,7 +397,7 @@ export const api = {
   agents: {
     list: () => listAllPages<AgentConfig>('/agents'),
     get: (id: string) => request<AgentConfig>(`/agents/${id}`),
-    create: async (body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config'>): Promise<{ config: AgentConfig; labelConflict?: string }> => {
+    create: async (body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enabled' | 'provider_config' | 'current_version' | 'running_experiment'> & { note?: string }): Promise<{ config: AgentConfig; labelConflict?: string }> => {
       const res = await authedRawFetch(`${BASE}/agents`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -379,7 +411,7 @@ export const api = {
       const labelConflict = res.headers.get('X-Label-Conflict') ?? undefined
       return { config, labelConflict }
     },
-    update: async (id: string, body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'provider_config'> & { enabled?: boolean }): Promise<{ config: AgentConfig; labelConflict?: string }> => {
+    update: async (id: string, body: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'provider_config' | 'current_version' | 'running_experiment'> & { enabled?: boolean; note?: string }): Promise<{ config: AgentConfig; labelConflict?: string }> => {
       const res = await authedRawFetch(`${BASE}/agents/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -394,8 +426,23 @@ export const api = {
       return { config, labelConflict }
     },
     delete: (id: string) => request<void>(`/agents/${id}`, { method: 'DELETE' }),
+    versions: (id: string) => request<AgentConfigVersion[]>(`/agents/${id}/versions`),
+    version: (id: string, version: number) => request<AgentConfigVersion>(`/agents/${id}/versions/${version}`),
+    experiments: (id: string) => request<AgentExperiment[]>(`/agents/${id}/experiments`),
+    experiment: (id: string, expId: string) => request<AgentExperiment>(`/agents/${id}/experiments/${expId}`),
+    startExperiment: (id: string, body: AgentExperimentStart) =>
+      request<AgentExperiment>(`/agents/${id}/experiments`, { method: 'POST', body: JSON.stringify(body) }),
+    stopExperiment: (id: string, expId: string) =>
+      request<AgentExperiment>(`/agents/${id}/experiments/${expId}/stop`, { method: 'POST', body: '{}' }),
+    promoteExperiment: (id: string, expId: string, note?: string) =>
+      request<AgentExperimentPromoteResponse>(`/agents/${id}/experiments/${expId}/promote`, { method: 'POST', body: JSON.stringify(note ? { note } : {}) }),
+    restoreVersion: (id: string, version: number, note?: string) =>
+      request<AgentConfig>(`/agents/${id}/versions/${version}/restore`, { method: 'POST', body: JSON.stringify(note ? { note } : {}) }),
     models: (provider: string) => request<ModelList>(`/agents/models?provider=${provider}`),
     claudeOptions: () => request<ClaudeOptions>('/agents/claude-options'),
+    skills: (id: string) => request<Skill[]>(`/agents/${id}/skills`),
+    setSkills: (id: string, skill_ids: string[]) =>
+      request<Skill[]>(`/agents/${id}/skills`, { method: 'PUT', body: JSON.stringify({ skill_ids }) }),
   },
   providerConfigs: {
     list: () => listAllPages<ProviderConfig>('/provider-configs'),
@@ -409,21 +456,45 @@ export const api = {
   repos: {
     list: () => listAllPages<Repo>('/repos'),
     get: (id: string) => request<Repo>(`/repos/${id}`),
-    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number; runtime_languages?: RuntimeLanguagePin[]; verify_command?: string; verify_timeout_seconds?: number }) =>
+    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number; runtime_languages?: RuntimeLanguagePin[]; verify_command?: string; verify_timeout_seconds?: number; preview_command?: string; preview_routes?: string; preview_paths_glob?: string }) =>
       request<Repo>('/repos', { method: 'POST', body: JSON.stringify(body) }),
     // max_concurrent_runs: omit the key to leave it unchanged, or pass null to
     // clear it back to "use the global default" — the backend distinguishes
     // an omitted field from an explicit null (see ReposHandler.Update).
-    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number | null; runtime_languages?: RuntimeLanguagePin[]; verify_command?: string; verify_timeout_seconds?: number }) =>
+    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; max_concurrent_runs?: number | null; runtime_languages?: RuntimeLanguagePin[]; verify_command?: string; verify_timeout_seconds?: number; preview_command?: string; preview_routes?: string; preview_paths_glob?: string }) =>
 
       request<Repo>(`/repos/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/repos/${id}`, { method: 'DELETE' }),
+    lessons: (id: string, status?: LessonStatus) =>
+      request<RepoLesson[]>(`/repos/${id}/lessons${status ? `?status=${status}` : ''}`),
+    skills: (id: string) => request<Skill[]>(`/repos/${id}/skills`),
+    setSkills: (id: string, skill_ids: string[]) =>
+      request<Skill[]>(`/repos/${id}/skills`, { method: 'PUT', body: JSON.stringify({ skill_ids }) }),
+    createLesson: (id: string, body: RepoLessonCreate) =>
+      request<RepoLesson>(`/repos/${id}/lessons`, { method: 'POST', body: JSON.stringify(body) }),
     tree: (id: string, ref = 'HEAD') => request<{ ref: string; files: string[] }>(`/repos/${id}/tree?ref=${ref}`),
     // Manifest-scan-only detection (go.mod, .nvmrc, .python-version, etc.) —
     // never writes runtime_languages; the caller pre-fills the form and the
     // human still saves explicitly.
     detectRuntime: (id: string) =>
       request<{ suggestions?: (RuntimeLanguagePin & { source: string })[] }>(`/repos/${id}/runtime/detect`, { method: 'POST' }),
+  },
+  skills: {
+    list: () => request<Skill[]>('/skills'),
+    get: (id: string) => request<Skill>(`/skills/${id}`),
+    createFromMarkdown: (skill_md: string) =>
+      request<Skill>('/skills', { method: 'POST', body: JSON.stringify({ skill_md }) }),
+    createFromZip: (file: Blob) =>
+      request<Skill>('/skills', { method: 'POST', body: file, headers: { 'Content-Type': 'application/zip' } }),
+    update: (id: string, body: { enabled?: boolean; skill_md?: string }) =>
+      request<Skill>(`/skills/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    delete: (id: string) => request<void>(`/skills/${id}`, { method: 'DELETE' }),
+  },
+  lessons: {
+    listGlobal: (status?: LessonStatus) => request<RepoLesson[]>(`/lessons${status ? `?status=${status}` : ''}`),
+    createGlobal: (body: RepoLessonCreate) => request<RepoLesson>('/lessons', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id: string, body: RepoLessonUpdate) => request<RepoLesson>(`/lessons/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    delete: (id: string) => request<void>(`/lessons/${id}`, { method: 'DELETE' }),
   },
   templates: {
     list: () => request<TaskTemplate[]>('/templates'),
@@ -456,6 +527,19 @@ export const api = {
         body: JSON.stringify({ repo_id: repoId, rule, limit }),
       }),
   },
+  intakeEndpoints: {
+    list: () => request<IntakeEndpoint[]>('/intake-endpoints'),
+    get: (id: string) => request<IntakeEndpoint>(`/intake-endpoints/${id}`),
+    create: (body: IntakeEndpointBody) =>
+      request<IntakeEndpointCreated>('/intake-endpoints', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id: string, body: IntakeEndpointBody) =>
+      request<IntakeEndpoint>(`/intake-endpoints/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
+    delete: (id: string) => request<void>(`/intake-endpoints/${id}`, { method: 'DELETE' }),
+    rotateSecret: (id: string) =>
+      request<{ secret: string }>(`/intake-endpoints/${id}/rotate-secret`, { method: 'POST', body: '{}' }),
+    test: (id: string, body: IntakeEndpointTestRequest) =>
+      request<IntakeEndpointTestResponse>(`/intake-endpoints/${id}/test`, { method: 'POST', body: JSON.stringify(body) }),
+  },
   needsMe: {
     list: () => request<Schemas['NeedsMeResponse']>('/needs-me').then((r) => r.items),
   },
@@ -468,8 +552,13 @@ export const api = {
     // review burden, human-touch rate, escalation rate) — see the Agent
     // Performance page. Cached server-side with a short TTL; optionally
     // scoped to a single repo.
-    outcomeQuality: (repoId?: string) =>
-      request<OutcomeQuality>(`/dashboard/outcome-quality${repoId ? `?repo_id=${encodeURIComponent(repoId)}` : ''}`),
+    outcomeQuality: (repoId?: string, groupBy?: OutcomeQualityGroupBy) => {
+      const qs = new URLSearchParams()
+      if (repoId) qs.set('repo_id', repoId)
+      if (groupBy && groupBy !== 'config') qs.set('group_by', groupBy)
+      const s = qs.toString()
+      return request<OutcomeQuality>(`/dashboard/outcome-quality${s ? `?${s}` : ''}`)
+    },
   },
   github: {
     authStatus: () => request<{ authed: boolean; note: string }>('/github/auth-status'),

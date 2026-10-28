@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatDuration, formatRelativeCountdown } from './format'
+import { formatDuration, formatRelativeCountdown, formatRunStatus } from './format'
 
 describe('formatDuration', () => {
   it('renders an em dash for zero/negative/falsy input', () => {
@@ -38,5 +38,22 @@ describe('formatRelativeCountdown', () => {
 
   it('renders days at or beyond a day', () => {
     expect(formatRelativeCountdown('2026-08-05T12:00:00Z', now)).toBe('in 2d')
+  })
+})
+
+describe('formatRunStatus', () => {
+  it('maps known statuses to words', () => {
+    expect(formatRunStatus('waiting_human')).toBe('Waiting on you')
+    expect(formatRunStatus('running')).toBe('Running')
+    expect(formatRunStatus('failed')).toBe('Failed')
+    expect(formatRunStatus('completed')).toBe('Done')
+    expect(formatRunStatus('interrupted')).toBe('Interrupted')
+    expect(formatRunStatus('cancelled')).toBe('Cancelled')
+    expect(formatRunStatus('pending')).toBe('Queued')
+  })
+  it('passes unknown values through and dashes empties', () => {
+    expect(formatRunStatus('weird')).toBe('weird')
+    expect(formatRunStatus('')).toBe('—')
+    expect(formatRunStatus(undefined)).toBe('—')
   })
 })

@@ -22,13 +22,14 @@ agent-task-editor/
 │   ├── api.md
 │   ├── task-sources.md
 │   ├── task-templates.md
+│   ├── lessons.md
 │   ├── websocket.md
 │   ├── mcp-tools.md
 │   ├── board-mcp.md
 │   ├── runtime.md            # Per-repo agent toolchains via mise/uv
 │   ├── backup.md
 │   └── screenshots.md
-├── backend/                  # Go server (go.mod: 1.26; CI + Docker builder: 1.27.2)
+├── backend/                  # Go server (go.mod: 1.26; CI + Docker builder: 1.27.3)
 │   ├── cmd/server/           # Main entrypoint
 │   ├── cmd/mcp-server/       # MCP sidecar (signal_complete / request_human)
 │   ├── cmd/mcp-board/        # Standalone MCP server for creating board tickets from a chat client (see docs/board-mcp.md)
@@ -46,12 +47,14 @@ agent-task-editor/
 │       ├── ghclient/         # GitHub `forge.Forge` impl: direct GitHub REST client (token from GH_TOKEN/GITHUB_TOKEN/`gh auth token`) (PR lookup/create, issue listing, repo name parsing)
 │       ├── ghsync/           # Background poller: refreshes task PR state (incl. merge conflicts) via the repo's `forge.Forge`
 │       ├── health/           # Provider readiness checks (Claude CLI, MCP sidecar, GitHub auth, repo base dir)
-│       ├── intake/           # Intake routing rules: match->apply engine shared by tasksource + schedule; leaf package, no deps beyond storage/gen
+│       ├── intake/           # Intake routing rules: match->apply engine shared by tasksource + schedule + intakehook, plus the safe {{path}} template renderer; leaf package, no deps beyond storage/gen
+│       ├── intakehook/       # Signed inbound webhook events -> tasks (Shape/Receive, dedupe into open tasks)
 │       ├── logretention/     # Periodic pruning of agent_logs for terminal runs; DB-backed settings
 │       ├── metrics/          # Process-wide Prometheus registry and custom collectors (leaf package)
 │       ├── memguard/         # Last-resort memory watchdog that cancels a single runaway agent run
 │       ├── needsme/          # Single server-side definition of which tasks need a human and why (drives GET /needs-me, Inbox, badges)
 │       ├── notify/           # Optional outbound webhook when a task needs a human (NOTIFY_WEBHOOK_URL)
+│       ├── reviewbrief/      # Deterministic review brief for human-gate tasks: diff risk flags, verification/run summary (GET /tasks/{id}/review-brief, needs-me risk_flags); also owns the shared task-diff git logic
 │       ├── remotemcp/        # Remote MCP endpoint (/mcp, streamable HTTP) + Google-backed OAuth server for claude.ai connectors; off unless MCP_REMOTE_ENABLED=true
 │       ├── prflow/           # Push a task's branch and create/find its PR; shared by the CreatePR handler and the OnCreatePR hook (leaf: no api/handlers or workflow import)
 │       ├── scopedtoken/      # Short-lived, route-scoped bearer tokens minted for the MCP sidecars (instead of the admin API token)
@@ -108,7 +111,7 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 | `MCP_REMOTE_ENABLED` | `false` | Explicit opt-in for the remote MCP endpoint (claude.ai custom connectors). Other `MCP_*` vars alone never enable it; `true` with a required var missing fails startup. `./run.sh`/`./dev.sh --with-remote-mcp` set it and add `docker-compose.mcp-remote.yml` (the public Traefik route) |
 | `MCP_PUBLIC_URL` | _(none)_ | Public base URL of the remote MCP endpoint (`<url>/mcp`); used only when `MCP_REMOTE_ENABLED=true`, which also needs `MCP_GOOGLE_CLIENT_ID`, `MCP_GOOGLE_CLIENT_SECRET`, `MCP_ALLOWED_EMAILS`, `MCP_SIGNING_KEY`. See `docs/board-mcp.md#remote-connector` |
 | `MCP_SIGNING_KEY` | _(none)_ | Required (>= 32 chars) when `MCP_REMOTE_ENABLED=true`: signs the remote MCP's tokens and client ids, independent of the Google secret. Generate with `openssl rand -base64 48`; rotating it revokes every token |
-| `MCP_TOOL_PROFILE` | `readonly` | Remote MCP tool set: `readonly` (list/get/read tools incl. list_needs_me, get_costs, list_provider_configs, get_agent, list_templates, list_schedules), `full` (adds create_task, reply_to_run, approve_task, reject_task, move_task, archive_task, cancel_run, rerun_task, create_pr) or `admin` (full plus create_workflow, update_workflow, add_repo, update_repo, create_agent, update_agent, create_template, update_template, create_schedule, update_schedule) |
+| `MCP_TOOL_PROFILE` | `readonly` | Remote MCP tool set: `readonly` (list/get/read tools incl. list_needs_me, get_costs, list_provider_configs, get_agent, list_templates, list_schedules), `full` (adds create_task, reply_to_run, approve_task, reject_task, move_task, archive_task, cancel_run, rerun_task, create_pr) or `admin` (full plus create_workflow, update_workflow, add_repo, update_repo, create_agent, update_agent, create_template, update_template, create_schedule, update_schedule). `./run.sh`/`./dev.sh --mcp-profile <readonly\|full\|admin>` sets it per invocation (overriding `.env`); an unknown value exits 1, and the flag warns and is ignored without `--with-remote-mcp` |
 | `MCP_REDIRECT_URIS` | claude.ai + claude.com connector callbacks | Exact OAuth redirect URIs the remote MCP will register and redirect to (comma-separated); loopback only if listed |
 | `MCP_ALLOWED_CLIENT_IDS` | _(any)_ | Optional comma-separated OAuth client ids the remote MCP accepts; the id is logged when a client registers |
 | `MAX_WORKERS` | `5` | Concurrent agent runs |
@@ -121,6 +124,7 @@ See `docs/getting-started.md` for full setup including Claude CLI auth and repo 
 
 - **Backend code gen:** `cd backend && go generate ./...` (runs sqlc after editing `.sql` files)
 - **Tests:** `cd backend && go test ./...`
+- **Frontend checks:** a fresh worktree has no `frontend/node_modules`. Run `cd frontend && npm ci` once before `tsc`, lint or `vitest`; don't report them as "couldn't run".
 - **Frontend types:** `frontend/src/api/types.ts` is generated from the root `openapi.yaml`. When changing the API, edit `openapi.yaml`, then run `cd frontend && npm run gen:api` to regenerate the types and commit the result. Don't hand-edit `types.ts` — CI's "Check generated API types are up to date" step fails on any drift between the spec and the committed types.
 - **Migrations:** add numbered files to `backend/internal/storage/migrations/`; they run automatically on startup
 - **Changelog:** always add an entry under `## [Unreleased]` in `CHANGELOG.md` for any user-facing change (features, fixes, security, breaking changes). This file drives the GitHub Release notes, so keep it current with every PR.

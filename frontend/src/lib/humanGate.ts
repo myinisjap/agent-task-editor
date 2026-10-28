@@ -57,3 +57,19 @@ export function humanActionsFor(
     canReject: outgoing.some((t) => t.path === 'failure'),
   }
 }
+
+/**
+ * The label a human Approve (`success`) or Reject (`failure`) would move a
+ * task to from `labelName`. Same rule as the backend's humanPathTarget: the
+ * first human transition with the matching path.
+ */
+export function humanPathTargetLabel(
+  workflow: Workflow | undefined,
+  labelName: string,
+  path: 'success' | 'failure',
+): WorkflowLabel | undefined {
+  const t = workflow?.transitions.find(
+    (x) => x.from_label === labelName && x.trigger_type === 'human' && x.path === path,
+  )
+  return t ? findLabel(workflow, t.to_label) : undefined
+}

@@ -37,7 +37,7 @@ const pages: { path: string; name: string; anchor: (page: Page) => Locator }[] =
   {
     path: 'board',
     name: 'Board',
-    anchor: (page) => page.getByRole('heading', { name: 'Board', exact: true }),
+    anchor: (page) => page.getByRole('button', { name: 'About the board' }),
   },
   {
     path: 'chat',
@@ -132,6 +132,6 @@ test('root URL redirects to the app under /tasks/', async ({ page }) => {
   await expect(
     page
       .getByRole('heading', { name: 'Overview', exact: true })
-      .or(page.getByRole('heading', { name: 'Board', exact: true })),
+      .or(page.getByRole('button', { name: 'About the board' })),
   ).toBeVisible()
 })

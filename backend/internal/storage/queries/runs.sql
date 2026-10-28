@@ -28,8 +28,24 @@ RETURNING *;
 -- name: SetAgentRunProviderConfig :exec
 UPDATE agent_runs SET provider_config_id = ? WHERE id = ?;
 
+-- name: SetAgentRunConfigVersion :exec
+-- Tags a run with the config latest version (stays NULL if it has none).
+UPDATE agent_runs SET agent_config_version = (SELECT MAX(v.version) FROM agent_config_versions v WHERE v.agent_config_id = ?1) WHERE agent_runs.id = ?2;
+
+-- name: SetAgentRunExperiment :exec
+UPDATE agent_runs SET experiment_id = ?, experiment_arm = ? WHERE id = ?;
+
+-- name: SetAgentRunLadderRung :exec
+UPDATE agent_runs SET ladder_rung = ? WHERE id = ?;
+
 -- name: SetAgentRunFeedback :exec
 UPDATE agent_runs SET feedback = ? WHERE id = ?;
+
+-- name: ReplaceAgentRunFeedbackIfUnchanged :execrows
+-- Compare-and-swap on agent_runs.feedback: used by the pool to drop the
+-- feedback a successful run inherited without clobbering feedback written
+-- concurrently (ghsync append, human reject).
+UPDATE agent_runs SET feedback = ?1 WHERE id = ?2 AND feedback = ?3;
 
 -- name: UpdateAgentRunStatus :one
 UPDATE agent_runs
@@ -62,6 +78,20 @@ WHERE ar.task_id = ?1 AND ar.agent_config_id = ?2 AND ar.session_id != ''
 ORDER BY ar.created_at DESC, ar.id DESC
 LIMIT 1;
 
+-- name: SetAgentRunSessionCost :exec
+-- Records the provider's cumulative session cost reported at the end of the
+-- run (see migration 071). Written only when the provider reported one.
+UPDATE agent_runs SET session_cost_usd = ? WHERE id = ?;
+
+-- name: GetSessionCostBaseline :one
+-- The cumulative session cost recorded by the latest earlier run of this
+-- session, subtracted from a resumed run's reported total so cost_usd holds
+-- only that run's own spend.
+SELECT session_cost_usd FROM agent_runs
+WHERE task_id = ? AND session_id = ? AND session_cost_usd IS NOT NULL
+ORDER BY created_at DESC, id DESC
+LIMIT 1;
+
 -- name: SetAgentRunCompleted :one
 UPDATE agent_runs
 SET status = ?, stored_info = ?, notes = ?, input_tokens = ?, output_tokens = ?, cost_usd = ?, cost_unknown = ?, turns_used = ?, escalation_reason = ?, completed_at = CURRENT_TIMESTAMP
@@ -69,7 +99,7 @@ WHERE id = ?
 RETURNING *;
 
 -- name: ListAgentLogs :many
-SELECT * FROM agent_logs WHERE agent_run_id = ? ORDER BY timestamp ASC;
+SELECT * FROM agent_logs WHERE agent_run_id = ? ORDER BY timestamp ASC, seq ASC, id ASC;
 
 -- name: ListAgentLogsPage :many
 -- Cursor-paginated log fetch, newest first. Returns the most recent entries
@@ -77,7 +107,7 @@ SELECT * FROM agent_logs WHERE agent_run_id = ? ORDER BY timestamp ASC;
 -- oldest entry the caller already has). An empty cursor returns the newest
 -- entries (the tail). Callers reverse the slice for chronological display and
 -- use the oldest returned id as the next cursor to "load earlier". Ordering is
--- (timestamp, id) descending with id as a stable tiebreaker; the cursor
+-- (timestamp, seq, id) descending with seq then id as stable tiebreakers; the cursor
 -- comparison reads the anchor row's own timestamp so it matches the ORDER BY
 -- regardless of timestamp text format. Positional params (?1 run_id, ?2 before
 -- cursor, ?3 limit) are used instead of @named ones to sidestep a byte-offset
@@ -94,9 +124,12 @@ WHERE l.agent_run_id = ?1
   AND (
     ?2 = ''
     OR l.timestamp < (SELECT timestamp FROM agent_logs WHERE id = ?2)
-    OR (l.timestamp = (SELECT timestamp FROM agent_logs WHERE id = ?2) AND l.id < ?2)
+    OR (l.timestamp = (SELECT timestamp FROM agent_logs WHERE id = ?2) AND (
+      l.seq < (SELECT seq FROM agent_logs WHERE id = ?2)
+      OR (l.seq = (SELECT seq FROM agent_logs WHERE id = ?2) AND l.id < ?2)
+    ))
   )
-ORDER BY l.timestamp DESC, l.id DESC
+ORDER BY l.timestamp DESC, l.seq DESC, l.id DESC
 LIMIT ?3;
 
 -- name: CountAgentLogs :one
@@ -108,8 +141,8 @@ SELECT COUNT(*) FROM agent_logs WHERE agent_run_id = ?;
 SELECT COUNT(*) FROM agent_logs;
 
 -- name: CreateAgentLog :exec
-INSERT INTO agent_logs (id, agent_run_id, timestamp, type, content)
-VALUES (?, ?, ?, ?, ?);
+INSERT INTO agent_logs (id, agent_run_id, timestamp, type, content, seq)
+VALUES (?, ?, ?, ?, ?, ?);
 
 -- name: DeleteOldAgentLogs :execrows
 -- Deletes agent_logs rows belonging to runs in a terminal status

@@ -10,6 +10,7 @@
 SELECT t.id AS task_id,
        t.repo_id AS repo_id,
        t.archived AS archived,
+       t.type AS task_type,
        CAST(COALESCE(wl.is_terminal, 0) AS INTEGER) AS is_terminal
 FROM tasks t
 LEFT JOIN workflow_labels wl ON wl.workflow_id = t.workflow_id AND wl.name = t.label;
@@ -39,8 +40,13 @@ SELECT ar.id AS run_id,
        ar.agent_config_id AS agent_config_id,
        ar.status AS status,
        CAST(ar.cost_usd AS REAL) AS cost_usd,
-       ar.created_at AS created_at
+       ar.created_at AS created_at,
+       ar.ladder_rung AS ladder_rung,
+       ar.agent_config_version AS agent_config_version,
+       ar.experiment_arm AS experiment_arm,
+       CAST(COALESCE(ar.provider_config_id, ac.provider_config_id, '') AS TEXT) AS provider_config_id
 FROM agent_runs ar
+LEFT JOIN agent_configs ac ON ac.id = ar.agent_config_id
 ORDER BY ar.task_id, ar.created_at ASC, ar.id ASC;
 
 -- name: ListOutcomeQualityAgentConfigs :many

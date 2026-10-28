@@ -165,3 +165,7 @@ func Compute(ctx context.Context, q *gen.Queries) ([]Item, error) {
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Since.Before(out[j].Since) })
 	return out, nil
 }
+
+// IsHumanGate reports whether label is a human gate in wf (the definition used
+// for ReasonHumanGate items).
+func IsHumanGate(wf WorkflowDef, label string) bool { return isHumanGate(wf, label) }

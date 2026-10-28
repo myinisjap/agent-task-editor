@@ -223,8 +223,10 @@ func (p *Pool) handleCostBudgetExceeded(ctx context.Context, job Job, result Res
 // agent-triggerable label would be re-dispatched on the very next sweep,
 // restarting the run the human just killed; pausing leaves the task on its
 // label for a human to resume when ready. A resource-constraint kill is not
-// the task's fault, so it stays unpaused and is re-dispatched normally, the
-// same as any other transient failure. Uses context.Background throughout
+// the task's fault, so it stays unpaused, but gets a cooldown in
+// tasks.next_retry_at (60s, doubling on back-to-back stops, capped) and
+// feeds the pool's memory-pressure tracker, which pauses new dispatch
+// globally after a burst (see mempressure.go). Uses context.Background throughout
 // since the run's own context is already cancelled. result carries any usage
 // the provider accumulated before the cancellation took effect, so that
 // spend is persisted on the run row rather than recorded as $0 — a cancelled
@@ -260,7 +262,26 @@ func (p *Pool) handleCancelled(job Job, result Result, startedAt time.Time, reas
 
 	// An interrupted run leaves every retry/failure counter exactly as it was:
 	// the process going away says nothing about the task or the infra.
-	if reason != CancelReasonShutdown {
+	// The next_retry_at write must precede releaseLock (ADR 0003), or a sweep
+	// could re-pick the task with no cooldown in place.
+	switch reason {
+	case CancelReasonResourceConstraint:
+		cooldown, streak, tripped, pausedUntil := p.memPressure.recordCancel(job.Input.Task.ID)
+		until := time.Now().Add(cooldown)
+		// Count stays 0: a memguard kill is not a failure and must not spend
+		// the transient-retry budget.
+		if _, err := p.q.SetTaskTransientRetry(bg, gen.SetTaskTransientRetryParams{
+			TransientRetryCount: 0, NextRetryAt: &until, ID: job.Input.Task.ID,
+		}); err != nil {
+			log.Warn("pool: set low-memory cooldown", "err", err)
+		}
+		metrics.MemguardCancelsTotal.Inc()
+		log.Info("pool: low-memory cancel, cooling task down before re-dispatch", "cooldown", cooldown, "streak", streak, "next_retry_at", until)
+		if tripped {
+			metrics.DispatchMemoryPausesTotal.Inc()
+			log.Warn("pool: burst of low-memory cancels, pausing new dispatch", "paused_until", pausedUntil, "threshold", memBurstThreshold, "window", memBurstWindow)
+		}
+	case CancelReasonUser:
 		if _, err := p.q.ResetTaskTransientRetry(bg, job.Input.Task.ID); err != nil {
 			log.Warn("pool: reset transient retry (cancel)", "err", err)
 		}

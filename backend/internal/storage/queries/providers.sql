@@ -34,10 +34,13 @@ RETURNING *;
 DELETE FROM provider_configs WHERE id = ?;
 
 -- name: CountAgentConfigsByProviderConfig :one
--- Agent configs using the provider config as primary or as a fallback.
+-- Agent configs using the provider config as primary, as a fallback, or in an
+-- escalation ladder rung (as its provider or one of its fallbacks).
 SELECT COUNT(*) FROM agent_configs
 WHERE provider_config_id = ?1
-   OR EXISTS (SELECT 1 FROM json_each(agent_configs.fallback_provider_config_ids) WHERE json_each.value = ?1);
+   OR EXISTS (SELECT 1 FROM json_each(agent_configs.fallback_provider_config_ids) WHERE json_each.value = ?1)
+   OR EXISTS (SELECT 1 FROM json_each(agent_configs.escalation_ladder) r WHERE json_extract(r.value, '$.provider_config_id') = ?1
+      OR EXISTS (SELECT 1 FROM json_each(json_extract(r.value, '$.fallback_provider_config_ids')) f WHERE f.value = ?1));
 
 -- name: CountChatSessionsByProviderConfig :one
 SELECT COUNT(*) FROM chat_sessions WHERE provider_config_id = ?;
@@ -51,4 +54,6 @@ SELECT COUNT(*) FROM chat_sessions WHERE provider_config_id = ?;
 SELECT DISTINCT pc.provider FROM provider_configs pc
 WHERE pc.id IN (SELECT provider_config_id FROM agent_configs WHERE enabled = 1)
    OR pc.id IN (SELECT j.value FROM agent_configs a, json_each(a.fallback_provider_config_ids) j WHERE a.enabled = 1)
+   OR pc.id IN (SELECT json_extract(r.value, '$.provider_config_id') FROM agent_configs a, json_each(a.escalation_ladder) r WHERE a.enabled = 1)
+   OR pc.id IN (SELECT f.value FROM agent_configs a, json_each(a.escalation_ladder) r, json_each(json_extract(r.value, '$.fallback_provider_config_ids')) f WHERE a.enabled = 1)
    OR pc.id IN (SELECT provider_config_id FROM chat_sessions);

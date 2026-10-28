@@ -27,11 +27,13 @@ export ATE_VERSION=${ATE_VERSION:-latest}
 # Parse optional --repo-dir <path> / --all-cli flags before the command.
 ALL_CLI=false
 WITH_REMOTE_MCP=false
+MCP_PROFILE_FLAG=
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --repo-dir) REPO_BASE_DIR="$2"; shift 2 ;;
     --all-cli) ALL_CLI=true; shift ;;
     --with-remote-mcp) WITH_REMOTE_MCP=true; shift ;;
+    --mcp-profile) MCP_PROFILE_FLAG="$2"; shift 2 ;;
     *) break ;;
   esac
 done
@@ -96,6 +98,26 @@ if [[ "$WITH_REMOTE_MCP" == "true" ]]; then
   export MCP_REMOTE_ENABLED=true
 else
   export MCP_REMOTE_ENABLED=false
+fi
+
+# Remote MCP tool set. Like --with-remote-mcp, widening it is an explicit
+# per-invocation choice: `admin` adds workflow/repo/agent/template/schedule
+# writes on top of `full`, reachable by anyone who clears the OAuth gate
+# (MCP_ALLOWED_EMAILS), so it is never a default or a .env-ambient value here.
+# Unset = leave whatever .env/compose provides (backend default: readonly).
+if [[ -n "$MCP_PROFILE_FLAG" ]]; then
+  case "$MCP_PROFILE_FLAG" in
+    readonly|full|admin) ;;
+    *) echo "Error: --mcp-profile must be readonly, full or admin (got '$MCP_PROFILE_FLAG')" >&2; exit 1 ;;
+  esac
+  if [[ "$WITH_REMOTE_MCP" != "true" ]]; then
+    echo "Warning: --mcp-profile only affects the remote MCP endpoint, which needs --with-remote-mcp; ignoring"
+  else
+    export MCP_TOOL_PROFILE="$MCP_PROFILE_FLAG"
+    if [[ "$MCP_PROFILE_FLAG" == "admin" ]]; then
+      echo "Remote MCP tool profile: admin (workflow/repo/agent/template/schedule writes enabled)"
+    fi
+  fi
 fi
 
 COMPOSE="docker compose -f docker-compose.release.yml"
@@ -223,7 +245,7 @@ case "$CMD" in
     $COMPOSE exec --user node backend sh
     ;;
   *)
-    echo "Usage: $0 [--repo-dir <path>] [--all-cli] [--with-remote-mcp] [start|pull|stop|restart|logs|login|shell]"
+    echo "Usage: $0 [--repo-dir <path>] [--all-cli] [--with-remote-mcp] [--mcp-profile readonly|full|admin] [start|pull|stop|restart|logs|login|shell]"
     exit 1
     ;;
 esac

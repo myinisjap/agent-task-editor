@@ -11,6 +11,7 @@ React 19 + TypeScript + Vite + Tailwind CSS. Single-page application served by n
 - **Zustand** — lightweight global state
 - **React Router** — client-side routing
 - **@dnd-kit** — drag-and-drop on the board
+- **lucide-react** (pinned) — icons; named imports only, rendered through `ui/Icon`
 
 ## Directory Layout
 
@@ -24,10 +25,14 @@ src/
 ├── components/
 │   ├── DependenciesPanel.tsx  Task dependency list + add/remove UI
 │   ├── SubtasksPanel.tsx      Subtask checklist + add/remove UI
-│   ├── board/        AgentGroupColumn, AgentLogEntry, GitStateBadge, NewTaskModal, TaskBoard, TaskCard, TaskColumn
+│   ├── board/        AgentGroupColumn, AgentLogEntry, BoardFilterSheet, GitStateBadge, NewTaskModal, TaskBoard, TaskCard, TaskColumn
 │   ├── chat/          TerminalKeyBar (mobile Esc/Tab/arrow/Ctrl row for the chat terminal)
 │   ├── diff/          FileDiffViewer (syntax-highlighted git diff + inline review comments)
-│   └── shared/        ApiTokenGate, GitHubAuthWarning, NavSidebar, WorkflowFlowchart
+│   ├── inbox/         DecisionContext (Decide row summary), InboxPreview (desktop right-pane preview)
+│   ├── lessons/       LessonForm, LessonsPanel (repo/global lessons), RememberLessonModal
+│   ├── ui/            Button, Badge, Card, Field, PageFrame, Icon + design tokens (see ui/README.md)
+│   ├── skills/        SkillPicker (chip multi-select for agent/repo skills)
+│   └── shared/        ApiTokenGate, GitHubAuthWarning, NavSidebar, Toast (message, variant, optional Undo action), ToastHost (renders the global toast store), ConfirmDialog (in-page confirm built on ModalShell; optional typed confirmation), CommandPalette, CommandHost, ShortcutSheet (Cmd/Ctrl+K palette, global shortcuts host, shortcut sheet), WorkflowFlowchart
 ├── pages/
 │   ├── BoardPage.tsx        Main Kanban board
 │   ├── TaskDetailPage.tsx   Task detail + live agent log stream
@@ -42,6 +47,8 @@ src/
 │   ├── agents.ts     Agent config state
 │   ├── providerConfigs.ts Provider config state (provider/model/env)
 │   ├── repos.ts      Repo list state
+│   ├── commandPalette.ts Command palette / shortcut sheet / global new-task open state and the open task's palette commands
+│   ├── toast.ts      Global toast + undo toast (`showToast`, `showError`, `showUndoToast`)
 │   ├── theme.ts      Dark/light theme state (persisted, syncs root class)
 │   ├── notifications.ts Browser-notification opt-in + permission state (persisted; default off)
 │   └── workflow.ts   Workflow + label state
@@ -54,6 +61,10 @@ src/
 │   ├── condensedBoard.ts    Groups workflow labels into condensed/agent-group board columns
 │   ├── diffComments.ts      Maps API review-comment wire type to the diff viewer's view model
 │   ├── useIsMobile.ts       Hook for responsive breakpoint detection
+│   ├── inboxKeys.ts         Inbox keyboard map (j/k, a, r, Enter/o, Esc) + `useInboxKeyboard` hook; ignores typing targets and modifiers
+│   ├── shortcuts.ts         Shortcut registry (`SHORTCUTS`, `PAGES`), `formatKeys`/`shortcutHint`, pure `globalShortcutAction` matcher and `useGlobalShortcuts` hook (Cmd/Ctrl+K, `c`, `g i/b/p/s`, `/`, `?`)
+│   ├── taskCommands.ts      `buildTaskCommands`: palette actions for the open task (legal moves, approve/reject, rerun, PR, pause, archive)
+│   ├── useMediaQuery.ts     useMediaQuery(q) / useIsWideDesktop() (≥1280px) / useIsPhone() (<768px) — pick the Task Detail review layout variant
 │   ├── useKeyboardInset.ts  Hook: height of the on-screen keyboard overlapping the layout viewport
 │   ├── termKeys.ts          Mobile terminal key-bar sequences + Ctrl-modifier folding
 │   ├── humanGate.ts         isHumanGateLabel() — is a workflow label one only a human can move a task out of
@@ -63,6 +74,10 @@ src/
 ├── App.tsx           Router setup
 └── main.tsx          Entry point
 ```
+
+## No browser dialogs
+
+No `alert`/`confirm`/`prompt` (oxlint `no-alert` is an error). Reversible actions (pause/resume, archive, move label, bulk actions) run immediately and offer Undo via `showUndoToast`. Destructive ones use `ConfirmDialog` (name exactly what is lost; typed confirmation only for repo removal; render it outside draggable/clickable cards, and don't stack it over another `ModalShell`). Errors show inline next to the control (or `showError` for global actions) using `errMessage(e)` for the server message.
 
 ## Environment Variables
 
@@ -128,6 +143,10 @@ can't silently diverge.
 ## Theming (dark / light) — ADR 0033
 
 Authored **dark-first** with Tailwind `slate` plus accents. The light theme is derived by remapping `--color-<name>-<shade>` variables under a `.light` root class in `src/index.css` (regenerate with `node scripts/gen-light-theme.mjs` after a Tailwind upgrade). Prefer `slate`/accent utilities over hardcoded hex, and don't add per-component `dark:` variants. `src/stores/theme.ts` persists the choice; an inline script in `index.html` applies the class before first paint.
+
+**Semantic tokens (ADR 0039):** new and migrated code uses the OKLCH tokens declared in `@theme` in `src/index.css` (`bg-surface`/`-raised`/`-sunken`, `text-fg`/`-muted`/`-subtle`, `border-border`, status `text-<tone>` + `bg-<tone>-soft`, `bg-accent text-on-accent`) and the `components/ui` primitives; light values live in a hand-written `.light` block separate from the generated slate remap. Use Lucide icons through `<Icon>` (aria-hidden, sized xs–lg); don't use emoji as UI icons. Token contrast is enforced by `src/theme/tokens.test.ts`; see `src/components/ui/README.md`. The slate remap and `gen-light-theme.mjs` stay for unmigrated code, and the contrast rule below applies to it.
+
+**Contrast rule (slate/accent classes):** `white`/`black` are not remapped, and shades 50–400 / 700–900 flip while 500/600 stay put. So never put `text-white` on slate/neutral fills or on any -700/-800/-900 fill (it becomes white-on-pastel in light mode). Use `text-slate-50` (it flips) on slate fills, and keep `text-white` only on saturated -500/-600 fills. Avoid `hover:bg-slate-600` behind flipping text (600 does not flip). Never stack `text-white` with another text colour on one element (CSS order wins, not class order). `src/theme/textOnFill.test.ts` and `e2e/contrast.spec.ts` (axe `color-contrast`, both themes) enforce this.
 
 ## State Management Pattern
 

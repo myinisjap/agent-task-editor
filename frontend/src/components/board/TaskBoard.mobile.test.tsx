@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import TaskBoard from './TaskBoard'
 import { columnSwipeDirection } from './columnSwipe'
@@ -64,40 +64,73 @@ describe('TaskBoard on phone', () => {
     window.innerWidth = 1024
   })
 
+  const chip = (name: string) => within(screen.getByTestId('column-chips')).getByText(name).closest('button')!
+  const active = (name: string) => chip(name).getAttribute('aria-current')
+  const pane = () => screen.getByTestId('mobile-column-pane')
+
   it('shows chips with counts and jumps on tap, writing ?col', () => {
     renderBoard([task('1', 'todo'), task('2', 'doing'), task('3', 'doing')])
     const chips = screen.getByTestId('column-chips')
-    expect(chips.textContent).toContain('doing2')
-    fireEvent.click(screen.getByText('done'))
+    expect(chips.textContent).toContain('Doing2')
+    fireEvent.click(chip('Done'))
     expect(screen.getByTestId('loc').textContent).toBe('?col=done')
-    expect(screen.getByText('done (3/3)')).toBeTruthy()
+    expect(active('Done')).toBe('true')
   })
 
   it('restores the column from the URL', () => {
     renderBoard([], '/?col=doing&q=x')
-    expect(screen.getByText('doing (2/3)')).toBeTruthy()
+    expect(active('Doing')).toBe('true')
   })
 
   it('swipes between columns and preserves other params', () => {
     renderBoard([], '/?q=x')
-    const pane = screen.getByText('todo (1/3)').parentElement!.parentElement!.nextElementSibling!
-    swipe(pane, -120, 5)
-    expect(screen.getByText('doing (2/3)')).toBeTruthy()
+    expect(active('Todo')).toBe('true')
+    swipe(pane(), -120, 5)
+    expect(active('Doing')).toBe('true')
     expect(screen.getByTestId('loc').textContent).toContain('q=x')
-    swipe(pane, 120, 5)
-    expect(screen.getByText('todo (1/3)')).toBeTruthy()
+    swipe(pane(), 120, 5)
+    expect(active('Todo')).toBe('true')
   })
 
   it('ignores vertical scrolls', () => {
     renderBoard([])
-    const pane = screen.getByText('todo (1/3)').parentElement!.parentElement!.nextElementSibling!
-    swipe(pane, -60, 120)
-    expect(screen.getByText('todo (1/3)')).toBeTruthy()
+    swipe(pane(), -60, 120)
+    expect(active('Todo')).toBe('true')
+  })
+
+  it('has no pager arrows or dots', () => {
+    renderBoard([])
+    expect(screen.queryByLabelText('Previous column')).toBeNull()
+    expect(screen.queryByLabelText('Next column')).toBeNull()
+  })
+
+  it('scrolls the newly active chip into view', () => {
+    const spy = vi.fn()
+    const orig = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = spy
+    try {
+      renderBoard([])
+      spy.mockClear()
+      swipe(pane(), -120, 5)
+      expect(spy).toHaveBeenCalled()
+      expect(spy.mock.contexts.at(-1)).toBe(chip('Doing'))
+    } finally {
+      Element.prototype.scrollIntoView = orig
+    }
+  })
+
+  it('renders mobileNavFooter under the chips', () => {
+    render(
+      <MemoryRouter>
+        <TaskBoard labels={labels} tasks={[]} runningTaskIds={new Set()} mobileNavFooter={<p>footer-note</p>} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('footer-note')).toBeTruthy()
   })
 
   it('highlights columns with a task needing a human', () => {
     renderBoard([task('2', 'doing', { active_run_status: 'waiting_human' })])
-    expect(screen.getByText('doing').closest('button')!.getAttribute('data-needs-human')).toBe('true')
-    expect(screen.getByText('done').closest('button')!.getAttribute('data-needs-human')).toBeNull()
+    expect(screen.getByText('Doing').closest('button')!.getAttribute('data-needs-human')).toBe('true')
+    expect(screen.getByText('Done').closest('button')!.getAttribute('data-needs-human')).toBeNull()
   })
 })

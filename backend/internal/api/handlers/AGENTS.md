@@ -13,7 +13,8 @@ One file per resource group. All handlers receive a `*gen.Queries` for database 
 | `uploads.go` | `UploadsHandler.ServeFile` — serves stored attachment files by task/filename (path-traversal-checked via `isSafePathComponent`). Sets `nosniff` + `Content-Disposition: inline` and `Content-Type` from `contentTypeForStoredExt`, not `http.ServeFile` inference (ADR 0030) | — |
 | `task_bulk.go` | `TasksHandler` (pause/archive toggles + bulk action) | — |
 | `task_runs.go` | `TasksHandler` (run list/get/logs/cancel/reply) | `agent` (error sentinels) |
-| `task_pr.go` | `TasksHandler` (diff/pr/pr-url/github-status/git-state) | `prflow`, `forge` |
+| `task_pr.go` | `TasksHandler` (diff/pr/pr-url/github-status/git-state); Diff delegates to `reviewbrief` | `prflow`, `forge`, `reviewbrief` |
+| `review_brief.go` | `ReviewBriefHandler` (GET /tasks/{id}/review-brief) | `reviewbrief`, `needsme` |
 | `workflows.go` | `WorkflowsHandler` | `gen.Queries`, `*sql.DB` (for YAML import transactions) |
 | `agents.go` | `AgentsHandler` | `gen.Queries` |
 | `providers.go` | `ProviderConfigsHandler` — CRUD for Provider Configs (provider/model/env), the entity `agent_configs`/`chat_sessions` reference by `provider_config_id` | `gen.Queries` |
@@ -21,6 +22,7 @@ One file per resource group. All handlers receive a `*gen.Queries` for database 
 | `repos.go` | `ReposHandler` | `gen.Queries`, `repoBaseDir string` |
 | `review_comments.go` | `ReviewCommentsHandler` | `gen.Queries` |
 | `templates.go` | `TemplatesHandler` | `gen.Queries` |
+| `lessons.go` | `LessonsHandler` | `gen.Queries` |
 | `dashboard.go` | `DashboardHandler` | `gen.Queries` |
 | `health.go` | `Health` func | none |
 | `health_providers.go` | `HealthHandler` | `gen.Queries`, mcp/repo config, backup dir/interval/keep |
@@ -61,3 +63,5 @@ Open `task_review_comments` are injected into every run's prompt; agents resolve
 ## Response Helpers
 
 `respond.go`: `JSON(w, status, v)` and `Err(w, status, msg)` (`{"error": msg}`). Route every error through `Err`; the same shape is used by `middleware.BearerAuth` and `ws.ServeWS` pre-upgrade rejections. Only a failed `websocket.Accept` upgrade is plain (ADR 0030).
+
+`task_previews.go`: `GET /tasks/{id}/previews` returns the latest preview screenshot capture (`{capture: null}` when none); image URLs point at the uploads endpoint. Repo `preview_*` settings are validated by `resolvePreview` in `repos.go`.

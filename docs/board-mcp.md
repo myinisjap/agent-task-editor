@@ -190,7 +190,7 @@ The full profile has everything the stdio server has, plus (read tools first):
 | `get_workflow` | One workflow as the YAML document the workflow editor's YAML tab shows |
 | `list_agents` | Agent configs: which labels each works on, enabled, provider and model (no prompts or env) |
 | `list_provider_configs` | Provider configs an agent can run on: id, name, provider, model (never their env) |
-| `get_agent` | One agent config in full, including its system prompt (provider env stripped) |
+| `get_agent` | One agent config in full, including its system prompt (provider env stripped); includes `running_experiment` (share, tasks per arm) while an A/B experiment runs |
 | `get_repo` | One repo's settings, including `clone_status` / `clone_error` |
 | `detect_repo_runtime` | Suggested toolchain pins from the repo's manifest files; changes nothing |
 | `list_needs_me` | Tasks waiting on a human (task id, title, label, reason) — the "what needs me?" opener |
@@ -211,10 +211,10 @@ The admin profile adds:
 |---|---|
 | `create_workflow` | Create a workflow from a YAML document (same shape as [workflow export](workflows.md)) |
 | `update_workflow` | Replace a workflow's name, description, labels and transitions from YAML. It's a full replacement, so read it with `get_workflow` first. Refused if it would drop a label that still holds tasks in that workflow (archived ones included) |
-| `add_repo` | Onboard a repo: `remote_url` clones it under `REPO_BASE_DIR` in the background (poll `get_repo` for `clone_status: ready`), or `path` registers a checkout already on the server. Also takes `name`, `workflow_id`, `verify_command`, `verify_timeout_seconds`, `runtime_languages`, `max_concurrent_runs`, `issue_sync_enabled`, `issue_sync_label` |
+| `add_repo` | Onboard a repo: `remote_url` clones it under `REPO_BASE_DIR` in the background (poll `get_repo` for `clone_status: ready`), or `path` registers a checkout already on the server. Also takes `name`, `workflow_id`, `verify_command`, `verify_timeout_seconds`, `preview_command`, `preview_routes`, `preview_paths_glob`, `runtime_languages`, `max_concurrent_runs`, `issue_sync_enabled`, `issue_sync_label` |
 | `update_repo` | Change those same settings (except `path`) on an existing repo; only the fields passed change |
-| `create_agent` | Create an agent config: `name`, `provider_config_id` (from `list_provider_configs`), `system_prompt`, `labels`, `enabled`, `max_turns`, `timeout_secs`, `max_cost_usd`, `priority`, `effort`, `permission_mode`, `fallback_provider_config_ids`. Starts disabled if another agent already lists one of the labels, unless `enabled` is passed |
-| `update_agent` | Change those fields on an existing agent; the current config is merged in, so only the fields passed change |
+| `create_agent` | Create an agent config: `name`, `provider_config_id` (from `list_provider_configs`), `system_prompt`, `labels`, `enabled`, `max_turns`, `timeout_secs`, `max_cost_usd`, `priority`, `effort`, `permission_mode`, `fallback_provider_config_ids`, `escalation_ladder`. Starts disabled if another agent already lists one of the labels, unless `enabled` is passed |
+| `update_agent` | Change those fields on an existing agent; the current config is merged in, so only the fields passed change (optional `note`, here and on `create_agent`, is recorded in the agent's version history; behavioural edits are versioned) |
 | `create_template` / `update_template` | Create a task template (`name`, `title`, `description`, `type`); an update changes only the fields passed |
 | `create_schedule` | Create a task from a template in a repo on a 5-field cron (`minute hour day-of-month month day-of-week`, e.g. `0 9 * * 1` = Mondays 09:00). Optional `target_label`, `enabled` |
 | `update_schedule` | Change `cron_expr` or `target_label`, or pause/resume with `enabled: false/true`; only the fields passed change. Template and repo are fixed. There are no delete tools |

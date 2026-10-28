@@ -341,9 +341,15 @@ func (r *BlockReasonResolver) checkRetryBackoff(t gen.Task) *BlockReason {
 		return nil
 	}
 	clearsAt := *t.NextRetryAt
+	msg := fmt.Sprintf("waiting to retry after a transient failure (attempt %d)", t.TransientRetryCount)
+	// handleTransientFailure always writes a count >= 1; only the memory-guard
+	// cooldown sets a future next_retry_at with count 0.
+	if t.TransientRetryCount == 0 {
+		msg = "cooling down after the last run was stopped for low memory"
+	}
 	return &BlockReason{
 		Code:     BlockRetryBackoff,
-		Message:  fmt.Sprintf("waiting to retry after a transient failure (attempt %d)", t.TransientRetryCount),
+		Message:  msg,
 		ClearsAt: &clearsAt,
 		Detail:   map[string]int64{"retry_count": t.TransientRetryCount},
 	}

@@ -1,7 +1,8 @@
+import { X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import { PageFrame, Icon } from '../components/ui'
 import { api, type ModelPricing } from '../api/client'
 import HelpModal from '../components/shared/HelpModal'
-import HelpButton from '../components/shared/HelpButton'
 import { PricingHelp } from '../components/shared/pageHelp'
 
 // PricingRow is the editable form-state shape for one row of the table —
@@ -119,23 +120,19 @@ export default function PricingSettingsPage() {
   }
 
   return (
-    <div className="p-6 max-w-3xl">
-      <div className="flex items-center gap-2 mb-2">
-        <h1 className="text-xl font-semibold text-slate-100">Model Pricing</h1>
-        <HelpButton onClick={() => setShowHelp(true)} title="About model pricing" />
-      </div>
-      <p className="text-sm text-slate-400 mb-6">
-        USD price per 1M tokens used to estimate run cost for the <code className="text-slate-300">codex_cli</code>{' '}
+    <PageFrame title="Model Pricing" headerClassName="mb-2" help={{ onClick: () => setShowHelp(true), title: 'About model pricing' }}>
+      <p className="text-sm text-fg-muted mb-6">
+        USD price per 1M tokens used to estimate run cost for the <code className="text-fg-muted">codex_cli</code>{' '}
         provider, plus the mid-run cost watchdog on{' '}
-        <code className="text-slate-300">claude</code>/<code className="text-slate-300">qwen_code</code> — the{' '}
-        <code className="text-slate-300">claude</code> and <code className="text-slate-300">opencode</code> CLIs'
+        <code className="text-fg-muted">claude</code>/<code className="text-fg-muted">qwen_code</code> — the{' '}
+        <code className="text-fg-muted">claude</code> and <code className="text-fg-muted">opencode</code> CLIs'
         own final reported cost is authoritative and unaffected. A model with no row here falls back to an internal,
         approximate hardcoded table; a run whose model matches neither is flagged "cost unknown" in its run history
         instead of silently showing $0. Cached $/1M prices the prompt-cache hits{' '}
-        <code className="text-slate-300">codex_cli</code> reports (and <code className="text-slate-300">claude</code>/
-        <code className="text-slate-300">qwen_code</code>'s cache-read tokens); leave it empty to bill them at the
-        input price. Cache-write $/1M prices <code className="text-slate-300">claude</code>/
-        <code className="text-slate-300">qwen_code</code>'s cache-creation tokens (writing a prompt prefix into the
+        <code className="text-fg-muted">codex_cli</code> reports (and <code className="text-fg-muted">claude</code>/
+        <code className="text-fg-muted">qwen_code</code>'s cache-read tokens); leave it empty to bill them at the
+        input price. Cache-write $/1M prices <code className="text-fg-muted">claude</code>/
+        <code className="text-fg-muted">qwen_code</code>'s cache-creation tokens (writing a prompt prefix into the
         cache for the first time); leave it empty to bill them at the input price too. Changes take effect on the
         very next run — no restart needed.
       </p>
@@ -158,10 +155,10 @@ export default function PricingSettingsPage() {
       )}
 
       {loading ? (
-        <div className="text-sm text-slate-500">Loading…</div>
+        <div className="text-sm text-fg-subtle">Loading…</div>
       ) : (
         <div className="flex flex-col gap-2">
-          <div className="grid grid-cols-[1fr_72px_72px_72px_72px_auto] sm:grid-cols-[1fr_120px_120px_120px_120px_auto] gap-2 text-xs text-slate-500 px-1">
+          <div className="grid grid-cols-[1fr_72px_72px_72px_72px_auto] sm:grid-cols-[1fr_120px_120px_120px_120px_auto] gap-2 text-xs text-fg-subtle px-1">
             <span>Model</span>
             <span>Input $/1M</span>
             <span>Output $/1M</span>
@@ -178,7 +175,7 @@ export default function PricingSettingsPage() {
                 onChange={(e) => updateRow(i, { model: e.target.value })}
                 placeholder="e.g. claude-sonnet-4-5"
                 disabled={saving}
-                className="px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 disabled:opacity-50"
+                className="px-2 py-1.5 bg-surface-sunken border border-border rounded-lg text-fg disabled:opacity-50"
               />
               <input
                 type="number"
@@ -187,7 +184,7 @@ export default function PricingSettingsPage() {
                 value={row.inputPer1M}
                 onChange={(e) => updateRow(i, { inputPer1M: e.target.value })}
                 disabled={saving}
-                className="px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 disabled:opacity-50"
+                className="px-2 py-1.5 bg-surface-sunken border border-border rounded-lg text-fg disabled:opacity-50"
               />
               <input
                 type="number"
@@ -196,7 +193,7 @@ export default function PricingSettingsPage() {
                 value={row.outputPer1M}
                 onChange={(e) => updateRow(i, { outputPer1M: e.target.value })}
                 disabled={saving}
-                className="px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 disabled:opacity-50"
+                className="px-2 py-1.5 bg-surface-sunken border border-border rounded-lg text-fg disabled:opacity-50"
               />
               <input
                 type="number"
@@ -207,7 +204,7 @@ export default function PricingSettingsPage() {
                 placeholder="= input"
                 aria-label={`Cached input price for ${row.model || 'row'}`}
                 disabled={saving}
-                className="px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 disabled:opacity-50"
+                className="px-2 py-1.5 bg-surface-sunken border border-border rounded-lg text-fg disabled:opacity-50"
               />
               <input
                 type="number"
@@ -218,39 +215,39 @@ export default function PricingSettingsPage() {
                 placeholder="= input"
                 aria-label={`Cache-write price for ${row.model || 'row'}`}
                 disabled={saving}
-                className="px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-slate-100 disabled:opacity-50"
+                className="px-2 py-1.5 bg-surface-sunken border border-border rounded-lg text-fg disabled:opacity-50"
               />
               <button
                 onClick={() => removeRow(i)}
                 disabled={saving}
                 aria-label={`Remove ${row.model || 'row'}`}
-                className="px-2 py-1.5 text-sm text-slate-400 hover:text-red-300 disabled:opacity-50"
+                className="px-2 py-1.5 text-sm text-fg-muted hover:text-danger disabled:opacity-50"
               >
-                ✕
+                <Icon icon={X} size="md" />
               </button>
             </div>
           ))}
 
-          {rows.length === 0 && <p className="text-xs text-slate-600 px-1 py-2">No pricing rows yet.</p>}
+          {rows.length === 0 && <p className="text-xs text-fg-subtle px-1 py-2">No pricing rows yet.</p>}
 
           <div className="flex items-center gap-3 mt-2">
             <button
               onClick={addRow}
               disabled={saving}
-              className="px-3 py-1.5 text-sm bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 rounded-lg transition-colors"
+              className="px-3 py-1.5 text-sm bg-surface-sunken hover:bg-border disabled:opacity-50 text-fg rounded-lg transition-colors"
             >
               + Add row
             </button>
             <button
               onClick={save}
               disabled={saving}
-              className="px-3 py-1.5 text-sm bg-indigo-700 hover:bg-indigo-600 disabled:opacity-50 text-white rounded-lg transition-colors"
+              className="px-3 py-1.5 text-sm bg-accent hover:bg-accent/90 disabled:opacity-50 text-on-accent rounded-lg transition-colors"
             >
               {saving ? 'Saving…' : 'Save pricing table'}
             </button>
           </div>
         </div>
       )}
-    </div>
+    </PageFrame>
   )
 }
