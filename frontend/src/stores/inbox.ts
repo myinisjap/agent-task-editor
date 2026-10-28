@@ -53,7 +53,7 @@ export function useInboxSections(): InboxSections {
   return useMemo(() => buildInbox(needsMe, failed, paused, sourceEdits), [needsMe, failed, paused, sourceEdits])
 }
 
-/** Total number of things waiting on the human: nav badge, tab badge, Overview and Inbox heading. */
+/** Total number of things waiting on the human: nav badge, tab badge, Home and Inbox heading. */
 export function useInboxCount(): number {
   return inboxCount(useInboxSections())
 }

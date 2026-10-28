@@ -12,7 +12,7 @@ const WS_REFRESH_DEBOUNCE_MS = 250
 /**
  * Fetches the shared `GET /dashboard` payload on mount and re-fetches it
  * whenever a task-level WS event arrives (label change, agent start/done,
- * or a new needs-human escalation). Used by the Overview, Cost & Usage,
+ * or a new needs-human escalation). Used by Home, Cost & Usage,
  * and Agent Performance pages, which all render different slices of the
  * same `Dashboard` object.
  */

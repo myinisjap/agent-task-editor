@@ -71,7 +71,7 @@ Override the frontend URL with `E2E_BASE_URL` (defaults to
 ## Contrast spec
 
 `contrast.spec.ts` runs axe-core's `color-contrast` rule (via
-`@axe-core/playwright`) on Inbox, Board, Task Detail, Pipeline Overview and
+`@axe-core/playwright`) on Home, Inbox, Board, Task Detail, Pipeline Overview and
 Settings → Health in both the `dark` and `light` themes (set through
 `localStorage.theme`), failing on serious/critical violations. It creates one
 task through the API (using `E2E_REPO_ID` from `global-setup.ts`) so Task

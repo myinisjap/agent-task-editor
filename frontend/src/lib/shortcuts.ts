@@ -37,6 +37,7 @@ export interface PageEntry { label: string; to: string; group: string; shortcutI
 
 /** Every navigable page; mirrors the routes in App.tsx and NavSidebar. */
 export const PAGES: PageEntry[] = [
+  { label: 'Home', to: '/', group: 'Go to' },
   { label: 'Inbox', to: '/inbox', group: 'Go to', shortcutId: 'go-inbox' },
   { label: 'Board', to: '/board', group: 'Go to', shortcutId: 'go-board' },
   { label: 'Chat', to: '/chat', group: 'Go to' },
@@ -51,7 +52,6 @@ export const PAGES: PageEntry[] = [
   { label: 'Settings: Lessons', to: '/settings/lessons', group: 'Go to' },
   { label: 'Settings: Skills', to: '/settings/skills', group: 'Go to' },
   { label: 'Settings: Health', to: '/settings/health', group: 'Go to' },
-  { label: 'Insights: Overview', to: '/dashboard', group: 'Go to' },
   { label: 'Insights: Cost & Usage', to: '/dashboard/usage', group: 'Go to' },
   { label: 'Insights: Performance', to: '/dashboard/performance', group: 'Go to' },
 ]

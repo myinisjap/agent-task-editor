@@ -13,11 +13,16 @@ import { test, expect, type Locator, type Page } from '@playwright/test'
 // NOT assert on list/empty-state content (config pages may have no data on
 // a fresh stack) or on HealthPage's provider-check results (no LLM
 // credentials in CI, so checks are expected to show warnings/errors).
-const pages: { path: string; name: string; anchor: (page: Page) => Locator }[] = [
+// Home is the index route; it lands on the Board until first-run setup is
+// complete, so these entries dismiss the checklist first.
+const dismissOnboarding = () => localStorage.setItem('board.onboarding.dismissed', 'true')
+
+const pages: { path: string; name: string; anchor: (page: Page) => Locator; init?: () => void }[] = [
   {
-    path: 'dashboard',
-    name: 'Dashboard',
-    anchor: (page) => page.getByRole('heading', { name: 'Overview', exact: true }),
+    path: '',
+    name: 'Home',
+    anchor: (page) => page.getByRole('heading', { name: 'Home', exact: true }),
+    init: dismissOnboarding,
   },
   {
     path: 'dashboard/usage',
@@ -104,6 +109,13 @@ const redirects: { from: string; to: RegExp }[] = [
   { from: 'settings', to: /\/settings\/providers$/ },
 ]
 
+// /dashboard (the old Overview) now redirects to Home at `/`, which itself
+// lands on the Board until setup completes.
+test('/dashboard redirects to Home', async ({ page }) => {
+  await page.goto('dashboard')
+  await expect(page).toHaveURL(/\/tasks\/(board)?$/)
+})
+
 test.describe('legacy routes redirect', () => {
   for (const { from, to } of redirects) {
     test(`/${from} redirects`, async ({ page }) => {
@@ -114,10 +126,14 @@ test.describe('legacy routes redirect', () => {
 })
 
 test.describe('all pages load', () => {
-  for (const { path, name, anchor } of pages) {
+  for (const { path, name, anchor, init } of pages) {
     test(`${name} page loads`, async ({ page }) => {
+      if (init) await page.addInitScript(init)
       await page.goto(path)
       await expect(anchor(page)).toBeVisible()
+      // No horizontal scroll (matters on the mobile project).
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
+      if (name === 'Home') expect(overflow).toBeLessThanOrEqual(0)
     })
   }
 })
@@ -125,13 +141,13 @@ test.describe('all pages load', () => {
 // The built app is served under /tasks/; nginx redirects the bare root (the
 // documented start URL) there. Regression test for a blank page at `/`.
 // The app's index route then lands on the Board until first-run setup is
-// complete (the e2e stack has no agents configured), otherwise the Dashboard.
+// complete (the e2e stack has no agents configured), otherwise Home.
 test('root URL redirects to the app under /tasks/', async ({ page }) => {
   await page.goto('/')
   await expect(page).toHaveURL(/\/tasks\/(board)?$/)
   await expect(
     page
-      .getByRole('heading', { name: 'Overview', exact: true })
+      .getByRole('heading', { name: 'Home', exact: true })
       .or(page.getByRole('button', { name: 'About the board' })),
   ).toBeVisible()
 })

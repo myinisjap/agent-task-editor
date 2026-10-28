@@ -16,7 +16,7 @@ import { useHumanNeededNotifications } from './lib/useHumanNeededNotifications'
 // the initial bundle for users who only ever open e.g. /board.
 const BoardPage = lazy(() => import('./pages/BoardPage'))
 const ChatPage = lazy(() => import('./pages/ChatPage'))
-const DashboardPage = lazy(() => import('./pages/DashboardPage'))
+const HomePage = lazy(() => import('./pages/HomePage'))
 const UsagePage = lazy(() => import('./pages/UsagePage'))
 const AgentPerformancePage = lazy(() => import('./pages/AgentPerformancePage'))
 const TaskDetailPage = lazy(() => import('./pages/TaskDetailPage'))
@@ -51,8 +51,8 @@ function AppRoutes() {
     <ErrorBoundary key={location.pathname}>
       <Suspense fallback={<div className="p-6 text-slate-400 text-sm">Loading…</div>}>
         <Routes>
-          <Route path="/"                      element={<HomeRoute><DashboardPage /></HomeRoute>} />
-          <Route path="/dashboard"             element={<DashboardPage />} />
+          <Route path="/"                      element={<HomeRoute><HomePage /></HomeRoute>} />
+          <Route path="/dashboard"             element={<Redirect to="/" />} />
           <Route path="/dashboard/usage"       element={<UsagePage />} />
           <Route path="/dashboard/performance" element={<AgentPerformancePage />} />
           <Route path="/inbox"                 element={<InboxPage />} />

@@ -33,7 +33,7 @@ Each task moves through a directed state machine (the *workflow*). When a task l
 - **Inbox** — one page (`/inbox`, with a sidebar count badge) in three sections: Decide (approvals with diff size, cost, verify result and risk flags; Approve / Request changes), Answer (agent questions) and Fix setup (login, toolchain, budget, PR conflicts, failed side effects, paused providers)
 - **Pipeline** — a graph of the workflow showing who works each stage (agent, human gate, or a warning when a stage is unstaffed), with click-to-assign agents and a no-YAML graph editor (YAML stays available as the Advanced view); see [docs/workflows.md](docs/workflows.md)
 - **Repo verify command** — an independent check (`go test ./...`, `npm test`, …) run in the task's worktree before an agent's success is accepted, with a per-label override; see [docs/workflows.md#verify-commands](docs/workflows.md#verify-commands)
-- **Insights (formerly the Dashboard)** — split into three focused pages under a collapsed sidebar group: an Overview (label counts, active agents, and the human intervention queue), a Cost & Usage page (Claude rate-limit usage plus cost/token tracking by provider, day, and task), and an Agent Performance page (per-agent-config success rate, duration, retries)
+- **Home and Insights** — Home is a control room at `/` (replacing the old Overview): scene, Needs you, Running now, Today and a dispatch status pill. Insights is a collapsed sidebar group with a Cost & Usage page (Claude rate-limit usage plus cost/token tracking by provider, day, and task) and an Agent Performance page (per-agent-config success rate, duration, retries)
 - **Task priority** — low/normal/high/urgent priority per task; the dispatcher's pickup queue is ordered priority-first, then oldest-first, with an "N in queue" hint on cards waiting for a free worker
 - **Provider health page** — readiness checks for the Claude CLI, MCP sidecar, GitHub auth, and repo base directory
 - **First-run onboarding checklist** — a dismissible setup checklist on the Board for unconfigured instances, sequencing add a repo → configure a provider → create an agent config → create your first task, checking each off live and surfacing failing readiness checks inline
@@ -58,7 +58,7 @@ See [docs/overview.md](docs/overview.md) for the full concepts and architecture 
 | **Diff viewer** — per-task diff with inline review comments | **Workflow editor** — visual + YAML, edit labels and transitions |
 | ![Diff viewer with inline comment](docs/img/diff-viewer.png) | ![Workflow editor](docs/img/workflow-editor.png) |
 | **Insights overview** — label counts, active agents, and the intervention queue | **Health** — provider and infrastructure readiness checks |
-| ![Dashboard](docs/img/dashboard.png) | ![Health page](docs/img/health.png) |
+| ![Home](docs/img/dashboard.png) | ![Health page](docs/img/health.png) |
 
 ---
 

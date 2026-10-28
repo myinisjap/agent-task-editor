@@ -91,7 +91,7 @@ route gains that prefix: `http://localhost:5173/tasks/board`,
 `http://localhost:5173/tasks/tasks/<id>`. Stick to `./dev.sh dev` unless you
 have a reason not to.
 
-Most pages (`board`, `dashboard`, `health`, `workflow`, task detail's default
+Most pages (`board`, Home at `/`, `health`, `workflow`, task detail's default
 Overview tab) load fine with a plain single-shot headless capture:
 
 ```bash
@@ -99,11 +99,13 @@ google-chrome --headless --disable-gpu --no-sandbox --window-size=1440,900 \
   --screenshot=docs/img/board.png http://localhost:5173/board
 ```
 
-Note: the dashboard is split into three routes — `/dashboard` (Overview; `/` redirects to the Board until setup is complete: label
-counts, active agents, intervention queue), `/dashboard/usage` (Cost &
-Usage), and `/dashboard/performance` (Agent Performance). Capture all three
-with the same single-shot approach: `docs/img/dashboard.png`,
-`docs/img/dashboard-usage.png`, `docs/img/dashboard-performance.png`.
+Note: Home (the control room) lives at `/`; `/dashboard` redirects to it. Until
+first-run setup is complete `/` redirects to the Board, so to capture Home set
+`localStorage['board.onboarding.dismissed']='true'` first. Insights are two
+routes, `/dashboard/usage` (Cost & Usage) and `/dashboard/performance` (Agent
+Performance). Capture them with the same single-shot approach:
+`docs/img/dashboard.png` (now showing Home), `docs/img/dashboard-usage.png`,
+`docs/img/dashboard-performance.png`.
 
 The task detail page's **Logs** and **Diff** tabs are plain `useState`, not a
 URL param — a single-shot load always lands on Overview. Use

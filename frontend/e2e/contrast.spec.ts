@@ -72,7 +72,12 @@ test.beforeAll(async () => {
   taskId = ((await res.json()) as { id: string }).id
 })
 
-const pages: { name: string; path: () => string; anchor: (p: Page) => Locator }[] = [
+// Home lives at `/`, which lands on the Board until setup completes; the e2e
+// stack never completes setup, so dismiss the checklist to reach it.
+const dismissOnboarding = () => localStorage.setItem('board.onboarding.dismissed', 'true')
+
+const pages: { name: string; path: () => string; anchor: (p: Page) => Locator; init?: () => void }[] = [
+  { name: 'Home', path: () => '', anchor: (p) => p.getByTestId('home-page'), init: dismissOnboarding },
   { name: 'Inbox', path: () => 'inbox', anchor: (p) => p.getByRole('heading', { name: 'Inbox', exact: true }) },
   { name: 'Board', path: () => 'board', anchor: (p) => p.getByRole('button', { name: 'About the board' }) },
   { name: 'Task Detail', path: () => `tasks/${taskId}`, anchor: (p) => p.getByText(taskTitle).first() },
@@ -90,6 +95,7 @@ for (const theme of ['dark', 'light'] as Theme[]) {
       test(`${pg.name}`, async ({ page }) => {
         await page.emulateMedia({ reducedMotion: 'reduce' })
         await page.addInitScript((t) => localStorage.setItem('theme', t), theme)
+        if (pg.init) await page.addInitScript(pg.init)
         await page.goto(pg.path())
         await expect(page.locator('html')).toHaveClass(new RegExp(`\\b${theme}\\b`))
         await expect(pg.anchor(page)).toBeVisible()

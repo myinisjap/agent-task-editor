@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { Bell, BellOff, ChartColumn, ChevronRight, CircleDollarSign, FolderGit2, Inbox, LayoutDashboard, MessageSquare, Moon, Settings, SquareKanban, Sun, Workflow, X } from 'lucide-react'
+import { Bell, BellOff, ChartColumn, ChevronRight, CircleDollarSign, FolderGit2, Inbox, House, MessageSquare, Moon, Settings, SquareKanban, Sun, Workflow, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { useThemeStore } from '../../stores/theme'
@@ -23,8 +23,9 @@ interface NavGroup {
 
 // Primary destinations, always visible. Workflow + Agents live under Pipeline;
 // Providers, Pricing, Intake Rules, Templates and Health live under Settings
-// (as URL-backed tabs). The Overview dashboard stays reachable but is
-// deliberately demoted into the collapsible Insights group.
+// (as URL-backed tabs). Home (the control room) is the first link; Insights
+// (Cost & Usage, Performance) is a collapsible group.
+const homeLink = { to: '/', label: 'Home', icon: House }
 const inboxLink = { to: '/inbox', label: 'Inbox', icon: Inbox }
 const primaryLinks = [
   { to: '/board', label: 'Board', icon: SquareKanban },
@@ -41,7 +42,6 @@ const groups: NavGroup[] = [
     key: 'insights',
     label: 'Insights',
     links: [
-      { to: '/dashboard', label: 'Overview', icon: LayoutDashboard, end: true },
       { to: '/dashboard/usage', label: 'Cost & Usage', icon: CircleDollarSign },
       { to: '/dashboard/performance', label: 'Performance', icon: ChartColumn },
     ],
@@ -192,6 +192,15 @@ export default function NavSidebar({ open = false, onOpenChange }: NavSidebarPro
             <span>Search and commands</span>
             <kbd className="hidden [@media(hover:hover)]:inline text-xs text-slate-500">{formatKeys(shortcutKeys("palette") ?? [], isMacPlatform())}</kbd>
           </button>
+          <NavLink
+            to={homeLink.to}
+            end
+            onClick={() => setIsOpen(false)}
+            className={linkClassName}
+          >
+            <Icon icon={homeLink.icon} size="md" />
+            {homeLink.label}
+          </NavLink>
           <NavLink
             to={inboxLink.to}
             title={shortcutHint("go-inbox", "Inbox")}

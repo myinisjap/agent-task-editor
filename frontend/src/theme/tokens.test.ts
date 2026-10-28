@@ -35,7 +35,7 @@ function ratio(a: [number, number, number], b: [number, number, number]): number
 }
 
 const SURFACES = ['surface', 'surface-raised', 'surface-sunken']
-const STATUS = ['success', 'warning', 'danger', 'info']
+const STATUS = ['success', 'warning', 'danger', 'info', 'gate']
 const pairs: [string, string][] = []
 for (const fg of ['fg', 'fg-muted', 'fg-subtle', 'accent-fg', ...STATUS]) for (const s of SURFACES) pairs.push([fg, s])
 for (const t of STATUS) { pairs.push([t, `${t}-soft`]); pairs.push(['fg', `${t}-soft`]) }

@@ -292,7 +292,7 @@ describe('InboxPage desktop two-pane', () => {
     await userEvent.keyboard('a')
     expect(m.approve).toHaveBeenCalledWith('t1')
     await waitFor(() => expect(selected()).toBe('Second'))
-    expect(screen.getByTestId('loc')).toHaveTextContent('?task=t2')
+    await waitFor(() => expect(screen.getByTestId('loc')).toHaveTextContent('?task=t2'))
   })
 
   it('r opens and focuses the note; typing does not navigate; Esc closes', async () => {

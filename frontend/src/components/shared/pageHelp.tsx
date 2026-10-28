@@ -88,31 +88,48 @@ export function WorkflowHelp() {
   )
 }
 
-export function DashboardHelp() {
+export function HomeHelp() {
   return (
     <>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-fg font-semibold">Overview</h3>
+        <h3 className="text-fg font-semibold">Home</h3>
         <p>
-          This is the at-a-glance summary of the active workflow: how many tasks sit on each
-          label, which agents are currently running, and which tasks are waiting on you.
+          The control room: a live picture of the active workflow, what is waiting on you, what
+          the agents are doing and what today is costing. The pill at the top shows whether
+          dispatch is running or paused (a paused provider or a tripped spend cap), and how many
+          worker slots are in use.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-fg font-semibold">Scene</h3>
+        <p>
+          The band across the top shows task counts per station as an Office, a Robots crew or a
+          Factory line. Stations that are human gates are highlighted in pink while tasks wait
+          there. On short or narrow screens the scene starts collapsed into a slim pipeline
+          strip; the toggle expands it again and remembers your choice.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
         <h3 className="text-fg font-semibold">Needs you</h3>
         <p>
-          When anything is waiting on you, a &ldquo;Needs you (N)&rdquo; card links to the Inbox.
-          The Inbox groups it into Decide (approve or request changes), Answer (the agent asked
-          something) and Fix setup (login, toolchain, budget or paused providers). N is the same
-          count as the Inbox badge in the navigation.
+          Everything waiting on you, grouped as Decide, Answer and Fix setup, oldest first. N is
+          the same count as the Inbox badge in the navigation. Click a row to open the task (or
+          the Inbox for items without one). Ages over 30 minutes turn amber.
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
-        <h3 className="text-fg font-semibold">Visualize tasks</h3>
+        <h3 className="text-fg font-semibold">Running now</h3>
         <p>
-          A fun, non-essential toggle that renders the label counts as an office floor, a robot
-          crew, or a factory assembly line instead of plain count chips. Purely cosmetic — it has
-          no effect on tasks or agents.
+          Active agent runs with a live timer. Dashed &ldquo;Free slot&rdquo; rows show how many
+          more runs the worker limit allows. When several repos are busy their per-repo
+          concurrency is listed underneath.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-fg font-semibold">Today</h3>
+        <p>
+          Spend against the global spend cap (with a marker for the projected total), or just
+          today&rsquo;s spend when no cap is set, plus your Claude 5-hour and weekly usage.
         </p>
       </section>
     </>
