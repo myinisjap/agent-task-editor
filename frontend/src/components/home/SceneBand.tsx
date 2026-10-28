@@ -119,8 +119,8 @@ export default function SceneBand({ workflow, labelCounts }: Props) {
                 )}
               >
                 <span aria-hidden className="inline-block w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: s.color }} />
-                <span className="text-sm truncate">{s.name}</span>
-                <span className="text-2xl font-semibold font-mono">{s.count}</span>
+                <span className="text-base truncate">{s.name}</span>
+                <span className="text-3xl xl:text-4xl leading-none tabular-nums font-semibold font-mono">{s.count}</span>
               </li>
             ))}
           </ul>

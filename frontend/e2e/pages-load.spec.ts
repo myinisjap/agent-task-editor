@@ -35,11 +35,6 @@ const pages: { path: string; name: string; anchor: (page: Page) => Locator; init
     anchor: (page) => page.getByRole('heading', { name: 'Agent Performance', exact: true }),
   },
   {
-    path: 'inbox',
-    name: 'Inbox',
-    anchor: (page) => page.getByRole('heading', { name: 'Inbox', exact: true }),
-  },
-  {
     path: 'board',
     name: 'Board',
     anchor: (page) => page.getByRole('button', { name: 'About the board' }),
@@ -150,4 +145,17 @@ test('root URL redirects to the app under /tasks/', async ({ page }) => {
       .getByRole('heading', { name: 'Home', exact: true })
       .or(page.getByRole('button', { name: 'About the board' })),
   ).toBeVisible()
+})
+
+test('Home fits a 1080p viewport without page scroll when the scene is expanded', async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await page.addInitScript(() => {
+    localStorage.setItem('board.onboarding.dismissed', 'true')
+    localStorage.setItem('home.scene.expanded.wide', '1')
+  })
+  await page.goto('')
+  await expect(page.getByRole('heading', { name: 'Home', exact: true })).toBeVisible()
+  await page.waitForTimeout(500)
+  const overflow = await page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight)
+  expect(overflow).toBeLessThanOrEqual(0)
 })

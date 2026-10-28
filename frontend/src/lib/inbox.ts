@@ -1,6 +1,7 @@
 import type { NeedsMeItem, PausedProvider, Task, Workflow } from '../api/client'
 import { escalationInfo } from './escalation'
 import { humanActionsFor } from './humanGate'
+import type { BadgeTone } from '../components/ui'
 
 type SideEffect = NonNullable<Task['side_effects']>[number]
 
@@ -66,6 +67,27 @@ export type InboxEntry =
 export type InboxSections = Record<InboxSectionKey, InboxEntry[]>
 
 export const SECTION_ORDER: InboxSectionKey[] = ['decide', 'answer', 'fix']
+
+/** Per-section display data. Adding a section means adding an entry here (and to SECTION_ORDER). */
+export const SECTION_META: Record<string, { title: string; subtitle: string; tone: BadgeTone }> = {
+  decide: { title: 'Decide', subtitle: 'Approve or request changes', tone: 'accent' },
+  answer: { title: 'Answer', subtitle: 'The agent asked something', tone: 'info' },
+  fix: { title: 'Fix setup', subtitle: 'Something needs fixing before work can continue', tone: 'warning' },
+}
+
+/** Opens the Needs-you review popup on the first entry. */
+export const REVIEW_QUEUE_HREF = '/?review=1'
+
+/** Link that opens the review popup on an entry. */
+export function reviewHref(key: string): string {
+  return `/?task=${encodeURIComponent(key)}`
+}
+
+/** Section keys in display order: known ones first, then any extras. */
+export function orderedSectionKeys(s: InboxSections): string[] {
+  const extra = Object.keys(s).filter((k) => !(SECTION_ORDER as string[]).includes(k))
+  return [...SECTION_ORDER, ...extra]
+}
 
 /** Which section a needs-me item belongs in. */
 export function sectionFor(item: NeedsMeItem): InboxSectionKey {
@@ -152,7 +174,8 @@ export function entryTaskId(e: InboxEntry): string | undefined {
 
 /** Entries in on-screen order (section order, then within-section order). */
 export function flattenInbox(s: InboxSections): InboxEntry[] {
-  return SECTION_ORDER.flatMap((k) => s[k])
+  const rec = s as unknown as Record<string, InboxEntry[] | undefined>
+  return orderedSectionKeys(s).flatMap((k) => rec[k] ?? [])
 }
 
 /** Resolves a `?task=` value to an entry key: exact key, then by task id, then the first entry. */

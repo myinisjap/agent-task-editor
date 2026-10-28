@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { Inbox, Menu, MessageSquare, SquareKanban } from 'lucide-react'
+import { House, Menu, MessageSquare, SquareKanban } from 'lucide-react'
 import { useInboxCount } from '../../stores/inbox'
 import { Badge, Icon } from '../ui'
 
@@ -20,10 +20,10 @@ export default function BottomTabBar({ onMore }: BottomTabBarProps) {
       aria-label="Primary"
       className="fixed bottom-0 inset-x-0 z-30 md:hidden flex bg-surface-raised border-t border-border pb-[env(safe-area-inset-bottom)]"
     >
-      <NavLink to="/inbox" className={tabClassName}>
-        <Icon icon={Inbox} size="lg" />
+      <NavLink to="/" end className={tabClassName}>
+        <Icon icon={House} size="lg" />
         <span className="relative">
-          Inbox
+          Home
           {inboxCount > 0 && (
             <Badge
               tone="accent"

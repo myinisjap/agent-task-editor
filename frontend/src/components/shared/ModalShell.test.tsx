@@ -132,3 +132,19 @@ describe('ModalShell', () => {
     expect(openButton).toHaveFocus()
   })
 })
+
+describe('ModalShell options', () => {
+  it('ignores Escape when closeOnEscape is false', async () => {
+    const onClose = vi.fn()
+    render(<ModalShell onClose={onClose} ariaLabel="D" closeOnEscape={false}><p>x</p></ModalShell>)
+    await userEvent.keyboard('{Escape}')
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('applies testId and overlayClassName', () => {
+    render(<ModalShell onClose={vi.fn()} ariaLabel="D" testId="my-dialog" overlayClassName="custom-overlay"><p>x</p></ModalShell>)
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveAttribute('data-testid', 'my-dialog')
+    expect(dialog).toHaveClass('custom-overlay')
+  })
+})

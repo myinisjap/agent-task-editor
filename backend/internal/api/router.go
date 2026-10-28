@@ -391,6 +391,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Delete("/workflows/{id}", workflowsH.Delete)
 			r.Get("/workflows/{id}/export.yaml", workflowsH.ExportWorkflowYAML)
 			r.Put("/workflows/{id}/yaml", workflowsH.UpdateWorkflowYAML)
+			r.Post("/workflows/{id}/labels/{label}/autonomy/backtest", handlers.NewAutonomyHandler(q).Backtest)
 			r.Post("/workflows/import", workflowsH.ImportWorkflowYAML)
 
 			// Agent configs

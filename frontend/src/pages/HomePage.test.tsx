@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, renderHook, fireEvent, within } from '@testing-library/react'
+import { render, screen, renderHook, fireEvent, within, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import HomePage from './HomePage'
 import { useNeedsMeStore } from '../stores/needsMe'
@@ -19,7 +19,7 @@ vi.mock('../api/client', async () => {
     ...actual,
     api: {
       needsMe: { list: () => Promise.resolve([]) },
-      tasks: { list: () => Promise.resolve({ items: [], nextCursor: null }) },
+      tasks: { list: () => Promise.resolve({ items: [], nextCursor: null }), reviewBrief: () => Promise.resolve({ human_gate: false }), previews: () => Promise.resolve({ capture: null }) },
       health: { providers: () => Promise.resolve({ checks: [], paused_providers: [] }) },
       workflows: { list: () => Promise.resolve([]) },
     },
@@ -40,7 +40,7 @@ beforeEach(() => {
   dashValue = { label_counts: { review: 2 }, workflow_label_counts: {}, active_agents: [], repo_concurrency: [], cost_by_day: [] }
   const old = new Date(Date.now() - 2 * 3600_000).toISOString()
   const item = { task_id: 'a', task_title: 'Approve A', repo_id: 'r', workflow_id: 'w', label: 'l', reason: 'human_gate', since: old }
-  useNeedsMeStore.setState({ items: [item], byTask: {}, refresh: async () => {} } as never)
+  useNeedsMeStore.setState({ items: [item], byTask: {}, loaded: true, refresh: async () => {} } as never)
   useInboxStore.setState({
     failedEffects: [{ task: { id: 'f', title: 'F' }, effects: [], since: new Date().toISOString() }],
     sourceEdits: [],
@@ -60,6 +60,15 @@ afterEach(() => vi.unstubAllGlobals())
 const renderPage = () => render(<MemoryRouter><HomePage /></MemoryRouter>)
 
 describe('HomePage', () => {
+  it('opens the review popup from a row and closes it with Escape', async () => {
+    render(<MemoryRouter><HomePage /></MemoryRouter>)
+    fireEvent.click(screen.getByRole('button', { name: /Approve A/ }))
+    const dialog = await screen.findByRole('dialog', { name: 'Needs you review' })
+    expect(within(dialog).getByRole('heading', { name: /Needs you · 1 of 3/ })).toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
   it('shows the shared count, summary, button rows and no inline actions', () => {
     const shared = renderHook(() => useInboxCount()).result.current
     renderPage()
@@ -136,5 +145,43 @@ describe('scene collapse', () => {
     fireEvent.click(screen.getByTestId('scene-toggle'))
     expect(screen.getByTestId('scene')).toBeInTheDocument()
     expect(localStorage.getItem('home.scene.expanded.compact')).toBe('1')
+  })
+})
+
+describe('HomePage live layer', () => {
+  it('shows done today and verify pass rate', () => {
+    dashValue = { ...dashValue, today: { done_count: 3, verify_total: 4, verify_passed: 3, runs_started: 5 } }
+    renderPage()
+    expect(screen.getByTestId('today-done').textContent).toBe('3')
+    expect(screen.getByText('done today')).toBeTruthy()
+    expect(screen.getByTestId('today-verify').textContent).toBe('75%')
+  })
+
+  it('shows an en dash with no verifications or no today block', () => {
+    dashValue = { ...dashValue, today: { done_count: 0, verify_total: 0, verify_passed: 0, runs_started: 0 } }
+    const { unmount } = renderPage()
+    expect(screen.getByTestId('today-verify').textContent).toBe('–')
+    unmount()
+    dashValue = { ...dashValue, today: undefined }
+    renderPage()
+    expect(screen.getByTestId('today-verify').textContent).toBe('–')
+  })
+
+  it('renders the empty ticker and tolerates a rejecting wake lock', () => {
+    vi.stubGlobal('navigator', { ...navigator, wakeLock: { request: () => Promise.reject(new Error('no')) } })
+    renderPage()
+    expect(screen.getByTestId('recent-ticker').textContent).toContain('No activity yet')
+  })
+})
+
+describe('RecentTicker', () => {
+  const items = [3, 2, 1].map((n) => ({ id: String(n), text: `event ${n}`, at: n * 1000 }))
+  it('renders up to 3 items, or only the latest', async () => {
+    const { default: RecentTicker } = await import('../components/home/RecentTicker')
+    const { unmount } = render(<RecentTicker items={items} />)
+    expect(screen.getAllByTestId('ticker-item')).toHaveLength(3)
+    unmount()
+    render(<RecentTicker items={items} latestOnly />)
+    expect(screen.getAllByTestId('ticker-item')).toHaveLength(1)
   })
 })

@@ -52,7 +52,7 @@ agent-task-editor/
 │       ├── logretention/     # Periodic pruning of agent_logs for terminal runs; DB-backed settings
 │       ├── metrics/          # Process-wide Prometheus registry and custom collectors (leaf package)
 │       ├── memguard/         # Last-resort memory watchdog that cancels a single runaway agent run
-│       ├── needsme/          # Single server-side definition of which tasks need a human and why (drives GET /needs-me, Inbox, badges)
+│       ├── needsme/          # Single server-side definition of which tasks need a human and why (drives GET /needs-me, Needs-you panel/review popup, badges)
 │       ├── notify/           # Optional outbound webhook when a task needs a human (NOTIFY_WEBHOOK_URL)
 │       ├── autonomy/         # Pure per-gate autonomy evaluator (leaf, stdlib only): modes, config validation, Evaluate
 │       │   └── policy/       # Async event subscriber that records autonomy decisions on gate landing and acts on approvals (hold-window sweeper, approves as actor "policy")
@@ -72,7 +72,7 @@ agent-task-editor/
     └── src/
         ├── api/              # REST client, WS client, shared types
         ├── components/       # Board, diff viewer, shared UI
-        ├── pages/            # Board, Inbox, TaskDetail, Pipeline (overview/workflow/agents), Settings (providers/pricing/intake/templates/health), Repos, Chat, Insights (Dashboard/Usage/Performance)
+        ├── pages/            # Board, Home (components/home/ReviewPopup), TaskDetail, Pipeline (overview/workflow/agents), Settings (providers/pricing/intake/templates/health), Repos, Chat, Insights (Dashboard/Usage/Performance)
         └── stores/           # Zustand stores
 ```
 

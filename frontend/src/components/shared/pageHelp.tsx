@@ -113,14 +113,16 @@ export function HomeHelp() {
         <h3 className="text-fg font-semibold">Needs you</h3>
         <p>
           Everything waiting on you, grouped as Decide, Answer and Fix setup, oldest first. N is
-          the same count as the Inbox badge in the navigation. Click a row to open the task (or
-          the Inbox for items without one). Ages over 30 minutes turn amber.
+          the same count as the badge on Home in the navigation. Click a row to open it in the review
+          popup: approve, request changes, reply, retry or fix without leaving Home. j/k or
+          ↑/↓ move, a approves, r requests changes (or focuses the reply), ↵ opens the full task
+          page, Esc closes. Ages over 30 minutes turn amber. When something new arrives the panel is tinted and the page edge pulses pink (no pulse with reduced motion).
         </p>
       </section>
       <section className="flex flex-col gap-1.5">
         <h3 className="text-fg font-semibold">Running now</h3>
         <p>
-          Active agent runs with a live timer. Dashed &ldquo;Free slot&rdquo; rows show how many
+          Active agent runs with a live timer and, underneath, the tool call each is running now. Dashed &ldquo;Free slot&rdquo; rows show how many
           more runs the worker limit allows. When several repos are busy their per-repo
           concurrency is listed underneath.
         </p>
@@ -129,8 +131,20 @@ export function HomeHelp() {
         <h3 className="text-fg font-semibold">Today</h3>
         <p>
           Spend against the global spend cap (with a marker for the projected total), or just
-          today&rsquo;s spend when no cap is set, plus your Claude 5-hour and weekly usage.
+          today&rsquo;s spend when no cap is set, the number of tasks done today and the verify pass rate (&ndash; when nothing was verified), plus your Claude 5-hour and weekly usage.
         </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-fg font-semibold">Recent activity</h3>
+        <p>
+          The bar along the bottom lists the last three events since you opened the page (task
+          moves, agent results, verify results, PR conflicts, new items for you, provider pauses),
+          each with its time. It starts empty and is not saved. On phones only the latest shows.
+        </p>
+      </section>
+      <section className="flex flex-col gap-1.5">
+        <h3 className="text-fg font-semibold">Screen</h3>
+        <p>Home asks the browser to keep the screen awake while it is visible, so it works as a wall display.</p>
       </section>
     </>
   )

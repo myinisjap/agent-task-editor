@@ -1,5 +1,5 @@
 import ModalShell from './ModalShell'
-import { INBOX_SHORTCUTS, SHORTCUTS, formatKeys, isMacPlatform, type Shortcut } from '../../lib/shortcuts'
+import { REVIEW_SHORTCUTS, SHORTCUTS, formatKeys, isMacPlatform, type Shortcut } from '../../lib/shortcuts'
 
 function Section({ title, items }: { title: string; items: Shortcut[] }) {
   const mac = isMacPlatform()
@@ -29,7 +29,7 @@ export default function ShortcutSheet({ onClose }: { onClose: () => void }) {
           <button onClick={onClose} aria-label="Close" className="text-slate-400 hover:text-slate-100">✕</button>
         </div>
         <Section title="Global" items={SHORTCUTS} />
-        <Section title="Inbox (wide screens)" items={INBOX_SHORTCUTS} />
+        <Section title="Review queue (Needs-you popup)" items={REVIEW_SHORTCUTS} />
       </div>
     </ModalShell>
   )

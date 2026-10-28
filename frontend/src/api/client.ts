@@ -57,6 +57,8 @@ export type RunVerification = Schemas['RunVerification']
 export type TaskPreviewCapture = Schemas['TaskPreviewCapture']
 export type TaskPreviewImage = Schemas['TaskPreviewImage']
 export type ReviewBrief = Schemas['ReviewBrief']
+export type AutonomyDecision = Schemas['AutonomyDecision']
+export type AutonomyReason = Schemas['AutonomyReason']
 export type RiskFlag = Schemas['RiskFlag']
 export type RiskFlagCode = Schemas['RiskFlagCode']
 // Named *Entry historically; the schema is TaskLabelHistory.
@@ -283,6 +285,8 @@ export const api = {
       request<Task>(`/tasks/${id}/git-state`, { method: 'PATCH', body: JSON.stringify({ git_state }) }),
     setPaused: (id: string, paused: boolean) =>
       request<Task>(`/tasks/${id}/pause`, { method: 'PATCH', body: JSON.stringify({ paused }) }),
+    setAlwaysAsk: (id: string, always_ask: boolean) =>
+      request<Task>(`/tasks/${id}/always-ask`, { method: 'PATCH', body: JSON.stringify({ always_ask }) }),
     setArchived: (id: string, archived: boolean) =>
       request<Task>(`/tasks/${id}/archive`, { method: 'PATCH', body: JSON.stringify({ archived }) }),
     bulk: (ids: string[], action: BulkAction, opts?: { to_label?: string; note?: string }) =>
@@ -331,6 +335,9 @@ export const api = {
     verifications: (id: string) => request<RunVerification[]>(`/tasks/${id}/verifications`),
     // reviewBrief is the deterministic risk-flag/verification summary for a
     // task waiting on a human (GET /tasks/{id}/review-brief).
+    // autonomyDecision is the shadow decision for the task's current label;
+    // rejects (404) when none was recorded.
+    autonomyDecision: (id: string) => request<AutonomyDecision>(`/tasks/${id}/autonomy-decision`),
     reviewBrief: (id: string) => request<ReviewBrief>(`/tasks/${id}/review-brief`),
     // previews is the latest preview screenshot capture (capture is null when
     // none was taken).

@@ -1,19 +1,18 @@
-import { Link } from 'react-router-dom'
-import { entryKey, entrySince, inboxCount, type InboxEntry, type InboxSections } from '../../lib/inbox'
+import { entryKey, entrySince, inboxCount, SECTION_META, type InboxEntry, type InboxSections } from '../../lib/inbox'
 import { entryTitle, formatCompactAge, isStale, nonEmptySections, oldestSince, sectionTitle } from '../../lib/homeInbox'
-import { Badge, Card, cx, type BadgeTone } from '../ui'
-
-const TONE: Record<string, BadgeTone> = { decide: 'accent', answer: 'info', fix: 'warning' }
+import { Badge, Card, cx } from '../ui'
 
 type Props = {
   sections: InboxSections
-  /** Single hook for row activation; the Inbox popup will replace the navigation. */
-  onSelect: (entry: InboxEntry) => void
+  /** Single hook for row activation: opens the review popup. `el` is the clicked button (focus return). */
+  onSelect: (entry: InboxEntry, el?: HTMLElement) => void
   /** Show only the first N rows plus a "Review all" link (phone). */
   limit?: number
+  /** Tint the panel (a new item needs you). Stays under reduced motion. */
+  highlight?: boolean
 }
 
-export default function NeedsYouPanel({ sections, onSelect, limit }: Props) {
+export default function NeedsYouPanel({ sections, onSelect, limit, highlight }: Props) {
   const count = inboxCount(sections)
   const groups = nonEmptySections(sections)
   const rows = groups.flatMap(([key, entries]) => entries.map((e) => ({ key, e })))
@@ -21,12 +20,12 @@ export default function NeedsYouPanel({ sections, onSelect, limit }: Props) {
   const oldest = oldestSince(sections)
   const now = Date.now()
   return (
-    <Card as="section" padding="md" aria-label="Needs you" data-testid="needs-you-panel" className="flex flex-col gap-3">
+    <Card as="section" padding="md" aria-label="Needs you" data-testid="needs-you-panel" data-flash={highlight ? "true" : undefined} className={cx("flex flex-col gap-3 transition-colors", highlight && "ring-2 ring-gate bg-gate-soft/40")}>
       <div className="flex items-baseline gap-3 min-w-0">
         <h2 className="text-xs font-medium text-fg-subtle uppercase tracking-wide">Needs you</h2>
       </div>
       <div className="flex items-baseline gap-3 min-w-0">
-        <span data-testid="needs-you-count" className="text-4xl font-semibold text-fg font-mono">{count}</span>
+        <span data-testid="needs-you-count" className="text-6xl xl:text-7xl leading-none tabular-nums font-semibold text-fg font-mono">{count}</span>
         <div className="min-w-0 text-xs text-fg-muted">
           {count > 0 ? (
             <>
@@ -41,17 +40,18 @@ export default function NeedsYouPanel({ sections, onSelect, limit }: Props) {
         </div>
       </div>
       {shown.length > 0 && (
-        <ul className={cx('flex flex-col gap-1 min-w-0', !limit && 'max-h-72 overflow-y-auto')}>
+        <ul className={cx('flex flex-col gap-1 min-w-0', !limit && 'max-h-[30vh] overflow-y-auto')}>
           {shown.map(({ key, e }) => {
             const since = entrySince(e)
             return (
               <li key={entryKey(e)} className="min-w-0">
                 <button
                   type="button"
-                  onClick={() => onSelect(e)}
+                  data-entry-key={entryKey(e)}
+                  onClick={(ev) => onSelect(e, ev.currentTarget)}
                   className="w-full flex items-center gap-2 min-w-0 rounded-md px-2 py-1.5 text-left hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 >
-                  <Badge tone={TONE[key] ?? 'neutral'} size="xs" className="shrink-0">{sectionTitle(key)}</Badge>
+                  <Badge tone={SECTION_META[key]?.tone ?? 'neutral'} size="xs" className="shrink-0">{sectionTitle(key)}</Badge>
                   <span className="flex-1 min-w-0 truncate text-sm text-fg">{entryTitle(e)}</span>
                   <span
                     data-stale={isStale(since, now) ? 'true' : undefined}
@@ -66,7 +66,13 @@ export default function NeedsYouPanel({ sections, onSelect, limit }: Props) {
         </ul>
       )}
       {limit !== undefined && count > shown.length && (
-        <Link to="/inbox" className="text-sm text-accent-fg hover:underline">Review all {count}</Link>
+        <button
+          type="button"
+          onClick={(ev) => onSelect(rows[0].e, ev.currentTarget)}
+          className="self-start text-sm text-accent-fg hover:underline"
+        >
+          Review all {count}
+        </button>
       )}
     </Card>
   )

@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest'
-import { inboxKeyAction } from './inboxKeys'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { renderHook } from '@testing-library/react'
+import { inboxKeyAction, useInboxKeyboard } from './inboxKeys'
 
 const ev = (key: string, over: Record<string, unknown> = {}, target: EventTarget | null = document.body) =>
   ({ key, metaKey: false, ctrlKey: false, altKey: false, defaultPrevented: false, target, ...over }) as Parameters<typeof inboxKeyAction>[0]
@@ -36,5 +37,29 @@ describe('inboxKeyAction', () => {
     expect(inboxKeyAction(ev('Enter', {}, document.createElement('button')))).toBeNull()
     expect(inboxKeyAction(ev('Enter', {}, document.createElement('a')))).toBeNull()
     expect(inboxKeyAction(ev('j', {}, document.createElement('button')))).toBe('next')
+  })
+})
+
+describe('useInboxKeyboard dialog guard', () => {
+  const press = (key: string) => window.dispatchEvent(new KeyboardEvent('keydown', { key }))
+  afterEach(() => { document.body.innerHTML = '' })
+
+  it('stands down for any open dialog by default', () => {
+    const fn = vi.fn()
+    document.body.innerHTML = '<div role="dialog" data-testid="mine"></div>'
+    renderHook(() => useInboxKeyboard(true, fn))
+    press('j')
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('with ownDialogTestId only a different dialog takes the keyboard', () => {
+    const fn = vi.fn()
+    document.body.innerHTML = '<div role="dialog" data-testid="mine"></div>'
+    renderHook(() => useInboxKeyboard(true, fn, { ownDialogTestId: 'mine' }))
+    press('j')
+    expect(fn).toHaveBeenCalledWith('next')
+    document.body.insertAdjacentHTML('beforeend', '<div role="dialog" data-testid="lightbox"></div>')
+    press('k')
+    expect(fn).toHaveBeenCalledTimes(1)
   })
 })

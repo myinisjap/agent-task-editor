@@ -70,7 +70,7 @@ curl -X POST $ATE/api/v1/lessons -H "Authorization: Bearer $TOKEN" \
 curl -X PATCH $ATE/api/v1/lessons/$ID -H "Authorization: Bearer $TOKEN" -d '{"status":"retired"}'
 ```
 
-See [api.md](api.md#repo-lessons). LLM-proposed lessons (with Inbox
+See [api.md](api.md#repo-lessons). LLM-proposed lessons (with review-queue
 approval) come in a later phase.
 
 Task runs also keep Claude Code's own auto-memory off, see [providers/claude.md](providers/claude.md#auto-memory).
