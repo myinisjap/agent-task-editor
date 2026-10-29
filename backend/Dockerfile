@@ -161,7 +161,7 @@ ENV SHELL=/bin/sh
 # (the feature then reports "preview failed: preview browser not installed").
 # Keep PLAYWRIGHT_VERSION in step with frontend/package.json's @playwright/test.
 ARG INSTALL_PREVIEW_BROWSER=true
-ARG PLAYWRIGHT_VERSION=1.62.1
+ARG PLAYWRIGHT_VERSION=1.64.1
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 COPY preview/capture.mjs /opt/preview-capture/capture.mjs
 RUN if [ "$INSTALL_PREVIEW_BROWSER" = "true" ]; then \
