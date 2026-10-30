@@ -50,3 +50,4 @@ decision; add a new one and mark the old one `Superseded by NNNN`.
 | [0037](0037-task-git-and-writeback-side-tables.md) | Git/PR state and write-back flags live in side tables, read through the `tasks_full` view |
 | [0038](0038-authoritative-verify-command.md) | A repo verify command (with per-label override) is authoritative over the agent's success claim |
 | [0039](0039-semantic-design-tokens.md) | Semantic OKLCH design tokens and UI primitives coexist with the generated light remap |
+| [0040](0040-llm-proposes-autonomy-rules-never-decides.md) | A model may propose autonomy rules and flags; it never decides a gate |
