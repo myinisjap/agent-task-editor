@@ -86,3 +86,12 @@ describe('LabelHistoryList policy approvals', () => {
     expect(screen.queryByLabelText('Remember for this repo')).not.toBeInTheDocument()
   })
 })
+
+describe('LabelHistoryList PR feedback sync', () => {
+  it('shows "PR feedback" and no Remember button', () => {
+    render(<LabelHistoryList onRemember={vi.fn()} history={[entry({ actor_id: 'pr-feedback-sync', note: 'GitHub PR review feedback ingested' })]} />)
+    expect(screen.getByText('PR feedback')).toBeInTheDocument()
+    expect(screen.getByText('· by PR feedback sync')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Remember for this repo')).not.toBeInTheDocument()
+  })
+})

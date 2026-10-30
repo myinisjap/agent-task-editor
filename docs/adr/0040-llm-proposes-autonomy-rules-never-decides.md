@@ -78,6 +78,8 @@ time:
   decision and its reasons;
 - the gate's human rejections (exits via the failure path, the same passes the
   backtest replays);
+  moves by actor `pr-feedback-sync` (PR-feedback auto-transitions) are excluded,
+  as are escapes they would cause;
 - for each of those tasks: changed files, changed-line count, task type, repo,
   and the escape or rejection note.
 

@@ -637,6 +637,8 @@ The feedback is deduped on `"<head sha>|<base ref>"`, so:
 |---|---|
 | `pr_review_auto_transition_enabled` | `1` to auto-move a task back to work when new PR feedback lands |
 
+The move is recorded in label history with trigger `human`, actor `pr-feedback-sync` and note `GitHub PR review feedback ingested`. Gate backtests, autonomy rule proposals and escape detection do not count it as a human rejection.
+
 By default, newly-ingested PR feedback is surfaced in the prompt but the task
 stays wherever a human put it — someone still has to click Reject (or
 whatever the workflow's manual transition is) to send it back to an agent.

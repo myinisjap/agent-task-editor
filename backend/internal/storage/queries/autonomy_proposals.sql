@@ -84,6 +84,8 @@ JOIN tasks t ON t.id = h.task_id
 WHERE t.workflow_id = sqlc.arg(workflow_id)
   AND h.from_label = sqlc.arg(label)
   AND h.trigger = 'human'
+  -- exclude PR-feedback sync moves (workflow.ActorPRFeedbackSync)
+  AND (h.actor_id IS NULL OR h.actor_id != 'pr-feedback-sync')
   AND (h.note IS NULL OR h.note NOT LIKE 'Forced move%')
   AND h.created_at >= CAST(sqlc.arg(since) AS TEXT)
 ORDER BY h.created_at DESC, h.rowid DESC

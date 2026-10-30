@@ -554,7 +554,7 @@ func (s *Syncer) autoTransitionOnFeedback(ctx context.Context, task gen.Task, lo
 		log.Info("ghsync: no auto-transition failure path from current label", "label", task.Label, "err", err)
 		return
 	}
-	if err := s.engine.Transition(ctx, task.ID, target, workflow.TriggerHuman, "", "GitHub PR review feedback ingested"); err != nil {
+	if err := s.engine.Transition(ctx, task.ID, target, workflow.TriggerHuman, workflow.ActorPRFeedbackSync, "GitHub PR review feedback ingested"); err != nil {
 		log.Warn("ghsync: auto-transition on PR feedback failed", "to_label", target, "err", err)
 		return
 	}

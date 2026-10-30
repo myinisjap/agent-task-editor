@@ -7343,7 +7343,7 @@ export interface components {
             unknown: number;
             would_skip: number;
             would_ask: number;
-            /** @description Evaluated passes that were rejected */
+            /** @description Evaluated passes a person rejected (PR-feedback sync moves, actor pr-feedback-sync, are excluded) */
             rejected: number;
             /** @description Rejected passes the setting would have skipped */
             escaped: number;

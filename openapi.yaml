@@ -137,7 +137,7 @@ components:
         unknown: { type: integer }
         would_skip: { type: integer }
         would_ask: { type: integer }
-        rejected: { type: integer, description: Evaluated passes that were rejected }
+        rejected: { type: integer, description: "Evaluated passes a person rejected (PR-feedback sync moves, actor pr-feedback-sync, are excluded)" }
         escaped: { type: integer, description: Rejected passes the setting would have skipped }
         truncated: { type: boolean }
         timed_out: { type: boolean }

@@ -22,6 +22,9 @@ triggers the "Release" workflow the same way.
 ### Added
 - **Suggested ask rules (model-proposed, ADR 0040).** Pick a provider config in the gate panel (or `PUT /settings/autonomy` `proposal_provider_config_id`) and a model reads the gate's last 30 days of escapes and rejections and suggests ask rules that would have caught them. The server validates each suggestion like any ask rule, replays it with the evaluator's own matcher and shows what it would have caught and how many clean approvals it would also have stopped; a suggestion that catches nothing is dropped. **Add as ask rule** creates a normal rule; dismissed suggestions are not offered again. Runs happen on demand (**Find rules**) or every `proposal_interval_hours` (default 24) for gates not in Always ask, in a scratch directory with shell commands denied, and are recorded with their cost. The gate decision itself never calls a model, so a suggestion can only add asking. New `GET /autonomy/rule-proposals`, `POST /autonomy/rule-proposals/{id}/accept|dismiss`, `POST /workflows/{id}/labels/{label}/autonomy/proposals/run` and `GET .../autonomy/proposal-runs`.
 
+### Fixed
+- **PR-feedback auto-transitions are no longer counted as human decisions.** They are recorded with reserved actor `pr-feedback-sync` (trigger stays `human`; migration 086 backfills existing rows) and are excluded from gate backtest rejection counts, autonomy rule-proposal evidence and escape detection. `pr-feedback-sync` is now a reserved `API_TOKENS` name.
+
 ## [1.0.0] - 2026-10-29
 
 ### Added

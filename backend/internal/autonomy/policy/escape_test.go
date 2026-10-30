@@ -12,6 +12,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/escape"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
+	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
 
 func (e *env) addRule(t *testing.T, label *string, globs string, typ *string, min *int64) string {
@@ -174,5 +175,17 @@ func TestTwoEscapesStepDown(t *testing.T) {
 		if l.Name == "review-plan" && l.AutonomyMode != "on_flags" {
 			t.Fatalf("mode = %s", l.AutonomyMode)
 		}
+	}
+}
+
+func TestPRFeedbackSyncRejectionRecordsNoEscape(t *testing.T) {
+	e := setup(t)
+	e.rec.SetEscapeRecorder(escape.New(e.q, nil))
+	task := e.task(t, "review")
+	e.approvedAt(t, task, "review-plan", time.Hour)
+	e.humanMove(t, task, "review", "work", workflow.ActorPRFeedbackSync)
+	e.rec.Handle(context.Background(), task.ID, "work")
+	if n := len(e.escapes(t, task)); n != 0 {
+		t.Fatalf("escapes = %d", n)
 	}
 }
