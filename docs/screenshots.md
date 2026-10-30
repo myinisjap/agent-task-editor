@@ -119,6 +119,19 @@ python3 scripts/cdp_shot.py "http://localhost:5173/tasks/$TASK" "Diff" docs/img/
 ```
 
 Gotchas already worked out in that script:
+- **Never send `Page.enable`.** The live pages (Home, task detail) hold an
+  open WebSocket and repaint continuously, so `Page.enable`'s lifecycle/frame
+  event stream saturates the single devtools socket and
+  `Page.captureScreenshot` never gets its response — it looks exactly like a
+  hang, on every page, with no error. `Runtime.enable` alone is enough to
+  evaluate the click. This is the single most time-consuming trap here.
+- Open the page as a **launch argument**, not `about:blank` + `Page.navigate`.
+  Without `Page.enable`, navigating a blank target can leave the capture
+  waiting on a frame that never arrives.
+- Filter `/json` to `type == "page"` targets; the list also carries devtools
+  and service-worker targets whose sockets never produce a screenshot.
+- Animations are frozen (one injected `animation:none` stylesheet) before
+  capturing, so Home's pulse/ticker can't repaint mid-capture.
 - Needs `--headless=new`, not legacy `--headless` — the old mode's
   `Page.captureScreenshot` can hang forever on this stack.
 - Needs `--remote-allow-origins=*` — Chrome otherwise rejects the devtools
@@ -145,6 +158,40 @@ real question, wait for the reply, then screenshot). Two gotchas:
   email/org, and a `claude.ai/code/session_...` URL — blur those three
   lines before publishing, same as the Health page paths below.
 
+## 4b. Set up the autonomy-dial shots
+
+`docs/img/autonomy-gate.png` and `docs/img/should-have-asked.png` need a gate
+with autonomy switched on, plus a task the policy actually approved.
+
+1. Put autonomy on the `review` gate. The only write path that round-trips
+   the block is the YAML update:
+
+   ```bash
+   curl -s "$API/workflows/$WF/export.yaml" > /tmp/wf.yaml
+   # under `- name: review`, add:
+   #   autonomy:
+   #     mode: on_flags
+   #     ask_on: [migration, auth_or_security, dependencies, tests_removed, ci_config]
+   #     hold: 10m
+   #     max_cost_usd: 5
+   curl -s -X PUT "$API/workflows/$WF/yaml" \
+     -H "Content-Type: application/yaml" --data-binary @/tmp/wf.yaml
+   ```
+
+2. Give the demo repo a verify command (otherwise the gate panel shows a
+   "no verify command" warning, and "verify must pass" can't stop anything):
+   `PATCH /repos/{id}` with `{"verify_command": "python3 -m py_compile src/app.py"}`.
+
+3. Create agent configs for `plan`/`work`/`testing`/`agent-review` so the
+   Pipeline graph shows staffed stages instead of amber "No agent" chips, then
+   let the task from step 3 run all the way to `review`. The policy records a
+   pending approval with a countdown — capture Home **now** for the
+   "Auto-approving" section, then wait out the hold (10m) for the
+   "Approved for you today" row and the **Should have asked** button.
+
+`/pipeline/overview?gate=review` deep-links straight to the gate panel, so it
+needs no clicking — a plain single-shot capture gets it.
+
 ## 5. Blur any leaked local paths
 
 Screenshots of the Health page and agent logs will contain real absolute
@@ -162,9 +209,34 @@ img.save("docs/img/health.png")
 
 ## 6. Capture the hero GIF
 
-The GIF needs real interaction (drag-and-drop, clicking Approve) that
-headless CDP scripting can't easily drive — use the interactive
-`claude-in-chrome` browser extension's `gif_creator` tool instead:
+Two ways, depending on whether you have an interactive browser tool.
+
+### Scripted (works headless, no extension)
+
+A page-tour GIF — Board → Home → task Diff → Logs → autonomy gate panel —
+needs no drag-and-drop, so plain CDP can drive it: capture one PNG per view
+(same no-`Page.enable` rules as above), then assemble with ImageMagick:
+
+```bash
+convert -delay 200 -loop 0 f000.png f001.png f002.png f003.png f004.png \
+  -coalesce -layers OptimizeTransparency docs/img/hero-demo.gif
+```
+
+`-delay 200` is 2s per frame. Capture every frame at the same window size —
+mismatched sizes make ImageMagick pad frames and the GIF jumps. Avoid
+`-layers Optimize` on duplicate "dwell" frames: it rewrites them as 1x1
+deltas, so dwell has to come from `-delay`, not repeated frames. Keep the
+result under ~500KB.
+
+Note the frames are only as good as the demo data: the gate panel's backtest
+and Home's "Approved for you today" are empty until a policy approval has
+actually happened (step 4b).
+
+### Interactive (for drag-and-drop and Approve)
+
+A GIF showing real interaction — dragging a card between columns, clicking
+Approve — needs an interactive browser; use the `claude-in-chrome`
+extension's `gif_creator` tool:
 
 1. `start_recording`
 2. Drag a task from one column into an agent-triggered column (e.g.
