@@ -1,6 +1,6 @@
 # 40. A model may propose autonomy rules and flags; it never decides a gate
 
-Status: Proposed
+Status: Accepted
 
 ## Context
 
@@ -82,12 +82,17 @@ time:
   and the escape or rejection note.
 
 It asks the model for candidate rules that would have stopped those tasks.
-It runs on a schedule or on demand, never on a task's landing path. So model
-latency, rate limits and provider outages cannot delay a transition. A failed
-run is logged and leaves the previous proposals in place. A gate with too
-little history (fewer than a handful of escapes plus rejections in the window)
-is skipped: a pattern needs more than one example, and the single-task case
-already has `Suggest`.
+The window is 30 days, one entry per task (an escape wins over a rejection),
+at most 40 entries. Escape facts are replayed as of the policy approval, when
+a rule would have fired. It runs on a schedule (every
+`proposal_interval_hours`, default 24, for gates not in `ask` mode, where a
+rule would change nothing) or on demand for any human gate, never on a task's
+landing path. So model latency, rate limits and provider outages cannot delay
+a transition. Every run is a row in `autonomy_proposal_runs` with its status,
+error, cost and tokens. A failed run leaves the previous proposals in place.
+A gate with fewer than 3 escapes plus rejections in the window is `skipped`
+without a model call: a pattern needs more than one example, and the
+single-task case already has `Suggest`.
 
 **Model output is untrusted input.** Task titles, notes and file paths come
 partly from third parties (imported issues, review comments). They are fenced
@@ -98,20 +103,23 @@ The response is parsed as strict JSON into `AskRuleInput` and must pass
 is dropped, not repaired. Even a successful injection can produce only an
 extra-asking proposal that a human still has to accept.
 
-**Evidence is computed by the server, not claimed by the model.** The model
-names the evidence tasks it based each rule on. The server then checks every
-candidate with the same matcher `Evaluate` uses (`AskRule.Matches` on `Facts`
-recomputed as of each pass, as the backtest does). It keeps only the tasks
-the rule really matches. A proposal that catches none of the gate's escapes or
-rejections is discarded. Each proposal that survives is shown with two
-numbers from that replay:
+**Evidence is computed by the server, not claimed by the model.** The model is
+not asked which tasks a rule covers. The server replays every candidate over
+all of the gate's escapes and rejections in the window with the same matcher
+`Evaluate` uses (`AskRule.Matches` on `Facts` recomputed as of each pass, as
+the backtest does), and stores the tasks it really matches. A proposal that
+catches none of them is discarded. Each proposal that survives is shown with
+two numbers from that replay:
 
 - **caught**: how many of the gate's escapes and rejections it would have
   stopped, with links to those tasks;
 - **cost**: how many policy approvals that were *not* later escaped it would
-  also have stopped. This is the extra asking it buys, the `would_stop` side of
-  `POST /workflows/{id}/labels/{label}/autonomy/backtest` with the rule as
-  `extra_rules`.
+  also have stopped. This is the extra asking it buys, the same replay as the
+  `would_stop` side of `POST /workflows/{id}/labels/{label}/autonomy/backtest`
+  with the rule as `extra_rules`.
+
+Tasks whose diff is gone are counted as **unknown** for path and size
+conditions, never as caught.
 
 If the operator cannot check a proposal against real history, it is not shown.
 
@@ -120,8 +128,8 @@ If the operator cannot check a proposal against real history, it is not shown.
 the gate, the rule conditions, the evidence task ids, the replay counts, the
 model's one-line rationale (shown as untrusted text), the provider config and
 the run that produced it, and a status of `proposed`, `accepted` or `dismissed`.
-Accepting a proposal creates a normal ask rule through the same validation and
-insert path as `POST /autonomy/ask-rules`. `created_by` is the person who
+Accepting a proposal creates a normal ask rule with the same validation and
+`CreateAskRule` query as `POST /autonomy/ask-rules`. `created_by` is the person who
 accepted it (`ActorFromContext`, as today), and the proposal row records the
 new rule's id. The rule then behaves like any other: it counts hits, can be
 edited or deleted, and appears in gate history. A dismissal is remembered
@@ -130,21 +138,24 @@ so the same proposal is not offered again. A later run with new evidence for
 the same conditions only updates the counts on the dismissed row.
 
 **The provider is an existing provider config.** The feature reaches the model
-through a new nullable `provider_config_id` column on the `autonomy_settings`
-singleton (created in migration 084). These are the same provider configs that
-back agent configs and chat sessions
-([ADR 0018](0018-provider-configs-and-provider-deprecation.md)), so keys,
-model choice and cost attribution already work. Unset means the feature is off
-and nothing calls out. The batch spend is recorded the same way as agent runs,
-so it shows up in usage and costs.
+through a nullable `proposal_provider_config_id` column on the
+`autonomy_settings` singleton (migration 085). These are the same provider
+configs that back agent configs and chat sessions
+([ADR 0018](0018-provider-configs-and-provider-deprecation.md)), so keys and
+model choice already work. Unset means the feature is off and nothing calls
+out. The repo has no direct model API (the `anthropic`/`llm` providers were
+removed), so a proposal run is one run of the provider's CLI outside any task,
+like the rate-limit reset check: an empty scratch directory, no MCP sidecar,
+shell commands denied, and the answer read from a marked JSON block in the
+output. Its spend is recorded on the run row, not on any task.
 
 **Flag codes stay a closed set.** `internal/reviewbrief` produces the `ask_on`
 codes, and `Config.Validate` checks them against the known set. A model may
 report that a *new* flag code looks worth implementing, for example "most
 escapes added a dependency, and no flag covers lockfile changes outside
-`*.lock`". That is a note for a person to read, attached to the gate's
-proposals. It cannot add a flag at runtime, and no proposal can reference a
-flag that does not exist.
+`*.lock`". That is a note for a person to read, stored on the run and shown
+under the gate's suggestions. It cannot add a flag at runtime, and no proposal
+can reference a flag that does not exist.
 
 **Rejected alternatives.**
 
@@ -189,11 +200,12 @@ flag that does not exist.
 - Cost is bounded and attributable: batch, per gate, on a schedule, against a
   named provider config, and skipped for gates without enough history. It is
   never one call per gate landing.
-- New surface to build: the proposals table and queries, the batch job (a
-  scheduler beside `schedule`/`logretention`), an accept/dismiss API in
-  `openapi.yaml`, a proposals list in the gate's rule list on the Pipeline
-  dial, and the `provider_config_id` setting on `GET/PUT /settings/autonomy`.
-  None of it touches `autonomy.Evaluate`, `policy`, or `escape`.
+- The surface is `internal/autonomy/propose` (gather, prompt, parse, replay,
+  store, an hourly scheduler), migration 085 (`autonomy_rule_proposals`,
+  `autonomy_proposal_runs`, two settings columns), the
+  `/autonomy/rule-proposals` and `.../autonomy/proposals/run|proposal-runs`
+  endpoints, and a "Suggested ask rules" section in the gate panel. None of it
+  touches `autonomy.Evaluate`, `policy`, or `escape`.
 - Accepted rules from proposals feed the same escape and hit-count data that
   the next batch reads. Hit counts are visible, so a rule that never fires can
   be pruned by hand. The job must not re-propose a rule that already exists

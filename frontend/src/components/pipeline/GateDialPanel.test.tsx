@@ -22,7 +22,10 @@ vi.mock('../../api/client', async () => {
         backtest: m.backtest,
         history: m.history,
         askRules: { list: m.rulesList, delete: m.rulesDelete },
+        proposals: { ...actual.api.autonomy.proposals, list: async () => [], runs: async () => [] },
+        settings: { ...actual.api.autonomy.settings, get: async () => ({ step_down_escapes: 2, step_down_window_days: 14, proposal_provider_config_id: null, proposal_interval_hours: 24 }) },
       },
+      providerConfigs: { ...actual.api.providerConfigs, list: async () => [] },
     },
   }
 })

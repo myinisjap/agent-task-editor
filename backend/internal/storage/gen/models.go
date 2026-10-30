@@ -173,11 +173,58 @@ type AutonomyEscape struct {
 	ResetByChangeID *string   `json:"reset_by_change_id"`
 }
 
+type AutonomyProposalRun struct {
+	ID               string     `json:"id"`
+	WorkflowID       string     `json:"workflow_id"`
+	Label            string     `json:"label"`
+	Trigger          string     `json:"trigger"`
+	Actor            string     `json:"actor"`
+	Status           string     `json:"status"`
+	ProviderConfigID *string    `json:"provider_config_id"`
+	EvidenceCount    int64      `json:"evidence_count"`
+	ProposalCount    int64      `json:"proposal_count"`
+	FlagIdeas        string     `json:"flag_ideas"`
+	Error            string     `json:"error"`
+	CostUsd          float64    `json:"cost_usd"`
+	InputTokens      int64      `json:"input_tokens"`
+	OutputTokens     int64      `json:"output_tokens"`
+	StartedAt        time.Time  `json:"started_at"`
+	FinishedAt       *time.Time `json:"finished_at"`
+}
+
+type AutonomyRuleProposal struct {
+	ID               string     `json:"id"`
+	WorkflowID       string     `json:"workflow_id"`
+	Label            string     `json:"label"`
+	RepoID           *string    `json:"repo_id"`
+	PathGlobs        string     `json:"path_globs"`
+	TaskType         *string    `json:"task_type"`
+	MinChangedLines  *int64     `json:"min_changed_lines"`
+	RuleKey          string     `json:"rule_key"`
+	Rationale        string     `json:"rationale"`
+	Evidence         string     `json:"evidence"`
+	Caught           int64      `json:"caught"`
+	EvidenceTotal    int64      `json:"evidence_total"`
+	Cost             int64      `json:"cost"`
+	CleanApprovals   int64      `json:"clean_approvals"`
+	Unknown          int64      `json:"unknown"`
+	Status           string     `json:"status"`
+	RunID            *string    `json:"run_id"`
+	ProviderConfigID *string    `json:"provider_config_id"`
+	AcceptedRuleID   *string    `json:"accepted_rule_id"`
+	DecidedBy        string     `json:"decided_by"`
+	DecidedAt        *time.Time `json:"decided_at"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
 type AutonomySetting struct {
-	ID                 int64     `json:"id"`
-	StepDownEscapes    int64     `json:"step_down_escapes"`
-	StepDownWindowDays int64     `json:"step_down_window_days"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ID                       int64     `json:"id"`
+	StepDownEscapes          int64     `json:"step_down_escapes"`
+	StepDownWindowDays       int64     `json:"step_down_window_days"`
+	UpdatedAt                time.Time `json:"updated_at"`
+	ProposalProviderConfigID *string   `json:"proposal_provider_config_id"`
+	ProposalIntervalHours    int64     `json:"proposal_interval_hours"`
 }
 
 type BackupSetting struct {

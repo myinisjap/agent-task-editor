@@ -16,7 +16,7 @@ function conditions(r: AskRule): string {
 }
 
 /** Ask rules that force this gate to ask, with hit counts and delete. */
-export default function GateAskRules({ workflowId, label }: { workflowId: string; label: string }) {
+export default function GateAskRules({ workflowId, label, refreshKey = 0 }: { workflowId: string; label: string; refreshKey?: number }) {
   const [rules, setRules] = useState<AskRule[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState<AskRule | null>(null)
@@ -31,7 +31,7 @@ export default function GateAskRules({ workflowId, label }: { workflowId: string
     }
   }, [workflowId, label])
   // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on mount
-  useEffect(() => { void load() }, [load])
+  useEffect(() => { void load() }, [load, refreshKey])
 
   return (
     <section aria-label="Ask rules" className="space-y-2">

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Lock, X } from 'lucide-react'
 import type { Workflow, WorkflowLabel } from '../../api/client'
 import { HOLD_OPTIONS, formatHold, gateMode } from '../../lib/autonomyDial'
@@ -8,6 +8,7 @@ import { Badge, Button, Field, Icon, controlClasses } from '../ui'
 import { GateFlagChecks, GateModeControl } from './GateControls'
 import GateBacktestCard from './GateBacktestCard'
 import GateAskRules from './GateAskRules'
+import GateRuleProposals from './GateRuleProposals'
 import GateHistory from './GateHistory'
 import { useGateDial } from './useGateDial'
 import { useGateWarnings } from './useGateWarnings'
@@ -31,6 +32,7 @@ export default function GateDialPanel({
   const warnings = useGateWarnings(workflow, label, g.form.mode)
   const askMode = g.form.mode === 'ask'
   const holdKnown = HOLD_OPTIONS.some((o) => o.seconds === g.form.hold_seconds)
+  const [rulesKey, setRulesKey] = useState(0)
 
   return (
     <div className="p-3 space-y-4">
@@ -111,7 +113,8 @@ export default function GateDialPanel({
 
         <div className="space-y-4 min-w-0">
           <GateBacktestCard backtest={g.backtest} loading={g.btLoading} error={g.btError} />
-          <GateAskRules workflowId={workflow.id} label={label.name} />
+          <GateAskRules workflowId={workflow.id} label={label.name} refreshKey={rulesKey} />
+          <GateRuleProposals workflowId={workflow.id} label={label.name} onRuleAdded={() => setRulesKey((k) => k + 1)} />
           <GateHistory
             workflowId={workflow.id}
             label={label.name}

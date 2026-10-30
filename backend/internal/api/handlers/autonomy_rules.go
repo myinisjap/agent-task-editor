@@ -385,8 +385,8 @@ func (h *AutonomyRulesHandler) History(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// AutonomySettingsHandler manages the DB-backed escape step-down setting
-// (ADR 0031 pattern, like cost-warning settings).
+// AutonomySettingsHandler manages the DB-backed escape step-down and rule
+// proposal settings (ADR 0031 pattern, like cost-warning settings).
 type AutonomySettingsHandler struct{ q *gen.Queries }
 
 func NewAutonomySettingsHandler(q *gen.Queries) *AutonomySettingsHandler {
@@ -394,9 +394,20 @@ func NewAutonomySettingsHandler(q *gen.Queries) *AutonomySettingsHandler {
 }
 
 type autonomySettingsResponse struct {
-	StepDownEscapes    int64     `json:"step_down_escapes"`
-	StepDownWindowDays int64     `json:"step_down_window_days"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	StepDownEscapes    int64 `json:"step_down_escapes"`
+	StepDownWindowDays int64 `json:"step_down_window_days"`
+	// ProposalProviderConfigID is the provider config rule proposals run on
+	// (ADR 0040); null = proposals are off.
+	ProposalProviderConfigID *string   `json:"proposal_provider_config_id"`
+	ProposalIntervalHours    int64     `json:"proposal_interval_hours"`
+	UpdatedAt                time.Time `json:"updated_at"`
+}
+
+func toAutonomySettingsResponse(row gen.AutonomySetting) autonomySettingsResponse {
+	return autonomySettingsResponse{
+		StepDownEscapes: row.StepDownEscapes, StepDownWindowDays: row.StepDownWindowDays,
+		ProposalProviderConfigID: row.ProposalProviderConfigID, ProposalIntervalHours: row.ProposalIntervalHours, UpdatedAt: row.UpdatedAt,
+	}
 }
 
 // Get returns the step-down settings.
@@ -408,17 +419,21 @@ func (h *AutonomySettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	JSON(w, http.StatusOK, autonomySettingsResponse{row.StepDownEscapes, row.StepDownWindowDays, row.UpdatedAt})
+	JSON(w, http.StatusOK, toAutonomySettingsResponse(row))
 }
 
 // Update validates and stores the step-down settings. 0 escapes disables the
-// automatic step-down.
+// automatic step-down. The proposal fields are optional: absent keeps the
+// stored value, proposal_provider_config_id null or "" turns proposals off,
+// proposal_interval_hours 0 means only on demand.
 //
 // PUT /api/v1/settings/autonomy
 func (h *AutonomySettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		StepDownEscapes    *int64 `json:"step_down_escapes"`
-		StepDownWindowDays *int64 `json:"step_down_window_days"`
+		StepDownEscapes          *int64          `json:"step_down_escapes"`
+		StepDownWindowDays       *int64          `json:"step_down_window_days"`
+		ProposalProviderConfigID json.RawMessage `json:"proposal_provider_config_id"`
+		ProposalIntervalHours    *int64          `json:"proposal_interval_hours"`
 	}
 	if err := decode(r, &body); err != nil || body.StepDownEscapes == nil || body.StepDownWindowDays == nil {
 		Err(w, http.StatusBadRequest, "step_down_escapes and step_down_window_days are required")
@@ -432,12 +447,44 @@ func (h *AutonomySettingsHandler) Update(w http.ResponseWriter, r *http.Request)
 		Err(w, http.StatusBadRequest, "step_down_window_days must be between 1 and 365")
 		return
 	}
-	row, err := h.q.UpsertAutonomySettings(r.Context(), gen.UpsertAutonomySettingsParams{
-		StepDownEscapes: *body.StepDownEscapes, StepDownWindowDays: *body.StepDownWindowDays,
-	})
+	ctx := r.Context()
+	cur, err := h.q.GetAutonomySettings(ctx)
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	JSON(w, http.StatusOK, autonomySettingsResponse{row.StepDownEscapes, row.StepDownWindowDays, row.UpdatedAt})
+	pcID, interval := cur.ProposalProviderConfigID, cur.ProposalIntervalHours
+	if len(body.ProposalProviderConfigID) > 0 {
+		var v *string
+		if err := json.Unmarshal(body.ProposalProviderConfigID, &v); err != nil {
+			Err(w, http.StatusBadRequest, "proposal_provider_config_id must be a string or null")
+			return
+		}
+		pcID = emptyToNil(v)
+		if pcID != nil {
+			if _, err := h.q.GetProviderConfig(ctx, *pcID); err != nil {
+				Err(w, http.StatusBadRequest, "unknown proposal_provider_config_id")
+				return
+			}
+		}
+	}
+	if body.ProposalIntervalHours != nil {
+		if *body.ProposalIntervalHours < 0 || *body.ProposalIntervalHours > 24*30 {
+			Err(w, http.StatusBadRequest, "proposal_interval_hours must be between 0 and 720 (0 = only on demand)")
+			return
+		}
+		interval = *body.ProposalIntervalHours
+	}
+	if _, err := h.q.UpsertAutonomySettings(ctx, gen.UpsertAutonomySettingsParams{
+		StepDownEscapes: *body.StepDownEscapes, StepDownWindowDays: *body.StepDownWindowDays,
+	}); err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	row, err := h.q.SetAutonomyProposalSettings(ctx, gen.SetAutonomyProposalSettingsParams{ProposalProviderConfigID: pcID, ProposalIntervalHours: interval})
+	if err != nil {
+		Err(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	JSON(w, http.StatusOK, toAutonomySettingsResponse(row))
 }

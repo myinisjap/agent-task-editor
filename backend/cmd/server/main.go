@@ -19,6 +19,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/escape"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/policy"
+	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/propose"
 	"github.com/myinisjap/agent-task-editor/backend/internal/backup"
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
@@ -302,6 +303,18 @@ func main() {
 	}
 	providerFactory := func(agentCfg agent.AgentConfig) agent.Provider { return newProvider(agentCfg, true) }
 
+	// Model-proposed ask rules (ADR 0040): runs a provider CLI outside any
+	// task, without the MCP sidecar. Off until a provider config is chosen in
+	// the autonomy settings.
+	proposals := propose.New(db.SQL(), termQ, func(pc gen.ProviderConfig) propose.Model {
+		ac := propose.AgentConfigFor(pc)
+		p := newProvider(ac, false)
+		if p == nil {
+			return nil
+		}
+		return propose.ProviderModel{Provider: p, Config: ac}
+	})
+
 	maxWorkers := cfg.MaxWorkers
 	if maxWorkers <= 0 {
 		maxWorkers = 5
@@ -400,6 +413,7 @@ func main() {
 	router := api.NewRouter(api.RouterDeps{
 		EventPublisher:      pub,
 		EscapeRecorder:      escapeRec,
+		Proposals:           proposals,
 		DB:                  db,
 		Engine:              engine,
 		Hub:                 hub,
@@ -596,6 +610,7 @@ func main() {
 	// returns as soon as it observes the disabled Notifier.
 	go notifier.Run(ctx)
 	go policyRec.Run(ctx)
+	go proposals.Run(ctx)
 	if cfg.ChatIdleTimeout > 0 {
 		go terminal.ReapLoop(ctx)
 	}

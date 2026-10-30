@@ -930,6 +930,278 @@ export interface paths {
         };
         trace?: never;
     };
+    "/autonomy/rule-proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List model-proposed ask rules
+         * @description Best catches first, up to 200.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    workflow_id?: string;
+                    label?: string;
+                    status?: "proposed" | "accepted" | "dismissed" | "all";
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RuleProposal"][];
+                    };
+                };
+                /** @description Invalid status */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autonomy/rule-proposals/{id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept a rule proposal
+         * @description Creates an ask rule with the proposal's conditions, scoped to its gate, created_by the caller, and marks the proposal accepted.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            proposal: components["schemas"]["RuleProposal"];
+                            rule: components["schemas"]["AskRule"];
+                        };
+                    };
+                };
+                /** @description Proposal not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Already accepted or dismissed */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/autonomy/rule-proposals/{id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss a rule proposal
+         * @description A later run that finds the same conditions refreshes its counts but does not offer it again.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RuleProposal"];
+                    };
+                };
+                /** @description Proposal not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Already accepted or dismissed */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workflows/{id}/labels/{label}/autonomy/proposals/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a rule proposal run for a gate
+         * @description Reads the gate's escapes and human rejections from the last 30 days, asks the configured provider for candidate ask rules, validates and replays each one, and stores the ones that would have caught at least one of them. Runs in the background; poll proposal-runs for the result. Skipped (no model call) with fewer than 3 escapes or rejections.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    label: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RuleProposalRun"];
+                    };
+                };
+                /** @description Not a human gate */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Workflow or label not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description A run is already in progress for this gate */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/workflows/{id}/labels/{label}/autonomy/proposal-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A gate's recent rule proposal runs
+         * @description Newest first.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                    label: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RuleProposalRun"][];
+                    };
+                };
+                /** @description Invalid limit */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/workflows/{id}/labels/{label}/autonomy/history": {
         parameters: {
             query?: never;
@@ -985,7 +1257,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get the escape step-down settings */
+        /** Get the escape step-down and rule proposal settings */
         get: {
             parameters: {
                 query?: never;
@@ -1005,7 +1277,7 @@ export interface paths {
                 };
             };
         };
-        /** Update the escape step-down settings */
+        /** Update the escape step-down and rule proposal settings */
         put: {
             parameters: {
                 query?: never;
@@ -7206,8 +7478,85 @@ export interface components {
             /** @description Distinct escapes within the window that lower a gate one notch; 0 = never step down. */
             step_down_escapes: number;
             step_down_window_days: number;
+            /** @description Provider config that model-proposed ask rules run on (ADR 0040). Null = proposals are off. On PUT, absent keeps the stored value and null or "" turns proposals off. */
+            proposal_provider_config_id?: string | null;
+            /** @description How often a scheduled proposal run covers each non-ask gate; 0 = only on demand. On PUT, absent keeps the stored value. */
+            proposal_interval_hours?: number;
             /** Format: date-time */
             updated_at?: string;
+        };
+        RuleProposalEvidence: {
+            task_id: string;
+            title: string;
+            /** @enum {string} */
+            kind: "escape" | "rejected";
+            /** @description Escape source (undo */
+            source: string;
+        };
+        /** @description A model-proposed ask rule for one gate (ADR 0040). Inert until accepted; accepting creates a normal ask rule scoped to the gate. The counts are recomputed by the server, not claimed by the model. */
+        RuleProposal: {
+            id: string;
+            workflow_id: string;
+            label: string;
+            repo_id: string | null;
+            path_globs: string[];
+            task_type: string | null;
+            min_changed_lines: number | null;
+            summary: string;
+            /** @description The model's one-line reason. Untrusted text. */
+            rationale: string;
+            /** @description The escapes and rejections the rule would have caught. */
+            evidence: components["schemas"]["RuleProposalEvidence"][];
+            /** @description Escapes and rejections in the window the rule would have stopped. */
+            caught: number;
+            /** @description Escapes and rejections in the window. */
+            evidence_total: number;
+            /** @description Clean policy approvals in the window the rule would also have stopped. */
+            cost: number;
+            clean_approvals: number;
+            /** @description Tasks whose diff could not be recomputed for a path or size condition. */
+            unknown: number;
+            /** @enum {string} */
+            status: "proposed" | "accepted" | "dismissed";
+            run_id: string | null;
+            provider_config_id: string | null;
+            accepted_rule_id: string | null;
+            decided_by: string;
+            /** Format: date-time */
+            decided_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        RuleProposalFlagIdea: {
+            idea: string;
+            rationale: string;
+        };
+        RuleProposalRun: {
+            id: string;
+            workflow_id: string;
+            label: string;
+            /** @enum {string} */
+            trigger: "schedule" | "manual";
+            actor: string;
+            /** @enum {string} */
+            status: "running" | "succeeded" | "failed" | "skipped";
+            provider_config_id: string | null;
+            evidence_count: number;
+            /** @description Proposals created or refreshed by this run. */
+            proposal_count: number;
+            /** @description Suggested new review-brief checks */
+            flag_ideas: components["schemas"]["RuleProposalFlagIdea"][];
+            /** @description Why the run failed or was skipped. */
+            error: string;
+            cost_usd: number;
+            input_tokens: number;
+            output_tokens: number;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            finished_at: string | null;
         };
         ShouldHaveAskedRequest: {
             rule?: components["schemas"]["AskRuleInput"];
