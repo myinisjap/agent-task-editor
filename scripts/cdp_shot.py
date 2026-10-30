@@ -34,16 +34,24 @@ proc = subprocess.Popen([
     "--hide-scrollbars", "--window-size=1440,900",
     # --remote-allow-origins=* -- Chrome rejects the devtools websocket
     # handshake from a "foreign" origin without this.
-    f"--remote-debugging-port={PORT}", "--remote-allow-origins=*", "about:blank",
+    # Open the target URL as a launch argument rather than about:blank +
+    # Page.navigate: without Page.enable (see below) a navigate on a blank
+    # target can leave captureScreenshot waiting on a frame that never comes.
+    f"--remote-debugging-port={PORT}", "--remote-allow-origins=*", URL,
 ])
 time.sleep(1.5)
 
-for _ in range(20):
+for _ in range(40):
     try:
-        tabs = requests.get(f"http://localhost:{PORT}/json").json()
-        break
+        # Filter to real page targets -- the list can also contain devtools
+        # and service-worker targets, whose sockets never yield a screenshot.
+        tabs = [t for t in requests.get(f"http://localhost:{PORT}/json").json()
+                if t.get("type") == "page" and "devtools" not in t.get("url", "")]
+        if tabs:
+            break
     except Exception:
-        time.sleep(0.5)
+        pass
+    time.sleep(0.5)
 else:
     raise RuntimeError("chrome devtools not up")
 
@@ -59,10 +67,13 @@ def send(method, params=None):
             return resp
 
 
-send("Page.enable")
+# Deliberately NOT Page.enable: it streams lifecycle/frame events continuously
+# for the live pages (Home, task detail -- both hold an open WebSocket), which
+# starves this single-socket client and makes Page.captureScreenshot below
+# appear to hang forever. Runtime.enable alone is enough to evaluate the click.
 send("Runtime.enable")
-send("Page.navigate", {"url": URL})
-time.sleep(3)
+# The SPA has to boot and fetch before anything is clickable/paintable.
+time.sleep(9)
 
 if CLICK_TEXT:
     js = f"""
@@ -75,6 +86,18 @@ if CLICK_TEXT:
     """
     send("Runtime.evaluate", {"expression": js})
     time.sleep(1.5)
+
+# Freeze animations/transitions so the live pages (Home's pulse and ticker)
+# settle into a stable frame instead of repainting under the capture.
+send("Runtime.evaluate", {"expression": """
+    (function() {
+        const s = document.createElement('style');
+        s.textContent = '*,*::before,*::after{animation:none!important;transition:none!important}';
+        document.head.appendChild(s);
+        return true;
+    })()
+"""})
+time.sleep(1)
 
 result = send("Page.captureScreenshot", {"format": "png"})
 with open(OUT, "wb") as f:
