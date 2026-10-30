@@ -275,7 +275,84 @@ components:
       properties:
         step_down_escapes: { type: integer, minimum: 0, maximum: 100, description: Distinct escapes within the window that lower a gate one notch; 0 = never step down. }
         step_down_window_days: { type: integer, minimum: 1, maximum: 365 }
+        proposal_provider_config_id:
+          type: string
+          nullable: true
+          description: >-
+            Provider config that model-proposed ask rules run on (ADR 0040).
+            Null = proposals are off. On PUT, absent keeps the stored value and
+            null or "" turns proposals off.
+        proposal_interval_hours:
+          type: integer
+          minimum: 0
+          maximum: 720
+          description: How often a scheduled proposal run covers each non-ask gate; 0 = only on demand. On PUT, absent keeps the stored value.
         updated_at: { type: string, format: date-time }
+    RuleProposalEvidence:
+      type: object
+      required: [task_id, title, kind, source]
+      properties:
+        task_id: { type: string }
+        title: { type: string }
+        kind: { type: string, enum: [escape, rejected] }
+        source: { type: string, description: Escape source (undo, should_have_asked, rejected_later, reopened); empty for a rejection. }
+    RuleProposal:
+      type: object
+      description: >-
+        A model-proposed ask rule for one gate (ADR 0040). Inert until accepted;
+        accepting creates a normal ask rule scoped to the gate. The counts are
+        recomputed by the server, not claimed by the model.
+      required: [id, workflow_id, label, repo_id, path_globs, task_type, min_changed_lines, summary, rationale, evidence, caught, evidence_total, cost, clean_approvals, unknown, status, run_id, provider_config_id, accepted_rule_id, decided_by, decided_at, created_at, updated_at]
+      properties:
+        id: { type: string }
+        workflow_id: { type: string }
+        label: { type: string }
+        repo_id: { type: string, nullable: true }
+        path_globs: { type: array, items: { type: string } }
+        task_type: { type: string, nullable: true }
+        min_changed_lines: { type: integer, nullable: true }
+        summary: { type: string }
+        rationale: { type: string, description: The model's one-line reason. Untrusted text. }
+        evidence: { type: array, items: { $ref: "#/components/schemas/RuleProposalEvidence" }, description: The escapes and rejections the rule would have caught. }
+        caught: { type: integer, description: Escapes and rejections in the window the rule would have stopped. }
+        evidence_total: { type: integer, description: Escapes and rejections in the window. }
+        cost: { type: integer, description: Clean policy approvals in the window the rule would also have stopped. }
+        clean_approvals: { type: integer }
+        unknown: { type: integer, description: Tasks whose diff could not be recomputed for a path or size condition. }
+        status: { type: string, enum: [proposed, accepted, dismissed] }
+        run_id: { type: string, nullable: true }
+        provider_config_id: { type: string, nullable: true }
+        accepted_rule_id: { type: string, nullable: true }
+        decided_by: { type: string }
+        decided_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    RuleProposalFlagIdea:
+      type: object
+      required: [idea, rationale]
+      properties:
+        idea: { type: string }
+        rationale: { type: string }
+    RuleProposalRun:
+      type: object
+      required: [id, workflow_id, label, trigger, actor, status, provider_config_id, evidence_count, proposal_count, flag_ideas, error, cost_usd, input_tokens, output_tokens, started_at, finished_at]
+      properties:
+        id: { type: string }
+        workflow_id: { type: string }
+        label: { type: string }
+        trigger: { type: string, enum: [schedule, manual] }
+        actor: { type: string }
+        status: { type: string, enum: [running, succeeded, failed, skipped] }
+        provider_config_id: { type: string, nullable: true }
+        evidence_count: { type: integer }
+        proposal_count: { type: integer, description: Proposals created or refreshed by this run. }
+        flag_ideas: { type: array, items: { $ref: "#/components/schemas/RuleProposalFlagIdea" }, description: Suggested new review-brief checks, for a person to read. Never applied. }
+        error: { type: string, description: Why the run failed or was skipped. }
+        cost_usd: { type: number }
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time, nullable: true }
     ShouldHaveAskedRequest:
       type: object
       properties:
@@ -3568,6 +3645,92 @@ paths:
         "204": { description: Deleted }
         "404": { description: Rule not found }
 
+  /autonomy/rule-proposals:
+    get:
+      summary: List model-proposed ask rules
+      description: Best catches first, up to 200.
+      parameters:
+        - { name: workflow_id, in: query, schema: { type: string } }
+        - { name: label, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string, enum: [proposed, accepted, dismissed, all], default: proposed } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/RuleProposal" } }
+        "400": { description: Invalid status }
+
+  /autonomy/rule-proposals/{id}/accept:
+    post:
+      summary: Accept a rule proposal
+      description: >-
+        Creates an ask rule with the proposal's conditions, scoped to its gate,
+        created_by the caller, and marks the proposal accepted.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [proposal, rule]
+                properties:
+                  proposal: { $ref: "#/components/schemas/RuleProposal" }
+                  rule: { $ref: "#/components/schemas/AskRule" }
+        "404": { description: Proposal not found }
+        "409": { description: Already accepted or dismissed, an identical rule exists, or the gate or repo is gone }
+
+  /autonomy/rule-proposals/{id}/dismiss:
+    post:
+      summary: Dismiss a rule proposal
+      description: A later run that finds the same conditions refreshes its counts but does not offer it again.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuleProposal" }
+        "404": { description: Proposal not found }
+        "409": { description: Already accepted or dismissed }
+
+  /workflows/{id}/labels/{label}/autonomy/proposals/run:
+    post:
+      summary: Start a rule proposal run for a gate
+      description: >-
+        Reads the gate's escapes and human rejections from the last 30 days,
+        asks the configured provider for candidate ask rules, validates and
+        replays each one, and stores the ones that would have caught at least
+        one of them. Runs in the background; poll proposal-runs for the result.
+        Skipped (no model call) with fewer than 3 escapes or rejections.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: label, in: path, required: true, schema: { type: string } }
+      responses:
+        "202":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuleProposalRun" }
+        "400": { description: Not a human gate, or no usable provider config set for proposals }
+        "404": { description: Workflow or label not found }
+        "409": { description: A run is already in progress for this gate }
+
+  /workflows/{id}/labels/{label}/autonomy/proposal-runs:
+    get:
+      summary: A gate's recent rule proposal runs
+      description: Newest first.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: label, in: path, required: true, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/RuleProposalRun" } }
+        "400": { description: Invalid limit }
+
   /workflows/{id}/labels/{label}/autonomy/history:
     get:
       summary: A gate's autonomy changes and escapes
@@ -3584,14 +3747,14 @@ paths:
 
   /settings/autonomy:
     get:
-      summary: Get the escape step-down settings
+      summary: Get the escape step-down and rule proposal settings
       responses:
         "200":
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AutonomySettings" }
     put:
-      summary: Update the escape step-down settings
+      summary: Update the escape step-down and rule proposal settings
       requestBody:
         required: true
         content:
@@ -3602,7 +3765,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AutonomySettings" }
-        "400": { description: Out of range }
+        "400": { description: Out of range, or unknown proposal_provider_config_id }
 
   /tasks/{id}/dependencies:
     get:

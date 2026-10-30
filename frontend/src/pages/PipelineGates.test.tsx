@@ -21,7 +21,10 @@ vi.mock('../api/client', async () => {
         backtest: async () => (await import('../components/pipeline/testFixtures')).backtestResult,
         history: async () => ({ workflow_id: 'w1', label: 'review', current_mode: 'ask', changes: [], escapes: [], step_down: { escapes_counted: 0, threshold: 0, window_days: 14 } }),
         askRules: { list: async () => [], delete: async () => undefined },
+        proposals: { ...actual.api.autonomy.proposals, list: async () => [], runs: async () => [] },
+        settings: { ...actual.api.autonomy.settings, get: async () => ({ step_down_escapes: 2, step_down_window_days: 14, proposal_provider_config_id: null, proposal_interval_hours: 24 }) },
       },
+      providerConfigs: { ...actual.api.providerConfigs, list: async () => [] },
     },
   }
 })

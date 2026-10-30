@@ -26,7 +26,8 @@ POST /api/v1/intake/{endpoint_id}  IntakeEndpointsHandler.Receive (outside Beare
   tasks/{id}/always-ask        TasksHandler.SetAlwaysAsk (per-task autonomy override)
   tasks/{id}/autonomy/suggestions, tasks/{id}/autonomy/should-have-asked  TasksHandler (autonomy_should_ask.go)
   autonomy/ask-rules[/{id}], workflows/{id}/labels/{label}/autonomy/history  AutonomyRulesHandler
-  settings/autonomy            AutonomySettingsHandler (step-down N/W)
+  settings/autonomy            AutonomySettingsHandler (step-down N/W, rule-proposal provider + interval)
+  autonomy/rule-proposals[/{id}/accept|dismiss], workflows/{id}/labels/{label}/autonomy/proposals/run, .../proposal-runs  AutonomyProposalsHandler (ADR 0040)
   templates/*                  TemplatesHandler
   lessons/*, repos/{id}/lessons LessonsHandler
   uploads/{task_id}/{filename} UploadsHandler (serve attachment images)

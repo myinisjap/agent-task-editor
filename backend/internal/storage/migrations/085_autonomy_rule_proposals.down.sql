@@ -1,0 +1,7 @@
+DROP INDEX idx_autonomy_rule_proposals_status;
+DROP INDEX idx_autonomy_rule_proposals_key;
+DROP TABLE autonomy_rule_proposals;
+DROP INDEX idx_autonomy_proposal_runs_gate;
+DROP TABLE autonomy_proposal_runs;
+ALTER TABLE autonomy_settings DROP COLUMN proposal_interval_hours;
+ALTER TABLE autonomy_settings DROP COLUMN proposal_provider_config_id;

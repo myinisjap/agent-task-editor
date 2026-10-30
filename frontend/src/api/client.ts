@@ -71,6 +71,9 @@ export type AskRule = Schemas['AskRule']
 export type AutonomyHistory = Schemas['AutonomyHistory']
 export type AutonomyChange = Schemas['AutonomyChange']
 export type AutonomyEscape = Schemas['AutonomyEscape']
+export type AutonomySettings = Schemas['AutonomySettings']
+export type RuleProposal = Schemas['RuleProposal']
+export type RuleProposalRun = Schemas['RuleProposalRun']
 // Named *Entry historically; the schema is TaskLabelHistory.
 export type TaskLabelHistoryEntry = Schemas['TaskLabelHistory']
 export type AgentLog = Schemas['AgentLog']
@@ -592,6 +595,30 @@ export const api = {
         return request<AskRule[]>(`/autonomy/ask-rules?${qs}`)
       },
       delete: (id: string) => request<void>(`/autonomy/ask-rules/${id}`, { method: 'DELETE' }),
+    },
+    // Model-proposed ask rules (ADR 0040): inert until accepted.
+    proposals: {
+      list: (q: { workflow_id: string; label: string }) => {
+        const qs = new URLSearchParams({ workflow_id: q.workflow_id, label: q.label })
+        return request<RuleProposal[]>(`/autonomy/rule-proposals?${qs}`)
+      },
+      accept: (id: string) =>
+        request<{ proposal: RuleProposal; rule: AskRule }>(`/autonomy/rule-proposals/${id}/accept`, { method: 'POST' }),
+      dismiss: (id: string) => request<RuleProposal>(`/autonomy/rule-proposals/${id}/dismiss`, { method: 'POST' }),
+      run: (workflowId: string, label: string) =>
+        request<RuleProposalRun>(
+          `/workflows/${workflowId}/labels/${encodeURIComponent(label)}/autonomy/proposals/run`,
+          { method: 'POST' },
+        ),
+      runs: (workflowId: string, label: string, limit = 1) =>
+        request<RuleProposalRun[]>(
+          `/workflows/${workflowId}/labels/${encodeURIComponent(label)}/autonomy/proposal-runs?limit=${limit}`,
+        ),
+    },
+    settings: {
+      get: () => request<AutonomySettings>('/settings/autonomy'),
+      update: (body: AutonomySettings) =>
+        request<AutonomySettings>('/settings/autonomy', { method: 'PUT', body: JSON.stringify(body) }),
     },
   },
   dashboard: {

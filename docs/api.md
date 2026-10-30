@@ -301,7 +301,41 @@ workflow.
 
 ### `GET /settings/autonomy` / `PUT /settings/autonomy`
 `{step_down_escapes (0–100, 0 = never step down; default 2),
-step_down_window_days (1–365; default 14)}`. Both fields are required on PUT.
+step_down_window_days (1–365; default 14), proposal_provider_config_id (null =
+rule proposals off), proposal_interval_hours (0–720, 0 = only on demand;
+default 24)}`. The step-down fields are required on PUT; absent proposal fields
+keep their stored values, and `proposal_provider_config_id: null` or `""` turns
+proposals off. `400` for an unknown provider config.
+
+### `GET /autonomy/rule-proposals`
+Model-proposed ask rules (see [workflows.md § Suggested ask
+rules](workflows.md#suggested-ask-rules)). Filters `workflow_id`, `label`,
+`status` (`proposed` by default, `accepted`, `dismissed`, `all`). Each item:
+`{id, workflow_id, label, repo_id, path_globs, task_type, min_changed_lines,
+summary, rationale, evidence: [{task_id, title, kind: escape|rejected,
+source}], caught, evidence_total, cost, clean_approvals, unknown, status,
+run_id, provider_config_id, accepted_rule_id, decided_by, decided_at,
+created_at, updated_at}`, best catches first, up to 200.
+
+### `POST /autonomy/rule-proposals/{id}/accept`
+Creates the ask rule (scoped to the proposal's gate, `created_by` the caller)
+and marks the proposal accepted. `201 {proposal, rule}`. `404` unknown; `409`
+already decided, an identical rule exists, or the gate or repo is gone.
+
+### `POST /autonomy/rule-proposals/{id}/dismiss`
+`200` with the proposal; `404` unknown; `409` already decided.
+
+### `POST /workflows/{id}/labels/{label}/autonomy/proposals/run`
+Starts a proposal run for the gate in the background. `202` with the run
+(`status: running`). `400` not a human gate or no usable provider config set;
+`404` unknown workflow or label; `409` a run is already in progress.
+
+### `GET /workflows/{id}/labels/{label}/autonomy/proposal-runs`
+Recent runs, newest first (`limit` 1–100, default 10): `{id, workflow_id,
+label, trigger: schedule|manual, actor, status: running|succeeded|failed|skipped,
+provider_config_id, evidence_count, proposal_count, flag_ideas: [{idea,
+rationale}], error, cost_usd, input_tokens, output_tokens, started_at,
+finished_at}`.
 
 ### `PATCH /tasks/{id}/always-ask`
 Body `{"always_ask": true|false}`. Sets the per-task override that makes the

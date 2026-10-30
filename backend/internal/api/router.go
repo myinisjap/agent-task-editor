@@ -10,6 +10,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/escape"
+	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/propose"
 	"github.com/myinisjap/agent-task-editor/backend/internal/intakehook"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/reviewbrief"
@@ -85,6 +86,9 @@ type RouterDeps struct {
 	// EscapeRecorder records autonomy escapes and applies the step-down. Optional;
 	// the router builds one from the DB and EventPublisher when nil.
 	EscapeRecorder *escape.Recorder
+	// Proposals runs model-proposed ask rules (ADR 0040). Optional; the router
+	// builds one with no model (runs fail to start) when nil.
+	Proposals *propose.Service
 }
 
 // NewRouter builds and returns the application router.
@@ -114,6 +118,11 @@ func NewRouter(deps RouterDeps) http.Handler {
 	tasksH.SetAutonomyDeps(db.SQL(), escapeRec, briefCache)
 	autonomyRulesH := handlers.NewAutonomyRulesHandler(q)
 	autonomySettingsH := handlers.NewAutonomySettingsHandler(q)
+	proposals := deps.Proposals
+	if proposals == nil {
+		proposals = propose.New(db.SQL(), q, nil)
+	}
+	autonomyProposalsH := handlers.NewAutonomyProposalsHandler(q, proposals)
 	depsH := handlers.NewDependenciesHandler(q, db.SQL(), hub)
 	subtasksH := handlers.NewSubtasksHandler(q, db.SQL(), hub)
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
@@ -260,6 +269,11 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Patch("/autonomy/ask-rules/{id}", autonomyRulesH.Update)
 			r.Delete("/autonomy/ask-rules/{id}", autonomyRulesH.Delete)
 			r.Get("/workflows/{id}/labels/{label}/autonomy/history", autonomyRulesH.History)
+			r.Get("/autonomy/rule-proposals", autonomyProposalsH.List)
+			r.Post("/autonomy/rule-proposals/{id}/accept", autonomyProposalsH.Accept)
+			r.Post("/autonomy/rule-proposals/{id}/dismiss", autonomyProposalsH.Dismiss)
+			r.Post("/workflows/{id}/labels/{label}/autonomy/proposals/run", autonomyProposalsH.StartRun)
+			r.Get("/workflows/{id}/labels/{label}/autonomy/proposal-runs", autonomyProposalsH.ListRuns)
 			r.Get("/settings/autonomy", autonomySettingsH.Get)
 			r.Put("/settings/autonomy", autonomySettingsH.Update)
 			r.Get("/tasks/{id}/pr-url", tasksH.PRURL)

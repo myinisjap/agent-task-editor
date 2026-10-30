@@ -11,7 +11,7 @@ import (
 
 const getAutonomySettings = `-- name: GetAutonomySettings :one
 
-SELECT id, step_down_escapes, step_down_window_days, updated_at FROM autonomy_settings WHERE id = 1
+SELECT id, step_down_escapes, step_down_window_days, updated_at, proposal_provider_config_id, proposal_interval_hours FROM autonomy_settings WHERE id = 1
 `
 
 // Singleton settings row for escape step-down (ADR 0031 pattern; 084_autonomy_rules).
@@ -24,6 +24,36 @@ func (q *Queries) GetAutonomySettings(ctx context.Context) (AutonomySetting, err
 		&i.StepDownEscapes,
 		&i.StepDownWindowDays,
 		&i.UpdatedAt,
+		&i.ProposalProviderConfigID,
+		&i.ProposalIntervalHours,
+	)
+	return i, err
+}
+
+const setAutonomyProposalSettings = `-- name: SetAutonomyProposalSettings :one
+UPDATE autonomy_settings
+SET proposal_provider_config_id = ?1, proposal_interval_hours = ?2, updated_at = CURRENT_TIMESTAMP
+WHERE id = 1
+RETURNING id, step_down_escapes, step_down_window_days, updated_at, proposal_provider_config_id, proposal_interval_hours
+`
+
+type SetAutonomyProposalSettingsParams struct {
+	ProposalProviderConfigID *string `json:"proposal_provider_config_id"`
+	ProposalIntervalHours    int64   `json:"proposal_interval_hours"`
+}
+
+// ADR 0040: the provider config the rule-proposal job uses (NULL = off) and
+// how often it runs per gate (0 = only on demand).
+func (q *Queries) SetAutonomyProposalSettings(ctx context.Context, arg SetAutonomyProposalSettingsParams) (AutonomySetting, error) {
+	row := q.db.QueryRowContext(ctx, setAutonomyProposalSettings, arg.ProposalProviderConfigID, arg.ProposalIntervalHours)
+	var i AutonomySetting
+	err := row.Scan(
+		&i.ID,
+		&i.StepDownEscapes,
+		&i.StepDownWindowDays,
+		&i.UpdatedAt,
+		&i.ProposalProviderConfigID,
+		&i.ProposalIntervalHours,
 	)
 	return i, err
 }
@@ -35,7 +65,7 @@ ON CONFLICT (id) DO UPDATE SET
     step_down_escapes = excluded.step_down_escapes,
     step_down_window_days = excluded.step_down_window_days,
     updated_at = CURRENT_TIMESTAMP
-RETURNING id, step_down_escapes, step_down_window_days, updated_at
+RETURNING id, step_down_escapes, step_down_window_days, updated_at, proposal_provider_config_id, proposal_interval_hours
 `
 
 type UpsertAutonomySettingsParams struct {
@@ -51,6 +81,8 @@ func (q *Queries) UpsertAutonomySettings(ctx context.Context, arg UpsertAutonomy
 		&i.StepDownEscapes,
 		&i.StepDownWindowDays,
 		&i.UpdatedAt,
+		&i.ProposalProviderConfigID,
+		&i.ProposalIntervalHours,
 	)
 	return i, err
 }
