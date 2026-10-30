@@ -234,9 +234,11 @@ func Load(path string) (Config, error) {
 			if err := yaml.Unmarshal(data, &cfg); err != nil {
 				return cfg, err
 			}
-			if _, ok := cfg.APITokens["policy"]; ok {
-				slog.Warn("ignoring api_tokens entry: \"policy\" is a reserved actor name")
-				delete(cfg.APITokens, "policy")
+			for _, r := range reservedActors {
+				if _, ok := cfg.APITokens[r]; ok {
+					slog.Warn("ignoring api_tokens entry: reserved actor name", "name", r)
+					delete(cfg.APITokens, r)
+				}
 			}
 		}
 	}
@@ -273,8 +275,8 @@ func Load(path string) (Config, error) {
 				slog.Warn("skipping malformed API_TOKENS entry", "entry", pair)
 				continue
 			}
-			if name == "policy" {
-				slog.Warn("skipping API_TOKENS entry: \"policy\" is a reserved actor name")
+			if isReservedActor(name) {
+				slog.Warn("skipping API_TOKENS entry: reserved actor name", "name", name)
 				continue
 			}
 			cfg.APITokens[name] = token
@@ -525,4 +527,17 @@ func splitList(v string) []string {
 		}
 	}
 	return out
+}
+
+// reservedActors are actor ids written by the system itself. "pr-feedback-sync"
+// must match workflow.ActorPRFeedbackSync (config has no internal imports).
+var reservedActors = []string{"policy", "pr-feedback-sync"}
+
+func isReservedActor(name string) bool {
+	for _, r := range reservedActors {
+		if name == r {
+			return true
+		}
+	}
+	return false
 }

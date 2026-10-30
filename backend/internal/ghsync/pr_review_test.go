@@ -508,6 +508,13 @@ func TestIngestPRFeedback_AutoTransition_EnabledOnRepo(t *testing.T) {
 	if updated.Label != toLabel {
 		t.Errorf("label = %q, want auto-transitioned to %q", updated.Label, toLabel)
 	}
+	h, err := q.GetLatestTaskLabelHistory(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Trigger != "human" || h.ActorID == nil || *h.ActorID != workflow.ActorPRFeedbackSync {
+		t.Errorf("history trigger/actor = %q/%v, want human/%s", h.Trigger, h.ActorID, workflow.ActorPRFeedbackSync)
+	}
 }
 
 func TestIngestPRFeedback_AutoTransition_DisabledOnRepo_NoOp(t *testing.T) {

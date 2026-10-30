@@ -171,6 +171,8 @@ Returns the task's label-transition audit trail (`task_label_history`), oldest f
 ]
 ```
 
+Reserved actors: `policy` (autonomy auto-approvals) and `pr-feedback-sync` (PR-feedback auto-transitions). Both keep trigger `human` but are not human decisions; gate metrics and rule proposals exclude `pr-feedback-sync`.
+
 `actor_id` is the resolved named-token actor (see `API_TOKENS` in
 [getting-started.md](getting-started.md)) for human-triggered transitions —
 `null`/empty when the legacy single shared `API_TOKEN` (or no auth) was used,

@@ -808,6 +808,8 @@ JOIN tasks t ON t.id = h.task_id
 WHERE t.workflow_id = ?1
   AND h.from_label = ?2
   AND h.trigger = 'human'
+  -- exclude PR-feedback sync moves (workflow.ActorPRFeedbackSync)
+  AND (h.actor_id IS NULL OR h.actor_id != 'pr-feedback-sync')
   AND (h.note IS NULL OR h.note NOT LIKE 'Forced move%')
   AND h.created_at >= CAST(?3 AS TEXT)
 ORDER BY h.created_at DESC, h.rowid DESC

@@ -544,6 +544,9 @@ func TestLoad_APITokensEnvVar_Parsed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
+	if _, ok := cfg.APITokens["pr-feedback-sync"]; ok {
+		t.Errorf("reserved name pr-feedback-sync must be skipped, got %v", cfg.APITokens)
+	}
 	if cfg.APITokens["alice"] != "tok1" {
 		t.Errorf("expected alice:tok1, got %q", cfg.APITokens["alice"])
 	}
@@ -561,6 +564,9 @@ func TestLoad_APITokensEnvVar_TrimsWhitespaceAndSkipsMalformed(t *testing.T) {
 	cfg, err := config.Load("")
 	if err != nil {
 		t.Fatalf("load: %v", err)
+	}
+	if _, ok := cfg.APITokens["pr-feedback-sync"]; ok {
+		t.Errorf("reserved name pr-feedback-sync must be skipped, got %v", cfg.APITokens)
 	}
 	if cfg.APITokens["alice"] != "tok1" {
 		t.Errorf("expected alice:tok1 (trimmed), got %q", cfg.APITokens["alice"])
@@ -768,7 +774,7 @@ func TestLoad_RemoteMCP_InvalidBoolFails(t *testing.T) {
 }
 
 func TestLoad_APITokens_ReservedPolicyNameSkipped(t *testing.T) {
-	t.Setenv("API_TOKENS", "policy:tok0,alice:tok1")
+	t.Setenv("API_TOKENS", "policy:tok0,pr-feedback-sync:tok2,alice:tok1")
 
 	cfg, err := config.Load("")
 	if err != nil {
@@ -776,6 +782,9 @@ func TestLoad_APITokens_ReservedPolicyNameSkipped(t *testing.T) {
 	}
 	if _, ok := cfg.APITokens["policy"]; ok {
 		t.Errorf("reserved name policy must be skipped, got %v", cfg.APITokens)
+	}
+	if _, ok := cfg.APITokens["pr-feedback-sync"]; ok {
+		t.Errorf("reserved name pr-feedback-sync must be skipped, got %v", cfg.APITokens)
 	}
 	if cfg.APITokens["alice"] != "tok1" {
 		t.Errorf("alice missing: %v", cfg.APITokens)

@@ -18,6 +18,7 @@ import (
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/handlers"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
+	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
 
 type btEnv struct {
@@ -311,5 +312,19 @@ func TestBacktest_ExtraRules(t *testing.T) {
 		if w := e.post(t, "review", body); w.Code != 400 {
 			t.Fatalf("invalid extra rule: %d %s", w.Code, w.Body)
 		}
+	}
+}
+
+func TestBacktest_ExcludesPRFeedbackSync(t *testing.T) {
+	e := newBacktestEnv(t)
+	h := time.Hour
+	e.pass(t, "approved", "done", "human", "", 3*h, 1, "pass", false)
+	e.pass(t, "human-reject", "work", "human", "", 2*h, 1, "pass", false)
+	id := e.pass(t, "sync-reject", "work", "human", "GitHub PR review feedback ingested", h, 1, "pass", false)
+	e.exec(t, `UPDATE task_label_history SET actor_id=? WHERE task_id=?`, workflow.ActorPRFeedbackSync, id)
+
+	got := e.run(t, map[string]any{"mode": "auto"})
+	if got.Total != 2 || got.Rejected != 1 {
+		t.Fatalf("want total=2 rejected=1, got %+v", got)
 	}
 }

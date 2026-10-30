@@ -15,6 +15,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/pathglob"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
+	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
 
 func strp(s string) *string { return &s }
@@ -413,5 +414,25 @@ func TestStartRejectsConcurrentRun(t *testing.T) {
 	e.svc.mu.Unlock()
 	if _, err := e.svc.Start(context.Background(), e.wfID, "review", "josh"); !errors.Is(err, ErrRunning) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRunGateIgnoresPRFeedbackSyncRejections(t *testing.T) {
+	e := setup(t)
+	e.configure(t)
+	for i := 0; i < 3; i++ {
+		tk := e.task(t, "bug")
+		e.reject(t, tk, "GitHub PR review feedback ingested")
+		if _, err := e.db.Exec(`UPDATE task_label_history SET actor_id = ? WHERE task_id = ?`, workflow.ActorPRFeedbackSync, tk.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.reject(t, e.task(t, "bug"), "")
+	run, err := e.svc.RunGate(context.Background(), e.wfID, "review", TriggerManual, "josh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != RunSkipped || run.EvidenceCount != 1 {
+		t.Fatalf("run = %+v", run)
 	}
 }

@@ -64,6 +64,12 @@ func SuccessTarget(transitions []gen.WorkflowTransition, fromLabel string) (targ
 	return target, found
 }
 
+// ActorPRFeedbackSync is the reserved actor_id recorded on label moves made by
+// ghsync's PR-feedback auto-transition (trigger stays "human"). Readers that
+// measure human judgment (gate exits, rule-proposal evidence, escapes) exclude it.
+// Must match the literals in config.go, SQL queries, migration 086 and the frontend.
+const ActorPRFeedbackSync = "pr-feedback-sync"
+
 // TransitionTrigger identifies who initiated a label change.
 type TransitionTrigger string
 
