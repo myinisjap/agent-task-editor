@@ -22,6 +22,7 @@ import { useEffect, useRef } from 'react'
 import type { Workflow } from '../api/client'
 import { OfficeScene } from './officeScene'
 import { officeStationsFor } from './officeStations'
+import { loadOfficeSheets } from './officeSheets'
 
 export default function TaskFactory({
   workflow,
@@ -82,6 +83,13 @@ export default function TaskFactory({
     }
 
     let { cssW, cssH } = resize()
+    // Swap in the PNG sprite sheets once they decode (grid sprites until then).
+    let alive = true
+    loadOfficeSheets().then((sheets) => {
+      if (!alive || !sheets) return
+      scene.setSheets(sheets)
+      if (reduce) scene.draw(ctx, cssW, cssH)
+    })
     const ro = new ResizeObserver(() => {
       ;({ cssW, cssH } = resize())
       // Resizing clears the canvas; with no loop running (reduced motion)
@@ -96,7 +104,10 @@ export default function TaskFactory({
     if (reduce) {
       scene.settle() // finish tweens/fades so the single frame is the end state
       scene.draw(ctx, cssW, cssH) // one static frame, no loop
-      return () => ro.disconnect()
+      return () => {
+        alive = false
+        ro.disconnect()
+      }
     }
 
     let raf = 0
@@ -122,6 +133,7 @@ export default function TaskFactory({
     document.addEventListener('visibilitychange', onVisibility)
     if (!document.hidden) start()
     return () => {
+      alive = false
       stop()
       document.removeEventListener('visibilitychange', onVisibility)
       ro.disconnect()
