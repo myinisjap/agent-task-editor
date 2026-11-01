@@ -73,9 +73,10 @@ func parseClaudeResetTime(resultText string, now time.Time) time.Time {
 	candidate := time.Date(nowInLoc.Year(), nowInLoc.Month(), nowInLoc.Day(), hour24, minute, 0, 0, loc)
 	// Claude's reset message always refers to the *next* occurrence of that
 	// wall-clock time. If today's occurrence has already passed (or is
-	// exactly now), it must mean tomorrow.
+	// exactly now), it must mean tomorrow: the same wall-clock time on the
+	// next calendar day in loc. Don't add 24h; DST days are 23 or 25 hours.
 	if !candidate.After(nowInLoc) {
-		candidate = candidate.Add(24 * time.Hour)
+		candidate = candidate.AddDate(0, 0, 1)
 	}
 
 	return candidate.Add(resetBuffer)
