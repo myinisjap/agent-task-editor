@@ -227,3 +227,115 @@ describe('OfficeScene zoom', () => {
     expect(scene.width()).toBeGreaterThan(1000) // zoom 6 → 1072
   })
 })
+
+// A Proxy 2D context: every method is a spy, with the few return values the
+// scene reads back (gradients, image data, text metrics, transform).
+function fakeCtx(calls: Record<string, number> = {}) {
+  const target: Record<string, unknown> = {}
+  return new Proxy(target, {
+    get(_t, prop: string) {
+      if (prop === 'getTransform') return () => ({ a: 1 })
+      if (prop === 'measureText') return () => ({ width: 10 })
+      if (prop === 'getImageData') return (_x: number, _y: number, w: number, h: number) => ({ data: new Uint8ClampedArray(w * h * 4) })
+      if (prop in target) return target[prop]
+      return (...args: unknown[]) => {
+        calls[prop] = (calls[prop] ?? 0) + 1
+        if (prop === 'createRadialGradient') return { addColorStop: vi.fn() }
+        return args[0]
+      }
+    },
+    set(t, prop: string, v) {
+      t[prop] = v
+      return true
+    },
+  }) as unknown as CanvasRenderingContext2D
+}
+
+describe('OfficeScene particles', () => {
+  it('emits sparks while hammering, stays under the cap, and settle() clears them', () => {
+    const scene = new OfficeScene()
+    scene.layout(1200)
+    scene.setStations([mk('w', 4, { action: 'hammering' })])
+    let max = 0
+    for (let i = 0; i < 1200; i++) {
+      scene.step(1 / 60)
+      max = Math.max(max, scene.particleCount())
+    }
+    expect(max).toBeGreaterThan(0)
+    expect(max).toBeLessThanOrEqual(200)
+    scene.settle()
+    expect(scene.particleCount()).toBe(0)
+  })
+
+  it('stays under the cap with many celebrating crews', () => {
+    const scene = new OfficeScene()
+    scene.layout(2400)
+    scene.setStations(Array.from({ length: 8 }, (_, i) => mk(`c${i}`, 6, { action: 'celebrating' })))
+    let max = 0
+    for (let i = 0; i < 600; i++) {
+      scene.step(1 / 60)
+      max = Math.max(max, scene.particleCount())
+    }
+    expect(max).toBeGreaterThan(0)
+    expect(max).toBeLessThanOrEqual(200)
+  })
+
+  it('puffs steam and LEDs at the robot rack and walks robots without throwing', () => {
+    const scene = new OfficeScene()
+    scene.setRobots(true)
+    scene.layout(1200)
+    scene.setStations([mk('a', 2, { action: 'robot' }), mk('b', 0, { action: 'robot' })])
+    scene.step(1 / 60)
+    expect(scene.particleCount()).toBeGreaterThan(0)
+    scene.setStations([mk('a', 1, { action: 'robot' }), mk('b', 1, { action: 'robot' })])
+    expect(() => {
+      for (let i = 0; i < 300; i++) scene.step(1 / 30)
+    }).not.toThrow()
+  })
+
+  it('a moving robot-station sprite takes a side profile on horizontal legs', () => {
+    const scene = new OfficeScene()
+    scene.layout(1200)
+    scene.setStations([mk('a', 1, { action: 'robot' })])
+    let side = false
+    for (let i = 0; i < 1200 && !side; i++) {
+      scene.step(1 / 30)
+      side = scene.spriteStates().some((s) => s.moving && s.dir === 'side')
+    }
+    expect(side).toBe(true)
+  })
+})
+
+describe('OfficeScene cached layers', () => {
+  it('builds gradients once, reuses them across frames, and rebuilds only when dirtied', () => {
+    const layerCalls: Record<string, number> = {}
+    const scene = new OfficeScene()
+    scene.canvasFactory = (w, h) => ({ width: w, height: h, getContext: () => fakeCtx(layerCalls) })
+    scene.layout(1200)
+    scene.setStations(stations({ a: 2, b: 1 }))
+    const main = fakeCtx()
+    const w = scene.width()
+    const h = scene.height()
+    expect(layerCalls.createRadialGradient ?? 0).toBe(0) // nothing built in layout/setStations
+    scene.draw(main, w, h)
+    const first = layerCalls.createRadialGradient
+    expect(first).toBeGreaterThan(0)
+    scene.step(1 / 60)
+    scene.draw(main, w, h)
+    scene.draw(main, w, h)
+    expect(layerCalls.createRadialGradient).toBe(first)
+    scene.setStations(stations({ a: 2, b: 1, c: 1 }))
+    scene.draw(main, scene.width(), scene.height())
+    expect(layerCalls.createRadialGradient).toBeGreaterThan(first)
+  })
+
+  it('draws without any canvas factory (direct fallback) and with reduced-motion settle', () => {
+    const scene = new OfficeScene()
+    scene.canvasFactory = () => null
+    scene.layout(1200)
+    scene.setStations(stations({ a: 2 }, { a: { gate: true, action: 'waving' } }))
+    scene.settle()
+    expect(() => scene.draw(fakeCtx(), scene.width(), scene.height())).not.toThrow()
+    expect(scene.particleCount()).toBe(0)
+  })
+})

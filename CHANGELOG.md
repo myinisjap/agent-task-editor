@@ -19,6 +19,9 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Changed
+- **Office / Robots scene polish.** Sprites cast soft pixel shadows that shrink as they jump or hover; workstations and tall props have contact shadows. Each station's desk sits in a warm light pool tinted by its stage colour, with a gentle vignette, both pre-rendered at art-pixel resolution so they stay crisp at every zoom. A small pooled particle system adds anvil sparks, paper bits, server-rack steam and LEDs, and confetti bursts. The agent-review robot now has side and back views and hovers on a flickering thruster so it faces where it moves. Workers carry a task box while walking between stations. Side-view actions have their own frames, and walks ease in and out. Reduced motion still draws one static frame with no particles. The Factory view is unchanged.
+
 ### Added
 - **Suggested ask rules (model-proposed, ADR 0040).** Pick a provider config in the gate panel (or `PUT /settings/autonomy` `proposal_provider_config_id`) and a model reads the gate's last 30 days of escapes and rejections and suggests ask rules that would have caught them. The server validates each suggestion like any ask rule, replays it with the evaluator's own matcher and shows what it would have caught and how many clean approvals it would also have stopped; a suggestion that catches nothing is dropped. **Add as ask rule** creates a normal rule; dismissed suggestions are not offered again. Runs happen on demand (**Find rules**) or every `proposal_interval_hours` (default 24) for gates not in Always ask, in a scratch directory with shell commands denied, and are recorded with their cost. The gate decision itself never calls a model, so a suggestion can only add asking. New `GET /autonomy/rule-proposals`, `POST /autonomy/rule-proposals/{id}/accept|dismiss`, `POST /workflows/{id}/labels/{label}/autonomy/proposals/run` and `GET .../autonomy/proposal-runs`.
 

@@ -26,6 +26,10 @@ import {
   VARIANTS,
   WALK_FRAME_COUNT,
   WALK_BOB,
+  ROBOT_HOVER_BOB,
+  isImpactFrame,
+  SHADOW_ROWS,
+  SHADOW_ALPHA,
   GRID_W,
   GRID_H,
   type Action,
@@ -33,6 +37,16 @@ import {
   type Frame,
   type Variant,
 } from './pixelSprites'
+import {
+  ParticlePool,
+  PARTICLE_CAP,
+  PARTICLE_COLORS,
+  SPARK,
+  PAPER,
+  STEAM,
+  LED,
+  CONFETTI,
+} from './officeParticles'
 
 export type Station = {
   key: string
@@ -78,6 +92,17 @@ type Sprite = {
   blinkTimer: number
   blinkLeft: number
   breathPhase: number
+  startT: number // walk-start anticipation left (s)
+  settleT: number // feet-together settle left after arriving (s)
+  prevFrame: number // last action frame seen (particle emission on change)
+  burstCool: number // confetti rate limit (s)
+  // Last composed frame + the inputs it was built from (skip recomposing).
+  lastFrame: Frame | null
+  fAct: Action
+  fIdx: number
+  fLeg: number
+  fDir: Dir
+  fFlags: number
 }
 
 // Zoom. ART_PX is base units per art pixel; DEFAULT_ZOOM is CSS px per art
@@ -187,6 +212,24 @@ export class OfficeScene {
   private zoom = DEFAULT_ZOOM
   private scale = 1
   private availW = STATION_W + PAD * 2
+  private ordered: Sprite[] = []
+  private particles = new ParticlePool(PARTICLE_CAP)
+  private stationEmit = new Float32Array(0) // per station: [steam timer, LED timer]
+  private tmpX = 0
+  private tmpY = 0
+  // Cached layers (built lazily in draw, dirtied by layout/stations/zoom).
+  canvasFactory: (w: number, h: number) => CanvasLike | null = defaultCanvas
+  private lastLayer: CanvasLike | null = null
+  private bg: CanvasLike | null = null
+  private front: CanvasLike | null = null
+  private shade: CanvasLike | null = null
+  private glow: CanvasLike | null = null
+  private bgDirty = true
+  private lightDirty = true
+  private bgW = -1
+  private bgH = -1
+  private lightW = 0
+  private lightH = 0
 
   setRobots(on: boolean) {
     this.robots = on
@@ -197,6 +240,7 @@ export class OfficeScene {
   setZoom(z: number | 'auto') {
     this.zoomOpt = z
     this.applyZoom()
+    this.bgDirty = true
   }
 
   private applyZoom() {
@@ -211,6 +255,9 @@ export class OfficeScene {
     this.stations = next
     this.applyZoom()
     this.relayout()
+    this.bgDirty = true
+    this.lightDirty = true
+    if (this.stationEmit.length !== next.length * 2) this.stationEmit = new Float32Array(next.length * 2)
     if (!sameKeys) {
       this.rebuildSprites() // first call or workflow switch: no fades
       return
@@ -314,6 +361,8 @@ export class OfficeScene {
     const changed = cols !== this.cols
     this.cols = cols
     this.relayout()
+    this.bgDirty = true
+    this.lightDirty = true
     if (changed) this.replaceSprites()
   }
 
@@ -321,6 +370,7 @@ export class OfficeScene {
   // after a column-count change so nobody is left in a stale grid cell.
   // Hand-off walkers keep walking, just toward a spot in the new patch.
   private replaceSprites() {
+    this.particles.clear()
     for (const s of this.sprites) {
       const spot = this.idleTarget(s.stationIndex)
       if (s.mode === 'handoff') {
@@ -424,11 +474,22 @@ export class OfficeScene {
       blinkTimer: rand(2, 5),
       blinkLeft: 0,
       breathPhase: Math.random() * BREATH_PERIOD,
+      startT: 0,
+      settleT: 0,
+      prevFrame: -1,
+      burstCool: 0,
+      lastFrame: null,
+      fAct: 'idle',
+      fIdx: -1,
+      fLeg: -2,
+      fDir: 'front',
+      fFlags: -1,
     }
   }
 
   private rebuildSprites() {
     this.sprites = []
+    this.particles.clear()
     this.stations.forEach((st, i) => {
       const n = Math.min(st.count, CAP)
       for (let k = 0; k < n; k++) {
@@ -455,6 +516,8 @@ export class OfficeScene {
     s.dur = Math.max(minDur, Math.min(maxDur, dist / s.speed))
     s.moving = true
     s.legDist = 0
+    s.startT = 0.1 // brief anticipation before the first step
+    s.settleT = 0
     // Dominant axis: mostly-horizontal → side profile (mirrored via facing);
     // mostly-vertical → back if walking up, front if walking down.
     if (Math.abs(dx) >= Math.abs(dy)) {
@@ -484,8 +547,11 @@ export class OfficeScene {
     const st = this.stations[s.stationIndex]
     // At the work slot: face the station (back to viewer) and stay a while to
     // act; otherwise idle facing the viewer (front). Gate crews linger waving.
+    s.settleT = 0.12
+    const wasSide = s.dir === 'side'
     s.pause = s.atWork ? 2.5 + Math.random() * 3 : st?.gate ? 2.5 + Math.random() * 3 : 0.6 + Math.random() * 1.8
-    s.dir = s.atWork ? 'back' : 'front'
+    // Sometimes park in profile after a sideways leg so the side action frames show.
+    s.dir = s.atWork ? 'back' : !st?.gate && wasSide && Math.random() < 0.4 ? 'side' : 'front'
     if (s.atWork) s.facing = 1
   }
 
@@ -495,8 +561,15 @@ export class OfficeScene {
   }
 
   /** Test introspection only (read-only): the current sprite roster. */
-  spriteStates(): { stationKey: string; mode: SpriteMode; alpha: number; atWork: boolean }[] {
-    return this.sprites.map((s) => ({ stationKey: s.stationKey, mode: s.mode, alpha: s.alpha, atWork: s.atWork }))
+  spriteStates(): { stationKey: string; mode: SpriteMode; alpha: number; atWork: boolean; dir: Dir; moving: boolean }[] {
+    return this.sprites.map((s) => ({
+      stationKey: s.stationKey, mode: s.mode, alpha: s.alpha, atWork: s.atWork, dir: s.dir, moving: s.moving,
+    }))
+  }
+
+  /** Test introspection only: live particle count. */
+  particleCount(): number {
+    return this.particles.count()
   }
 
   // Finish everything instantly (reduced motion / static frame): tweens snap,
@@ -509,6 +582,8 @@ export class OfficeScene {
         s.alpha = 1
       }
       if (s.moving) this.arrive(s)
+      s.startT = 0
+      s.settleT = 0
       s.blinkLeft = 0
       s.breathPhase = 0
     }
@@ -516,6 +591,7 @@ export class OfficeScene {
     this.reconcile()
     this.sprites = this.sprites.filter((s) => s.mode !== 'fadeOut')
     for (const s of this.sprites) { s.mode = 'local'; s.alpha = 1 }
+    this.particles.clear()
   }
 
   step(dt: number) {
@@ -541,12 +617,19 @@ export class OfficeScene {
         s.frameTimer -= fd
         s.frame = (s.frame + 1) % actionFrameCount(act)
       }
+      if (s.burstCool > 0) s.burstCool -= dt
+      if (s.frame !== s.prevFrame) {
+        s.prevFrame = s.frame
+        if (!s.moving && s.mode !== 'fadeOut' && s.alpha >= 1) this.emitFor(s, act)
+      }
       if (s.mode === 'fadeOut') continue
 
       // A gate crew never queues for the workstation.
       if (st.gate && s.atWork && !s.moving) s.atWork = false
 
-      if (s.moving) {
+      if (s.moving && s.startT > 0) {
+        s.startT -= dt // anticipation: hold still on the pass pose
+      } else if (s.moving) {
         s.t += dt
         const u = s.t >= s.dur ? 1 : s.t / s.dur
         const e = ease(u)
@@ -563,6 +646,7 @@ export class OfficeScene {
         if (u >= 1) this.arrive(s)
       } else {
         // Idle life: breathing settle + occasional blink.
+        if (s.settleT > 0) s.settleT -= dt
         s.breathPhase += dt
         if (s.blinkLeft > 0) s.blinkLeft -= dt
         else {
@@ -593,78 +677,410 @@ export class OfficeScene {
       }
     }
     if (anyGone) this.sprites = this.sprites.filter((s) => !(s.mode === 'fadeOut' && s.alpha <= 0))
+    this.emitStations(dt)
+    this.particles.step(dt)
+  }
+
+  // ---- particle emission ----------------------------------------------------
+  // Everything below writes plain numbers into the pooled arrays: no objects
+  // or arrays are created per particle.
+
+  // Workstation origin/size for station i, without allocating (see workstation()).
+  private wsBox(i: number) {
+    const col = i % this.cols
+    const row = Math.floor(i / this.cols)
+    this.tmpX = PAD + col * STATION_W + STATION_W / 2 - 42 // ws.x
+    this.tmpY = PAD + row * CELL_H + SIGN_H + 12 // ws.y
+  }
+
+  // Sparks / paper / confetti when a parked sprite's action frame changes.
+  private emitFor(s: Sprite, act: Action) {
+    const pl = this.particles
+    if (act === 'hammering' && isImpactFrame(act, s.frame, s.dir)) {
+      let x: number
+      let y: number
+      if (s.atWork) {
+        this.wsBox(s.stationIndex)
+        x = this.tmpX + 42
+        y = this.tmpY + 46 * 0.42
+      } else {
+        x = s.dir === 'side' && s.facing === -1 ? s.x + SPRITE_W - 13 * ART_PX : s.x + 13 * ART_PX
+        y = s.y + 17 * ART_PX
+      }
+      const n = 4 + Math.floor(Math.random() * 3)
+      for (let k = 0; k < n; k++) {
+        pl.spawn(SPARK, x, y, rand(-70, 70), rand(-140, -50), 300, rand(0.25, 0.45), Math.floor(Math.random() * 3))
+      }
+    } else if (act === 'drawing' && Math.random() < 0.3) {
+      let x: number
+      let y: number
+      if (s.atWork) {
+        this.wsBox(s.stationIndex)
+        x = this.tmpX + 84 * 0.25
+        y = this.tmpY + 46 * 0.7
+      } else {
+        x = s.x + 11 * ART_PX
+        y = s.y + 15 * ART_PX
+      }
+      pl.spawn(PAPER, x, y, 0, 18, 0, 1.2, 3 + Math.floor(Math.random() * 2))
+    } else if (act === 'celebrating' && s.burstCool <= 0 && isImpactFrame(act, s.frame, s.dir)) {
+      s.burstCool = 0.9
+      const x = s.x + SPRITE_W / 2
+      const y = s.y + 2 * ART_PX
+      const n = 10 + Math.floor(Math.random() * 5)
+      for (let k = 0; k < n; k++) {
+        pl.spawn(CONFETTI, x, y, rand(-70, 70), rand(-150, -60), 260, rand(0.8, 1.4), 11 + Math.floor(Math.random() * 5))
+      }
+    }
+  }
+
+  // Steam puffs and blinking LEDs on the server rack of robot stations.
+  private emitStations(dt: number) {
+    const e = this.stationEmit
+    for (let i = 0; i < this.stations.length; i++) {
+      const st = this.stations[i]
+      if (st.gate || st.action !== 'robot' || st.count <= 0) continue
+      this.wsBox(i)
+      const wx = this.tmpX
+      const wy = this.tmpY
+      const sx = 84 / 60
+      const sy = 46 / 34
+      e[i * 2] -= dt
+      if (e[i * 2] <= 0) {
+        e[i * 2] = 0.35
+        this.particles.spawn(STEAM, wx + (30 + rand(-10, 10)) * sx, wy - 2, rand(-6, 6), -22, 0, 1.5, 5 + Math.floor(Math.random() * 3))
+      }
+      e[i * 2 + 1] -= dt
+      if (e[i * 2 + 1] <= 0) {
+        e[i * 2 + 1] = 0.2
+        const k = Math.floor(Math.random() * 4)
+        // Four fixed LED spots on the rack face.
+        const lx = 30 + (k % 2 === 0 ? -9 : 8)
+        const ly = 8 + (k >> 1) * 8 + (k === 3 ? 6 : 0)
+        this.particles.spawn(LED, wx + lx * sx, wy + ly * sy, 0, 0, 0, 0.2, 8 + Math.floor(Math.random() * 3))
+      }
+    }
+  }
+
+
+  // ---- lazily-built cached layers -------------------------------------------
+  // Everything static (floor, props, workstations, signs, lamps) is baked into
+  // an offscreen canvas at device resolution; the lights are baked at ART-PIXEL
+  // resolution (1 canvas px = 1 art px) so they stay crisp at every zoom. All
+  // building happens inside draw() on demand (never in layout/setStations), so
+  // nothing is created per frame and tests without a canvas never touch one.
+
+  private makeLayer(w: number, h: number): CanvasRenderingContext2D | null {
+    const c = this.canvasFactory(Math.max(1, w), Math.max(1, h))
+    if (!c) return null
+    const g = c.getContext('2d') as CanvasRenderingContext2D | null
+    if (!g) return null
+    this.lastLayer = c
+    return g
+  }
+
+  private ensureLayers(ctx: CanvasRenderingContext2D, cssW: number, cssH: number) {
+    if (this.bgDirty || this.bgW !== cssW || this.bgH !== cssH) this.buildBg(ctx, cssW, cssH)
+    if (this.lightDirty) this.buildLight()
+  }
+
+  private buildBg(ctx: CanvasRenderingContext2D, cssW: number, cssH: number) {
+    this.bgDirty = false
+    this.bgW = cssW
+    this.bgH = cssH
+    this.bg = null
+    this.front = null
+    const dpr = (typeof ctx.getTransform === 'function' ? ctx.getTransform().a : 1) || 1
+    const pw = Math.ceil(cssW * dpr)
+    const ph = Math.ceil(cssH * dpr)
+    const k = dpr * this.scale
+    const bgCtx = this.makeLayer(pw, ph)
+    if (!bgCtx) return
+    const bgCanvas = this.lastLayer
+    bgCtx.imageSmoothingEnabled = false
+    bgCtx.scale(k, k)
+    this.paintBackground(bgCtx, cssW / this.scale, cssH / this.scale)
+    const frCtx = this.makeLayer(pw, ph)
+    if (!frCtx) return
+    frCtx.imageSmoothingEnabled = false
+    frCtx.scale(k, k)
+    this.paintFront(frCtx)
+    this.bg = bgCanvas
+    this.front = this.lastLayer
+  }
+
+  private paintBackground(ctx: CanvasRenderingContext2D, w: number, h: number) {
+    // ONE continuous warm wood floor across the whole scene. Stations abut with
+    // no gap, so with a single floor the whole thing reads as one open room.
+    drawSharedFloor(ctx, w, h)
+    // Short back-props (behind the desk), then workstations + signs.
+    this.stations.forEach((st, i) => {
+      const p = this.patch(i)
+      drawScatter(ctx, p, mulberry32(0x9e37 + i * 2654435761), 'back', 'noLamp')
+      drawWorkstation(ctx, st.action, this.workstation(i), st.color)
+      drawSign(ctx, this.workstation(i), st)
+    })
+    // Tall floor lamps AFTER workstations (so a lamp beside a desk isn't
+    // clipped by it) but before sprites. Same seed → same positions.
+    this.stations.forEach((_st, i) => {
+      drawScatter(ctx, this.patch(i), mulberry32(0x9e37 + i * 2654435761), 'back', 'lampOnly')
+    })
+  }
+
+  // Front-props: near the bottom edge, drawn over sprites (a plant a worker
+  // walks behind), grounding the room.
+  private paintFront(ctx: CanvasRenderingContext2D) {
+    this.stations.forEach((_st, i) => {
+      drawScatter(ctx, this.patch(i), mulberry32(0x51ed + i * 2654435761), 'front')
+    })
+  }
+
+  private buildLight() {
+    this.lightDirty = false
+    this.shade = null
+    this.glow = null
+    const rows = Math.max(1, Math.ceil((this.stations.length || 1) / Math.max(1, this.cols)))
+    const lw = Math.ceil(this.layoutW / ART_PX)
+    const lh = Math.ceil((PAD * 2 + rows * CELL_H) / ART_PX)
+    this.lightW = lw
+    this.lightH = lh
+
+    const sg = this.makeLayer(lw, lh)
+    if (!sg) return
+    const shadeCanvas = this.lastLayer
+    sg.fillStyle = 'rgba(16,10,32,0.28)' // dusk ambient
+    sg.fillRect(0, 0, lw, lh)
+    const vig = sg.createRadialGradient(lw / 2, lh / 2, 0, lw / 2, lh / 2, Math.hypot(lw / 2, lh / 2))
+    vig.addColorStop(0, 'rgba(8,4,16,0)')
+    vig.addColorStop(0.55, 'rgba(8,4,16,0)')
+    vig.addColorStop(1, 'rgba(8,4,16,0.45)')
+    sg.fillStyle = vig
+    sg.fillRect(0, 0, lw, lh)
+    // Cut a soft hole in the shade around every workstation.
+    sg.globalCompositeOperation = 'destination-out'
+    const rad = 80 / ART_PX
+    this.stations.forEach((_st, i) => {
+      const ws = this.workstation(i)
+      const cx = (ws.x + ws.w / 2) / ART_PX
+      const cy = (ws.y + ws.h / 2) / ART_PX
+      const g = sg.createRadialGradient(cx, cy, 0, cx, cy, rad)
+      g.addColorStop(0, 'rgba(0,0,0,0.9)')
+      g.addColorStop(1, 'rgba(0,0,0,0)')
+      sg.fillStyle = g
+      sg.fillRect(cx - rad, cy - rad, rad * 2, rad * 2)
+    })
+    sg.globalCompositeOperation = 'source-over'
+    quantizeAlpha(sg, lw, lh)
+
+    const gg = this.makeLayer(lw, lh)
+    if (!gg) return
+    const glowCanvas = this.lastLayer
+    this.stations.forEach((st, i) => {
+      const ws = this.workstation(i)
+      const cx = (ws.x + ws.w / 2) / ART_PX
+      const cy = (ws.y + ws.h / 2) / ART_PX
+      const [r, g, b] = mixHex('#ffd59a', st.color, 0.25)
+      const grad = gg.createRadialGradient(cx, cy, 0, cx, cy, rad)
+      grad.addColorStop(0, `rgba(${r},${g},${b},0.35)`)
+      grad.addColorStop(1, `rgba(${r},${g},${b},0)`)
+      gg.fillStyle = grad
+      gg.fillRect(cx - rad, cy - rad, rad * 2, rad * 2)
+      // Small glow at each floor lamp (positions come from the scatter seed).
+      for (const pr of scatterProps(this.patch(i), mulberry32(0x9e37 + i * 2654435761), 'back')) {
+        if (pr.kind !== 'lamp') continue
+        const lx = (pr.x + 7) / ART_PX
+        const ly = (pr.y + 4) / ART_PX
+        const lr = 36 / ART_PX
+        const lg = gg.createRadialGradient(lx, ly, 0, lx, ly, lr)
+        lg.addColorStop(0, 'rgba(253,224,138,0.3)')
+        lg.addColorStop(1, 'rgba(253,224,138,0)')
+        gg.fillStyle = lg
+        gg.fillRect(lx - lr, ly - lr, lr * 2, lr * 2)
+      }
+    })
+    quantizeAlpha(gg, lw, lh)
+    this.shade = shadeCanvas
+    this.glow = glowCanvas
+  }
+
+  private drawParticles(ctx: CanvasRenderingContext2D, emissive: boolean) {
+    const p = this.particles
+    let alpha = 1
+    for (let i = 0; i < p.cap; i++) {
+      if (!p.alive[i]) continue
+      const k = p.kind[i]
+      const em = k !== PAPER && k !== STEAM
+      if (em !== emissive) continue
+      let a = 1
+      if (!em) a = (Math.ceil((p.life[i] / p.maxLife[i]) * 3) / 3) * (k === STEAM ? 0.55 : 0.9)
+      if (a !== alpha) {
+        ctx.globalAlpha = a
+        alpha = a
+      }
+      ctx.fillStyle = PARTICLE_COLORS[p.color[i]]
+      const sz = (k === STEAM ? 2 : 1) * ART_PX
+      ctx.fillRect(Math.round(p.x[i] / ART_PX) * ART_PX, Math.round(p.y[i] / ART_PX) * ART_PX, sz, sz)
+    }
+    if (alpha !== 1) ctx.globalAlpha = 1
   }
 
   draw(ctx: CanvasRenderingContext2D, cssW: number, cssH: number) {
     const scale = this.scale
     ctx.imageSmoothingEnabled = false
     ctx.clearRect(0, 0, cssW, cssH)
+    this.ensureLayers(ctx, cssW, cssH)
     ctx.save()
     ctx.scale(scale, scale)
     const w = cssW / scale
     const h = cssH / scale
 
-    // ONE continuous warm wood floor across the whole scene. Stations abut with
-    // no gap, so with a single floor the whole thing reads as one open room
-    // rather than a grid of boxes.
-    drawSharedFloor(ctx, w, h)
+    // 1. static background (cached layer, or direct drawing if no canvas).
+    if (this.bg) ctx.drawImage(this.bg as CanvasImageSource, 0, 0, w, h)
+    else this.paintBackground(ctx, w, h)
 
-    // Short back-props (behind the desk), then workstations + signs.
-    this.stations.forEach((st, i) => {
-      const p = this.patch(i)
-      const rng = mulberry32(0x9e37 + i * 2654435761)
-      drawScatter(ctx, p, rng, 'back', 'noLamp')
-      drawWorkstation(ctx, st.action, this.workstation(i), st.color)
-      drawSign(ctx, this.workstation(i), st)
-    })
+    // 2. depth-sorted sprites (reused array: no per-frame allocation).
+    const ordered = this.ordered
+    ordered.length = 0
+    for (let i = 0; i < this.sprites.length; i++) ordered.push(this.sprites[i])
+    ordered.sort(byY)
+    for (let i = 0; i < ordered.length; i++) this.drawOne(ctx, ordered[i], scale)
 
-    // Tall floor lamps AFTER workstations (so a lamp beside a desk isn't
-    // clipped by it) but before sprites (so workers still pass in front). Same
-    // rng seed → identical positions as the back pass above.
-    this.stations.forEach((_st, i) => {
-      const p = this.patch(i)
-      const rng = mulberry32(0x9e37 + i * 2654435761)
-      drawScatter(ctx, p, rng, 'back', 'lampOnly')
-    })
+    // 3. front props.
+    if (this.front) ctx.drawImage(this.front as CanvasImageSource, 0, 0, w, h)
+    else this.paintFront(ctx)
 
-    // Depth-sort sprites back-to-front so lower ones overlap upper ones.
-    const ordered = [...this.sprites].sort((a, b) => a.y - b.y)
-    for (const s of ordered) {
+    // 4. particles: paper + steam sit under the light, sparks/LEDs/confetti
+    // are emissive and go over it.
+    const live = this.particles.count() > 0
+    if (live) this.drawParticles(ctx, false)
+
+    // 5. lighting (art-pixel layers, nearest-neighbour: each cell is `zoom` CSS px).
+    if (this.glow && this.shade) {
+      ctx.globalCompositeOperation = 'lighter'
+      ctx.drawImage(this.glow as CanvasImageSource, 0, 0, this.lightW * ART_PX, this.lightH * ART_PX)
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.drawImage(this.shade as CanvasImageSource, 0, 0, this.lightW * ART_PX, this.lightH * ART_PX)
+    }
+    if (live) this.drawParticles(ctx, true)
+
+    // 6. gate "!" alerts last so the shade never dims them.
+    for (let i = 0; i < ordered.length; i++) {
+      const s = ordered[i]
       const st = this.stations[s.stationIndex]
-      if (!st) continue
-      const act = actionOf(st)
-      const walking = s.moving && act !== 'robot'
-      const walkLeg = walking ? s.leg : -1
-      const parked = !s.moving
-      const breath = parked && Math.sin((2 * Math.PI * s.breathPhase) / BREATH_PERIOD) > 0.6
-      const f = composeFrame(act, s.frame, walkLeg, s.variant, s.dir, this.robots, {
-        blink: parked && s.blinkLeft > 0,
-        breath,
-      })
-      // 'side' is authored facing right; mirror for leftward travel. Front and
-      // back are symmetric, so only side needs the facing flip.
-      const flip = s.dir === 'side' && s.facing === -1
-      const bob = walking ? WALK_BOB[s.leg % WALK_BOB.length] : parked ? actionBob(act, s.frame) : 0
-      // Snap the origin to whole CSS px so every art pixel lands on integer px.
+      if (!st || !st.gate || s.moving || s.mode === 'fadeOut') continue
       const sx = Math.round(s.x * scale) / scale
       const sy = Math.round(s.y * scale) / scale
       if (s.alpha < 1) ctx.globalAlpha = s.alpha
-      drawSprite(ctx, f, sx, sy, bob * ART_PX, flip ? -1 : 1)
-      if (st.gate && parked && s.mode !== 'fadeOut') {
-        const hop = Math.floor(this.clock * 2.5) % 2 ? -ART_PX : 0
-        drawAlert(ctx, sx + SPRITE_W / 2, sy - 16 + hop, st.color)
-      }
+      const hop = Math.floor(this.clock * 2.5) % 2 ? -ART_PX : 0
+      drawAlert(ctx, sx + SPRITE_W / 2, sy - 16 + hop, st.color)
       if (s.alpha < 1) ctx.globalAlpha = 1
     }
-
-    // Front-props: near the bottom edge, drawn last so they overlap sprites
-    // (a plant a worker walks behind), grounding the room.
-    this.stations.forEach((_st, i) => {
-      const p = this.patch(i)
-      const rng = mulberry32(0x51ed + i * 2654435761)
-      drawScatter(ctx, p, rng, 'front')
-    })
     ctx.restore()
+  }
+
+  private drawOne(ctx: CanvasRenderingContext2D, s: Sprite, scale: number) {
+    const st = this.stations[s.stationIndex]
+    if (!st) return
+    const act = actionOf(st)
+    const parked = !s.moving
+    // Pose: walk cycle while moving (after a short anticipation step), a
+    // feet-together settle after arriving, else the action frame.
+    let walkLeg = -1
+    let bob = 0
+    if (s.moving) {
+      if (s.startT > 0) {
+        walkLeg = 1
+      } else {
+        walkLeg = s.leg
+        // Bob only at cruising speed (ease speed ∝ sin(πu)): first/last steps are flat.
+        const u = s.dur > 0 ? Math.min(1, s.t / s.dur) : 1
+        if (Math.sin(Math.PI * u) > 0.35) bob = act === 'robot' ? ROBOT_HOVER_BOB[s.leg % ROBOT_HOVER_BOB.length] : WALK_BOB[s.leg % WALK_BOB.length]
+      }
+    } else if (s.settleT > 0) {
+      walkLeg = 1
+    } else {
+      bob = actionBob(act, s.frame)
+    }
+    const blink = parked && walkLeg < 0 && s.blinkLeft > 0
+    const breath = parked && Math.sin((2 * Math.PI * s.breathPhase) / BREATH_PERIOD) > 0.6
+    const carry = s.mode === 'handoff' && s.moving
+    const flags = (blink ? 1 : 0) | (breath ? 2 : 0) | (carry ? 4 : 0) | (this.robots ? 8 : 0)
+    let f = s.lastFrame
+    if (!f || s.fAct !== act || s.fIdx !== s.frame || s.fLeg !== walkLeg || s.fDir !== s.dir || s.fFlags !== flags) {
+      f = composeFrame(act, s.frame, walkLeg, s.variant, s.dir, this.robots, { blink, breath, carry })
+      s.lastFrame = f
+      s.fAct = act
+      s.fIdx = s.frame
+      s.fLeg = walkLeg
+      s.fDir = s.dir
+      s.fFlags = flags
+    }
+    // 'side' is authored facing right; mirror for leftward travel.
+    const flip = s.dir === 'side' && s.facing === -1
+    // Snap the origin to whole CSS px so every art pixel lands on integer px.
+    const sx = Math.round(s.x * scale) / scale
+    const sy = Math.round(s.y * scale) / scale
+    if (s.alpha < 1) ctx.globalAlpha = s.alpha
+    drawSprite(ctx, f, sx, sy, bob * ART_PX, flip ? -1 : 1)
+    if (s.alpha < 1) ctx.globalAlpha = 1
+  }
+}
+
+type CanvasLike = { width: number; height: number; getContext(type: '2d'): unknown }
+
+function byY(a: Sprite, b: Sprite): number {
+  return a.y - b.y
+}
+
+// Parse #rgb / #rrggbb; null for anything else (labels carry user colors).
+function parseHex(c: string): [number, number, number] | null {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(c.trim())
+  if (!m) return null
+  let h = m[1]
+  if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2]
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
+}
+
+/** Mix `a` toward `b` by t (0..1); falls back to `a` if either isn't a hex color. */
+export function mixHex(a: string, b: string, t: number): [number, number, number] {
+  const pa = parseHex(a) ?? [255, 213, 154]
+  const pb = parseHex(b)
+  if (!pb) return pa
+  return [0, 1, 2].map((i) => Math.round(pa[i] * (1 - t) + pb[i] * t)) as [number, number, number]
+}
+
+// Snap a light layer's alpha to a few levels with a 2x2 Bayer dither, so the
+// light reads as pixel-art bands instead of a smooth airbrushed gradient.
+const BAYER = [0, 0.5, 0.75, 0.25]
+const LIGHT_LEVELS = 5
+function quantizeAlpha(g: CanvasRenderingContext2D, w: number, h: number) {
+  try {
+    const img = g.getImageData(0, 0, w, h)
+    const d = img.data
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4 + 3
+        if (!d[i]) continue
+        const v = (d[i] / 255) * (LIGHT_LEVELS - 1)
+        d[i] = Math.round((Math.floor(v + BAYER[(y & 1) * 2 + (x & 1)]) / (LIGHT_LEVELS - 1)) * 255)
+      }
+    }
+    g.putImageData(img, 0, 0)
+  } catch {
+    /* keep the smooth gradient if the canvas can't be read back */
+  }
+}
+
+// Soft ground shadow: a stepped ellipse of whole-art-pixel rows centered on
+// `cx`, bottom row at `footY`. Shrinks and fades as the body lifts (0..2 art px).
+const SHADOW_FILL = SHADOW_ALPHA.map((a) => `rgba(0,0,0,${a})`)
+function drawGroundShadow(ctx: CanvasRenderingContext2D, cx: number, footY: number, lift: number) {
+  const li = lift < 0 ? 0 : lift > 2 ? 2 : lift
+  const rows = SHADOW_ROWS[li]
+  ctx.fillStyle = SHADOW_FILL[li]
+  for (let i = 0; i < rows.length; i++) {
+    const hw = rows[i] * ART_PX
+    ctx.fillRect(cx - hw, footY - (rows.length - 1 - i) * ART_PX, hw * 2, ART_PX)
   }
 }
 
@@ -745,11 +1161,34 @@ function drawSign(
   }
 }
 
+type Prop = { kind: 'lamp' | 'plant' | 'box' | 'mug'; x: number; y: number }
+
+// The stable prop list for a band of a patch. The rng draw sequence is fixed
+// (count, then x/y/pick per prop), so positions/types never change between
+// the draw phases and the light-layer build.
+function scatterProps(p: Patch, rng: () => number, band: 'back' | 'front'): Prop[] {
+  const n = band === 'back' ? 2 + Math.floor(rng() * 2) : 1 + Math.floor(rng() * 2)
+  const yMin = band === 'back' ? p.y + 16 : p.y + p.h - 14
+  const ySpan = band === 'back' ? p.h * 0.22 : 10
+  const out: Prop[] = []
+  for (let k = 0; k < n; k++) {
+    const x = p.x + 4 + rng() * (p.w - 20)
+    const y = yMin + rng() * ySpan
+    const pick = rng()
+    // The floor lamp is tall (~character height); it only fits in the back band
+    // (full patch height below it), so in the front band that slot is a plant.
+    let kind: Prop['kind']
+    if (pick < 0.65) kind = pick >= 0.45 && band === 'back' ? 'lamp' : 'plant'
+    else kind = pick < 0.85 ? 'box' : 'mug'
+    out.push({ kind, x, y })
+  }
+  return out
+}
+
 // Scatter a stable set of small props (plants, boxes, mugs, lamps) in a band of
 // the patch. 'back' fills the upper third; 'front' the bottom edge.
 //
-// The `only` phase controls which props render, WITHOUT changing the rng draw
-// sequence — so prop positions/types stay identical across phases:
+// The `only` phase controls which props render:
 //   'noLamp' — everything except the tall floor lamp (drawn before workstations
 //              so short props sit behind the desk)
 //   'lampOnly' — only the floor lamp (drawn AFTER workstations so a tall lamp
@@ -762,29 +1201,22 @@ function drawScatter(
   band: 'back' | 'front',
   only: 'noLamp' | 'lampOnly' | 'all' = 'all',
 ) {
-  const n = band === 'back' ? 2 + Math.floor(rng() * 2) : 1 + Math.floor(rng() * 2)
-  const yMin = band === 'back' ? p.y + 16 : p.y + p.h - 14
-  const ySpan = band === 'back' ? p.h * 0.22 : 10
-  for (let k = 0; k < n; k++) {
-    const x = p.x + 4 + rng() * (p.w - 20)
-    const y = yMin + rng() * ySpan
-    const pick = rng()
-    // The floor lamp is tall (~character height); it only fits in the back band
-    // (full patch height below it), so in the front band that slot is a plant.
-    const isLamp = pick >= 0.45 && pick < 0.65 && band === 'back'
-    if (isLamp) {
-      if (only !== 'noLamp') drawLamp(ctx, x, y)
+  for (const pr of scatterProps(p, rng, band)) {
+    if (pr.kind === 'lamp') {
+      if (only !== 'noLamp') drawLamp(ctx, pr.x, pr.y)
       continue
     }
-    if (only === 'lampOnly') continue // this pass renders lamps only
-    if (pick < 0.45) drawPlant(ctx, x, y)
-    else if (pick < 0.65) drawPlant(ctx, x, y) // front-band lamp slot → plant
-    else if (pick < 0.85) drawBox(ctx, x, y)
-    else drawMug(ctx, x, y)
+    if (only === 'lampOnly') continue
+    if (pr.kind === 'plant') drawPlant(ctx, pr.x, pr.y)
+    else if (pr.kind === 'box') drawBox(ctx, pr.x, pr.y)
+    else drawMug(ctx, pr.x, pr.y)
   }
 }
 
+// Two-row stepped contact shadow: darker inner row, lighter wider outer row.
 function propShadow(ctx: CanvasRenderingContext2D, x: number, y: number, w: number) {
+  ctx.fillStyle = 'rgba(0,0,0,0.12)'
+  ctx.fillRect(x - 3, y + 2, w + 6, 2)
   ctx.fillStyle = 'rgba(0,0,0,0.25)'
   ctx.fillRect(x - 1, y, w + 2, 2)
 }
@@ -822,6 +1254,8 @@ function drawPlant(ctx: CanvasRenderingContext2D, x: number, y: number) {
 // a real floor lamp standing among them rather than a tabletop lamp.
 function drawLamp(ctx: CanvasRenderingContext2D, x: number, y: number) {
   propShadow(ctx, x + 2, y + 56, 9)
+  ctx.fillStyle = 'rgba(0,0,0,0.14)'
+  ctx.fillRect(x + 9, y + 57, 10, 2) // longer offset shadow
   // Base + long pole.
   ctx.fillStyle = '#334155'; ctx.fillRect(x + 3, y + 54, 8, 2) // base
   ctx.fillStyle = '#475569'; ctx.fillRect(x + 6, y + 8, 2, 46) // pole
@@ -860,12 +1294,31 @@ function drawMug(ctx: CanvasRenderingContext2D, x: number, y: number) {
 const WS_BASE_W = 60
 const WS_BASE_H = 34
 
+// Stepped soft shadow under a workstation's front edge, drawn in whole art
+// pixels OUTSIDE the non-integer workstation scale so it stays snapped. Tall
+// props (server rack, podium) get a longer, darker one.
+function contactShadow(ctx: CanvasRenderingContext2D, ws: { x: number; y: number; w: number; h: number }, tall: boolean) {
+  const snap = (v: number) => Math.round(v / ART_PX) * ART_PX
+  const x0 = snap(ws.x)
+  const x1 = snap(ws.x + ws.w)
+  const y = snap(ws.y + ws.h)
+  ctx.fillStyle = tall ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.14)'
+  ctx.fillRect(x0 - ART_PX, y + ART_PX, x1 - x0 + ART_PX * 2, ART_PX) // outer
+  ctx.fillStyle = tall ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.22)'
+  ctx.fillRect(x0, y, x1 - x0, ART_PX) // inner
+  if (tall) {
+    ctx.fillStyle = 'rgba(0,0,0,0.12)'
+    ctx.fillRect(x0 + ART_PX, y + ART_PX * 2, x1 - x0 - ART_PX * 2, ART_PX)
+  }
+}
+
 function drawWorkstation(
   ctx: CanvasRenderingContext2D,
   action: Action,
   ws: { x: number; y: number; w: number; h: number },
   accent: string,
 ) {
+  contactShadow(ctx, ws, action === 'robot' || action === 'celebrating')
   // Scale the authored (60x34) prop up to fill the real workstation footprint.
   ctx.save()
   ctx.translate(Math.round(ws.x), Math.round(ws.y))
@@ -939,8 +1392,8 @@ function drawWorkstation(
 // horizontally. `bob` (base units) lifts the body but not its ground shadow.
 // One filled rect per opaque pixel.
 function drawSprite(ctx: CanvasRenderingContext2D, f: Frame, px: number, py: number, bob: number, facing: 1 | -1) {
-  ctx.fillStyle = 'rgba(0,0,0,0.28)'
-  ctx.fillRect(px + ART_PX * 2, py + SPRITE_H - ART_PX, SPRITE_W - ART_PX * 4, ART_PX)
+  // The shadow stays on the ground and shrinks as the body lifts.
+  drawGroundShadow(ctx, px + SPRITE_W / 2, py + SPRITE_H, Math.round(-bob / ART_PX))
 
   ctx.save()
   if (facing === -1) {
@@ -969,4 +1422,15 @@ function drawAlert(ctx: CanvasRenderingContext2D, cx: number, y: number, color: 
   ctx.fillStyle = color
   ctx.fillRect(cx - ART_PX / 2, y, ART_PX, ART_PX * 3)
   ctx.fillRect(cx - ART_PX / 2, y + ART_PX * 3 + ART_PX / 3, ART_PX, ART_PX)
+}
+
+function defaultCanvas(w: number, h: number): CanvasLike | null {
+  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h) as unknown as CanvasLike
+  if (typeof document !== 'undefined') {
+    const c = document.createElement('canvas')
+    c.width = w
+    c.height = h
+    return c
+  }
+  return null
 }
