@@ -52,7 +52,7 @@ export const WORKER_SHEET: SheetSpec = {
     carrying_north: [20, 8],
     breath_south: [21, 4],
     walk_south: [22, 7],
-    walk_east: [23, 7],
+    walk_east: [23, 8],
     walk_north: [24, 6],
     wave_south: [25, 4],
     celebrate_south: [26, 5],
