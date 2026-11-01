@@ -865,12 +865,12 @@ export class OfficeScene {
     const sg = this.makeLayer(lw, lh)
     if (!sg) return
     const shadeCanvas = this.lastLayer
-    sg.fillStyle = 'rgba(16,10,32,0.28)' // dusk ambient
+    sg.fillStyle = 'rgba(16,10,32,0.18)' // dusk ambient
     sg.fillRect(0, 0, lw, lh)
     const vig = sg.createRadialGradient(lw / 2, lh / 2, 0, lw / 2, lh / 2, Math.hypot(lw / 2, lh / 2))
     vig.addColorStop(0, 'rgba(8,4,16,0)')
     vig.addColorStop(0.55, 'rgba(8,4,16,0)')
-    vig.addColorStop(1, 'rgba(8,4,16,0.45)')
+    vig.addColorStop(1, 'rgba(8,4,16,0.3)')
     sg.fillStyle = vig
     sg.fillRect(0, 0, lw, lh)
     // Cut a soft hole in the shade around every workstation.
@@ -887,7 +887,6 @@ export class OfficeScene {
       sg.fillRect(cx - rad, cy - rad, rad * 2, rad * 2)
     })
     sg.globalCompositeOperation = 'source-over'
-    quantizeAlpha(sg, lw, lh)
 
     const gg = this.makeLayer(lw, lh)
     if (!gg) return
@@ -898,7 +897,7 @@ export class OfficeScene {
       const cy = (ws.y + ws.h / 2) / ART_PX
       const [r, g, b] = mixHex('#ffd59a', st.color, 0.25)
       const grad = gg.createRadialGradient(cx, cy, 0, cx, cy, rad)
-      grad.addColorStop(0, `rgba(${r},${g},${b},0.35)`)
+      grad.addColorStop(0, `rgba(${r},${g},${b},0.22)`)
       grad.addColorStop(1, `rgba(${r},${g},${b},0)`)
       gg.fillStyle = grad
       gg.fillRect(cx - rad, cy - rad, rad * 2, rad * 2)
@@ -909,13 +908,12 @@ export class OfficeScene {
         const ly = (pr.y + 4) / ART_PX
         const lr = 36 / ART_PX
         const lg = gg.createRadialGradient(lx, ly, 0, lx, ly, lr)
-        lg.addColorStop(0, 'rgba(253,224,138,0.3)')
+        lg.addColorStop(0, 'rgba(253,224,138,0.2)')
         lg.addColorStop(1, 'rgba(253,224,138,0)')
         gg.fillStyle = lg
         gg.fillRect(lx - lr, ly - lr, lr * 2, lr * 2)
       }
     })
-    quantizeAlpha(gg, lw, lh)
     this.shade = shadeCanvas
     this.glow = glowCanvas
   }
@@ -955,6 +953,14 @@ export class OfficeScene {
     if (this.bg) ctx.drawImage(this.bg as CanvasImageSource, 0, 0, w, h)
     else this.paintBackground(ctx, w, h)
 
+    // 1b. ambient shade + vignette on the floor only, smoothly upscaled, so
+    // it never dithers over the characters walking through it.
+    if (this.shade) {
+      ctx.imageSmoothingEnabled = true
+      ctx.drawImage(this.shade as CanvasImageSource, 0, 0, this.lightW * ART_PX, this.lightH * ART_PX)
+      ctx.imageSmoothingEnabled = false
+    }
+
     // 2. depth-sorted sprites (reused array: no per-frame allocation).
     const ordered = this.ordered
     ordered.length = 0
@@ -971,12 +977,13 @@ export class OfficeScene {
     const live = this.particles.count() > 0
     if (live) this.drawParticles(ctx, false)
 
-    // 5. lighting (art-pixel layers, nearest-neighbour: each cell is `zoom` CSS px).
-    if (this.glow && this.shade) {
+    // 5. warm light pools, additive and smoothly upscaled (soft, no dither).
+    if (this.glow) {
+      ctx.imageSmoothingEnabled = true
       ctx.globalCompositeOperation = 'lighter'
       ctx.drawImage(this.glow as CanvasImageSource, 0, 0, this.lightW * ART_PX, this.lightH * ART_PX)
       ctx.globalCompositeOperation = 'source-over'
-      ctx.drawImage(this.shade as CanvasImageSource, 0, 0, this.lightW * ART_PX, this.lightH * ART_PX)
+      ctx.imageSmoothingEnabled = false
     }
     if (live) this.drawParticles(ctx, true)
 
@@ -1099,28 +1106,6 @@ export function mixHex(a: string, b: string, t: number): [number, number, number
   const pb = parseHex(b)
   if (!pb) return pa
   return [0, 1, 2].map((i) => Math.round(pa[i] * (1 - t) + pb[i] * t)) as [number, number, number]
-}
-
-// Snap a light layer's alpha to a few levels with a 2x2 Bayer dither, so the
-// light reads as pixel-art bands instead of a smooth airbrushed gradient.
-const BAYER = [0, 0.5, 0.75, 0.25]
-const LIGHT_LEVELS = 5
-function quantizeAlpha(g: CanvasRenderingContext2D, w: number, h: number) {
-  try {
-    const img = g.getImageData(0, 0, w, h)
-    const d = img.data
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const i = (y * w + x) * 4 + 3
-        if (!d[i]) continue
-        const v = (d[i] / 255) * (LIGHT_LEVELS - 1)
-        d[i] = Math.round((Math.floor(v + BAYER[(y & 1) * 2 + (x & 1)]) / (LIGHT_LEVELS - 1)) * 255)
-      }
-    }
-    g.putImageData(img, 0, 0)
-  } catch {
-    /* keep the smooth gradient if the canvas can't be read back */
-  }
 }
 
 // Soft ground shadow: a stepped ellipse of whole-art-pixel rows centered on
