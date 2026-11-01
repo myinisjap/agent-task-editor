@@ -100,3 +100,31 @@ func TestParseClaudeResetTime_CaseInsensitive(t *testing.T) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }
+
+func TestParseClaudeResetTime_DSTRollover(t *testing.T) {
+	const msg = "You've hit your session limit · resets 6pm (America/Chicago)"
+	chicago, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		t.Fatalf("LoadLocation: %v", err)
+	}
+	tests := []struct {
+		name string
+		now  time.Time
+		want time.Time
+	}{
+		{"fall-back", time.Date(2026, 10, 31, 18, 5, 0, 0, chicago), time.Date(2026, 11, 1, 18, 1, 0, 0, chicago)},
+		{"spring-forward", time.Date(2026, 3, 7, 18, 5, 0, 0, chicago), time.Date(2026, 3, 8, 18, 1, 0, 0, chicago)},
+		{"fall-back now in UTC", time.Date(2026, 11, 1, 0, 5, 0, 0, time.UTC), time.Date(2026, 11, 1, 18, 1, 0, 0, chicago)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseClaudeResetTime(msg, tc.now)
+			if l := got.In(chicago); l.Hour() != 18 || l.Minute() != 1 {
+				t.Errorf("want 18:01 Chicago, got %v", l)
+			}
+			if !got.Equal(tc.want) {
+				t.Errorf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
