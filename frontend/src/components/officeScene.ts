@@ -47,6 +47,7 @@ import {
   LED,
   CONFETTI,
 } from './officeParticles'
+import { pickClip, WORKER_SHEET, ROBOT_SHEET, type Sheets } from './officeSheets'
 
 export type Station = {
   key: string
@@ -95,6 +96,8 @@ type Sprite = {
   startT: number // walk-start anticipation left (s)
   settleT: number // feet-together settle left after arriving (s)
   prevFrame: number // last action frame seen (particle emission on change)
+  tick: number // monotonic action-frame counter (PNG sheet clips of any length)
+  steps: number // monotonic walk-step counter (PNG sheet walk cycles)
   burstCool: number // confetti rate limit (s)
   // Last composed frame + the inputs it was built from (skip recomposing).
   lastFrame: Frame | null
@@ -230,6 +233,16 @@ export class OfficeScene {
   private bgH = -1
   private lightW = 0
   private lightH = 0
+
+  // PNG sprite sheets (officeSheets.ts). Null until they load: the grid
+  // sprites from pixelSprites.ts are drawn meanwhile and in tests.
+  private sheets: Sheets | null = null
+  setSheets(sheets: Sheets | null) {
+    this.sheets = sheets
+  }
+  usingSheets(): boolean {
+    return this.sheets !== null
+  }
 
   setRobots(on: boolean) {
     this.robots = on
@@ -477,6 +490,8 @@ export class OfficeScene {
       startT: 0,
       settleT: 0,
       prevFrame: -1,
+      tick: Math.floor(Math.random() * 8),
+      steps: 0,
       burstCool: 0,
       lastFrame: null,
       fAct: 'idle',
@@ -616,6 +631,7 @@ export class OfficeScene {
       if (s.frameTimer >= fd) {
         s.frameTimer -= fd
         s.frame = (s.frame + 1) % actionFrameCount(act)
+        s.tick++
       }
       if (s.burstCool > 0) s.burstCool -= dt
       if (s.frame !== s.prevFrame) {
@@ -640,6 +656,7 @@ export class OfficeScene {
         while (s.legDist >= STRIDE) {
           s.legDist -= STRIDE
           s.leg = (s.leg + 1) % WALK_FRAME_COUNT
+          s.steps++
         }
         s.x = nx
         s.y = ny
@@ -972,7 +989,9 @@ export class OfficeScene {
       const sy = Math.round(s.y * scale) / scale
       if (s.alpha < 1) ctx.globalAlpha = s.alpha
       const hop = Math.floor(this.clock * 2.5) % 2 ? -ART_PX : 0
-      drawAlert(ctx, sx + SPRITE_W / 2, sy - 16 + hop, st.color)
+      // Sheet workers are taller than the grid box: lift the bubble over the head.
+      const lift = this.sheets && !this.robots && actionOf(st) !== 'robot' ? 30 : 16
+      drawAlert(ctx, sx + SPRITE_W / 2, sy - lift + hop, st.color)
       if (s.alpha < 1) ctx.globalAlpha = 1
     }
     ctx.restore()
@@ -1004,6 +1023,10 @@ export class OfficeScene {
     const blink = parked && walkLeg < 0 && s.blinkLeft > 0
     const breath = parked && Math.sin((2 * Math.PI * s.breathPhase) / BREATH_PERIOD) > 0.6
     const carry = s.mode === 'handoff' && s.moving
+    if (this.sheets) {
+      this.drawFromSheet(ctx, s, act, scale, s.moving ? 0 : bob, carry)
+      return
+    }
     const flags = (blink ? 1 : 0) | (breath ? 2 : 0) | (carry ? 4 : 0) | (this.robots ? 8 : 0)
     let f = s.lastFrame
     if (!f || s.fAct !== act || s.fIdx !== s.frame || s.fLeg !== walkLeg || s.fDir !== s.dir || s.fFlags !== flags) {
@@ -1024,7 +1047,36 @@ export class OfficeScene {
     drawSprite(ctx, f, sx, sy, bob * ART_PX, flip ? -1 : 1)
     if (s.alpha < 1) ctx.globalAlpha = 1
   }
+
+  private drawFromSheet(ctx: CanvasRenderingContext2D, s: Sprite, act: Action, scale: number, bob: number, carry: boolean) {
+    const sheets = this.sheets!
+    const walking = s.moving && s.startT <= 0
+    const clip = pickClip({ action: act, dir: s.dir, moving: walking, carry, robots: this.robots })
+    const spec = clip.sheet === 'worker' ? WORKER_SHEET : ROBOT_SHEET
+    const img = (clip.sheet === 'worker' ? sheets.workerFor(s.variant) : sheets.robot) as CanvasImageSource
+    const idx = (walking ? s.steps : s.tick) % clip.frames
+    const sx = Math.round(s.x * scale) / scale
+    const sy = Math.round(s.y * scale) / scale
+    const footX = sx + SPRITE_W / 2
+    const footY = sy + SPRITE_H
+    const dw = spec.cellW * SHEET_PX
+    const dh = spec.cellH * SHEET_PX
+    const dy = footY + bob * ART_PX - spec.baseline * SHEET_PX
+    if (s.alpha < 1) ctx.globalAlpha = s.alpha
+    drawGroundShadow(ctx, footX, footY, Math.round(-bob))
+    ctx.save()
+    ctx.translate(footX, 0)
+    if (s.dir === 'side' && s.facing === -1) ctx.scale(-1, 1)
+    ctx.drawImage(img, idx * spec.cellW, clip.row * spec.cellH, spec.cellW, spec.cellH, -dw / 2, dy, dw, dh)
+    ctx.restore()
+    if (s.alpha < 1) ctx.globalAlpha = 1
+  }
 }
+
+// Base units per PNG-sheet pixel. The sheets are drawn at a finer pixel than
+// the grid art (ART_PX = 3) so the ~42px-tall worker stands about as tall as
+// the old 24-row sprite plus a head, next to the same workstations.
+const SHEET_PX = 2
 
 type CanvasLike = { width: number; height: number; getContext(type: '2d'): unknown }
 

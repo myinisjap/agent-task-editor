@@ -20,6 +20,7 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Changed
+- **Office / Robots scene: new pixel-art crew.** Workers and robots are now drawn from bundled PNG sprite sheets (`frontend/src/assets/office/`) instead of the hand-typed 16×24 grids: a ~20×42 px worker with 6-frame station actions in front, side and back views, 6–8 frame walk and carry cycles, waving and celebrating, and a hovering robot crew with fly, work and carry animations. Shirts are recoloured per worker so a crew still reads as different people. The sheets ship with the app (no external service); until they load, the old grid sprites are drawn.
 - **Office / Robots scene polish.** Sprites cast soft pixel shadows that shrink as they jump or hover; workstations and tall props have contact shadows. Each station's desk sits in a warm light pool tinted by its stage colour, with a gentle vignette, both pre-rendered at art-pixel resolution so they stay crisp at every zoom. A small pooled particle system adds anvil sparks, paper bits, server-rack steam and LEDs, and confetti bursts. The agent-review robot now has side and back views and hovers on a flickering thruster so it faces where it moves. Workers carry a task box while walking between stations. Side-view actions have their own frames, and walks ease in and out. Reduced motion still draws one static frame with no particles. The Factory view is unchanged.
 
 ### Added
