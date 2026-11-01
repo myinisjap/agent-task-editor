@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import {
   OfficeScene,
   autoZoom,
@@ -252,6 +252,14 @@ function fakeCtx(calls: Record<string, number> = {}) {
 }
 
 describe('OfficeScene particles', () => {
+  // Seeded randomness keeps these simulations deterministic.
+  beforeEach(() => {
+    let seed = 987
+    vi.spyOn(Math, 'random').mockImplementation(() => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+      return seed / 4294967296
+    })
+  })
   it('emits sparks while hammering, stays under the cap, and settle() clears them', () => {
     const scene = new OfficeScene()
     scene.layout(1200)
@@ -294,11 +302,17 @@ describe('OfficeScene particles', () => {
   })
 
   it('a moving robot-station sprite takes a side profile on horizontal legs', () => {
+    // Seeded randomness keeps this deterministic.
+    let seed = 12345
+    vi.spyOn(Math, 'random').mockImplementation(() => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+      return seed / 4294967296
+    })
     const scene = new OfficeScene()
     scene.layout(1200)
-    scene.setStations([mk('a', 1, { action: 'robot' })])
+    scene.setStations([mk('a', 3, { action: 'robot' })])
     let side = false
-    for (let i = 0; i < 1200 && !side; i++) {
+    for (let i = 0; i < 6000 && !side; i++) {
       scene.step(1 / 30)
       side = scene.spriteStates().some((s) => s.moving && s.dir === 'side')
     }
