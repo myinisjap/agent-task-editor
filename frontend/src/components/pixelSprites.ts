@@ -209,10 +209,11 @@ export type { Overlay }
 
 // Extra palette chars used by overlays; merged into every humanoid frame.
 //   a acting arm (skin)  c pen  g magnifier glass  m hammer  f flask
-//   p stamp  s spark  y bubble
+//   p stamp  s spark  y bubble  w/W/E carried box
 const OVERLAY_PALETTE: Record<string, string> = {
   a: '#f0a875', c: '#fde68a', g: '#e2e8f0', m: '#d6d3d1', f: '#2dd4bf',
   p: '#f472b6', s: '#fde047', y: '#bae6fd',
+  w: '#c8a06a', W: '#a8834f', E: '#f8fafc', // carried box + tape + label
 }
 
 const vline = (x: number, y0: number, y1: number, ch: string): Cell[] => {
@@ -338,6 +339,84 @@ export const BACK_WORK_OVERLAYS: Record<Tooled, Overlay[]> = {
   ],
 }
 
+// Side-view action loops (facing right; the scene mirrors for leftward). The
+// near arm is cols 9-11, rows 11-16 and the face is cols 2-11 rows 0-9, so
+// raised tools stay at col >= 12 (or below row 10) and clear the head.
+const SIDE_PEN = (px: number, py: number): Overlay => ov([[11, 13, 'a'], [12, 14, 'a']], [[px, py, 'c'], [px, py + 1, 'c']])
+const SIDE_LENS = (gy: number): Overlay => ov([[11, 11, 'a'], [12, gy + 2, 'a']], rect(12, gy, 2, 2, 'g'), [[13, gy + 2, 'g']])
+export const SIDE_ACTION_OVERLAYS: Record<Tooled, Overlay[]> = {
+  idle: [ov(), ov([[10, 16, '.'], [10, 15, 'G']])],
+  drawing: [SIDE_PEN(13, 15), SIDE_PEN(14, 16), SIDE_PEN(13, 16), SIDE_PEN(14, 15)],
+  inspecting: [SIDE_LENS(8), SIDE_LENS(9), SIDE_LENS(10), SIDE_LENS(9)],
+  hammering: [
+    ov(vline(11, 11, 13, 'a'), rect(12, 8, 3, 2, 'm')), // wind-up
+    ov(vline(11, 9, 12, 'a'), vline(12, 7, 8, 'a'), rect(12, 4, 3, 3, 'm')), // peak
+    ov(vline(11, 12, 14, 'a'), rect(12, 15, 3, 2, 'm')), // strike
+    ov(vline(11, 12, 14, 'a'), rect(12, 15, 3, 2, 'm'), [[15, 14, 's'], [15, 17, 's'], [14, 18, 's']]), // impact
+  ],
+  testing: [
+    ov([[11, 12, 'a'], [12, 12, 'a']], rect(12, 10, 2, 2, 'f'), [[13, 9, 'f']]), // low
+    ov([[11, 11, 'a'], [12, 10, 'a']], rect(12, 7, 2, 3, 'f'), [[13, 6, 'f']]), // raised
+    ov([[11, 11, 'a'], [12, 10, 'a']], rect(13, 7, 2, 2, 'f'), [[14, 6, 'f']]), // swirl right
+    ov([[11, 11, 'a'], [12, 10, 'a']], rect(12, 7, 2, 2, 'f'), [[13, 6, 'f'], [13, 3, 'y'], [14, 4, 'y']]), // swirl + bubble
+  ],
+  approving: [
+    ov(vline(11, 12, 13, 'a'), rect(12, 14, 2, 2, 'p')), // rest
+    ov(vline(11, 9, 12, 'a'), rect(12, 5, 2, 3, 'p')), // raise
+    ov(vline(11, 12, 14, 'a'), rect(12, 15, 2, 2, 'p')), // slam
+    ov(vline(11, 12, 14, 'a'), rect(12, 16, 3, 1, 'p')), // pressed
+  ],
+  celebrating: [
+    ov(vline(11, 11, 14, 'a')), // arm down
+    ov(vline(11, 12, 14, 'a')), // crouch
+    ov(vline(11, 6, 11, 'a')), // jump peak
+    ov(vline(11, 9, 11, 'a')), // falling
+  ],
+  waving: [
+    ov(vline(11, 11, 14, 'a')),
+    ov(vline(11, 8, 11, 'a'), [[12, 7, 'a'], [12, 6, 'a']]),
+    ov(vline(11, 8, 11, 'a'), [[13, 7, 'a'], [13, 6, 'a']]),
+    ov(vline(11, 8, 11, 'a'), [[12, 7, 'a'], [12, 6, 'a']]),
+  ],
+}
+
+// Carried task box (hand-offs). `box` is body-agnostic art; `hands` are the
+// humanoid gloves gripping it (the robot action sprite has no hands).
+export const CARRY_OVERLAYS: Record<Dir, { box: Cell[]; hands: Cell[] }> = {
+  front: {
+    box: [...rect(5, 13, 6, 1, 'W'), ...rect(5, 14, 6, 1, 'w'), [7, 14, 'E'], [8, 14, 'E'], ...rect(5, 15, 6, 1, 'w'), ...rect(5, 16, 6, 1, 'W')],
+    hands: [[4, 14, 'G'], [4, 15, 'G'], [11, 14, 'G'], [11, 15, 'G']],
+  },
+  side: {
+    box: [...rect(9, 12, 4, 1, 'W'), [9, 13, 'w'], [10, 13, 'E'], [11, 13, 'E'], [12, 13, 'w'], ...rect(9, 14, 4, 1, 'w'), ...rect(9, 15, 4, 1, 'W')],
+    hands: [[8, 14, 'G']],
+  },
+  back: {
+    box: [[3, 13, 'w'], [3, 14, 'W'], [12, 13, 'w'], [12, 14, 'W']],
+    hands: [[2, 15, 'G'], [13, 15, 'G']],
+  },
+}
+
+// Frames on which a tool lands / a jump peaks, so the scene can burst sparks or
+// confetti once per frame change. Frame counts differ by view (front uses the
+// action loop, back 4 work frames, side its own loop), so the index is wrapped
+// the same way composeFrame wraps it.
+const IMPACT: Partial<Record<Action, Record<Dir, number>>> = {
+  hammering: { front: 5, back: 3, side: 3 },
+  celebrating: { front: 3, back: 3, side: 2 },
+}
+export function isImpactFrame(action: Action, frameIndex: number, dir: Dir): boolean {
+  const t = IMPACT[action]
+  if (!t) return false // slam is quiet: no particle
+  const n = dir === 'front' ? ACTION_OVERLAYS[action as Tooled].length : dir === 'back' ? 4 : SIDE_ACTION_OVERLAYS[action as Tooled].length
+  return ((frameIndex % n) + n) % n === t[dir]
+}
+
+// Ground-shadow shapes: row half-widths (art px) of a stepped ellipse, indexed
+// by how high the body is lifted (0..2 art px).
+export const SHADOW_ROWS: number[][] = [[4, 6, 4], [3, 5, 3], [3, 4]]
+export const SHADOW_ALPHA: number[] = [0.3, 0.24, 0.18]
+
 // Seconds per action frame (hammering is snappy, idle is lazy). officeScene
 // adds a small per-sprite jitter so a crew doesn't animate in lockstep.
 const ACTION_DUR: Record<Action, number> = {
@@ -348,9 +427,10 @@ export function actionFrameDur(action: Action): number {
   return ACTION_DUR[action]
 }
 
-// Vertical body offset (art pixels) per action frame; only celebrating jumps.
+// Vertical body offset (art pixels) per action frame: celebrating jumps, the robot hovers.
 export const ACTION_BOB: Partial<Record<Action, number[]>> = {
   celebrating: [0, 1, 0, -1, -1, 0, 1, 0],
+  robot: [0, 0, -1, -1, -1, 0, 0, 0], // gentle hover
 }
 export function actionBob(action: Action, frameIndex: number): number {
   const t = ACTION_BOB[action]
@@ -392,7 +472,30 @@ const SIDE_WALK_LEGS: Cell[][] = [
 export const WALK_BOB: number[] = [0, -1, 0, -1]
 export const WALK_FRAME_COUNT = WALK_LEGS.length
 
-// Robot (unchanged shape; still faces the viewer, ignores direction).
+// ---------------------------------------------------------------------------
+// Robot action sprite (agent-review / agentWorking station): a hovering unit
+// with a thruster instead of treads. Directional like the crew: front (visor
+// scan), side (profile, authored facing right, mirrored by the scene) and back
+// (LED panel). Rows 20-23 hold the nozzle + flame, which composeRobot paints per
+// frame: short and dim while parked, long and bright while moving.
+const ROBOT_BODY = [
+  '......RRRRRR....', // 8
+  '.jM..RRRRRR..Mj.', // 9
+  'jMM..RRRRRR..MMj', // 10
+  'jMM..RRRRRR..MMj', // 11
+  '.jM..RRRRRR..Mj.', // 12
+  '......RRRRRR....', // 13
+  '.....RRRRRRRR...', // 14
+  '.....RRRRRRRR...', // 15
+  '.....rrrrrrrr...', // 16
+  '....dddddddd....', // 17 hover skirt
+  '...dDdDdDdDdD...', // 18
+  '....DDDDDDDD....', // 19
+  '.....DDDDDD.....', // 20 thruster nozzle
+  '................', // 21 flame (composer)
+  '................', // 22
+  '................', // 23
+]
 const ROBOT_ROWS_BASE = [
   '.......a........',
   '.......a........',
@@ -402,44 +505,116 @@ const ROBOT_ROWS_BASE = [
   '...rVVVVVVVVr...',
   '...rVVVVVVVVr...',
   '...rrrrrrrrrr...',
-  '......RRRRRR....',
-  '.jM..RRRRRR..Mj.',
-  'jMM..RRRRRR..MMj',
-  'jMM..RRRRRR..MMj',
-  '.jM..RRRRRR..Mj.',
-  '......RRRRRR....',
-  '.....RRRRRRRR...',
-  '.....RRRRRRRR...',
-  '.....rrrrrrrr...',
-  '....dddddddddd..',
-  '...dDdDdDdDdDd..',
-  '...wwwwwwwwww...',
-  '...wDwDwDwDwD...',
-  '...wwwwwwwwww...',
+  ...ROBOT_BODY,
+]
+const ROBOT_SIDE_ROWS = [
+  '......a.........',
+  '......a.........',
+  '......n.........',
+  '.....rrrrrr.....',
+  '....rVVVVVVr....',
+  '....rVVVVVVr....',
+  '....rVVVVVVr....',
+  '....rrrrrrrr....',
+  '.......RRRR.....',
+  '......RRRRRMM...',
+  '......RRRRRMMj..',
+  '......RRRRRMMj..',
+  '......RRRRRjM...',
+  '......RRRRR.....',
+  '.....RRRRRRR....',
+  '.....RRRRRRR....',
+  '.....rrrrrrr....',
+  '....dddddddd....',
+  '....dDdDdDdd....',
   '....DDDDDDDD....',
+  '.....DDDDDD.....',
+  '................',
+  '................',
   '................',
 ]
-const ROBOT_PALETTE = {
+const ROBOT_BACK_ROWS = [
+  '.......a........',
+  '.......a........',
+  '.......n........',
+  '....rrrrrrrr....',
+  '...rRRRRRRRRr...',
+  '...rRLRRZRRXr...', // three LED cells
+  '...rRRRRRRRRr...',
+  '...rrrrrrrrrr...',
+  ...ROBOT_BODY.slice(0, 4),
+  '.jM..RDDDDR..Mj.', // 12 back vents
+  ...ROBOT_BODY.slice(5),
+]
+const ROBOT_BASE_ROWS: Record<Dir, string[]> = { front: ROBOT_ROWS_BASE, side: ROBOT_SIDE_ROWS, back: ROBOT_BACK_ROWS }
+const ROBOT_PALETTE: Record<string, string> = {
   a: '#a5b4fc', n: '#818cf8', r: '#6366f1', V: '#e0e7ff', R: '#4f46e5',
-  M: '#818cf8', j: '#3730a3', d: '#3730a3', D: '#1e1b4b', w: '#312e81',
+  M: '#818cf8', j: '#3730a3', d: '#3730a3', D: '#1e1b4b',
+  v: '#312e81', Y: '#e0e7ff',
+  F: '#fde047', O: '#fb923c', Q: '#b45309', // flame core / outer / dim
+  L: '#312e81', Z: '#312e81', X: '#312e81', // LED cells (recolored per frame)
+  w: '#c8a06a', W: '#a8834f', E: '#f8fafc', // carried box
 }
 
-// Robot action loop: a bright visor pixel-column scans left→right→left and the
-// antenna blinks every other frame.
-function robotFrame(scanCol: number, antennaOn: boolean): Frame {
-  const rows = ROBOT_ROWS_BASE.map((r) => r.split(''))
-  for (let x = 0; x < GRID_W; x++) {
-    for (const y of [5, 6]) if (rows[y][x] === 'V') rows[y][x] = x === scanCol ? 'Y' : 'v'
-  }
-  return {
-    rows: rows.map((r) => r.join('')),
-    palette: { ...ROBOT_PALETTE, v: '#312e81', Y: '#e0e7ff', a: antennaOn ? '#f472b6' : '#a5b4fc' },
+// Visor scan columns per dir (front/side) and back LED blink pattern (bitmask
+// of 3 LEDs per frame).
+const ROBOT_SCAN: Record<'front' | 'side', number[]> = {
+  front: [4, 5, 7, 9, 11, 10, 8, 6],
+  side: [5, 6, 7, 8, 9, 10, 8, 6],
+}
+const ROBOT_LED_BITS = [1, 3, 2, 6, 4, 5, 7, 0]
+const ROBOT_LED_COLORS = ['#22d3ee', '#f472b6', '#4ade80']
+const ROBOT_FRAME_N = 8
+
+// Thruster flame, painted into rows 21-23 around cols 7-8. Parked: a short,
+// dim flicker alternating on frameIndex; moving: long, bright, alternating on
+// the walk leg.
+function paintFlame(rows: string[][], fi: number, walkLeg: number) {
+  const set = (y: number, xs: number[], ch: string) => { for (const x of xs) rows[y][x] = ch }
+  if (walkLeg >= 0) {
+    if (walkLeg % 2 === 0) {
+      set(21, [6, 7, 8, 9], 'O'); set(21, [7, 8], 'F'); set(22, [7, 8], 'F'); set(23, [7], 'O')
+    } else {
+      set(21, [7, 8], 'F'); set(22, [6, 7, 8, 9], 'O'); set(22, [7, 8], 'F'); set(23, [7, 8], 'F')
+    }
+  } else if (fi % 2 === 0) {
+    set(21, [7, 8], 'Q'); set(22, [7], 'Q')
+  } else {
+    set(21, [7, 8], 'O'); set(22, [8], 'Q')
   }
 }
-const ROBOT_FRAMES: Frame[] = [4, 5, 7, 9, 11, 10, 8, 6].map((c, i) => robotFrame(c, i % 2 === 1))
+
+function composeRobot(dir: Dir, fi: number, walkLeg: number, carry: boolean): Frame {
+  const key = `robot|${dir}|${fi}|${walkLeg}|${carry ? 1 : 0}`
+  const hit = frameCache.get(key)
+  if (hit) return hit
+  const rows = ROBOT_BASE_ROWS[dir].map((r) => r.split(''))
+  const palette: Record<string, string> = { ...ROBOT_PALETTE, a: fi % 2 === 1 ? '#f472b6' : '#a5b4fc' }
+  if (dir === 'back') {
+    const bits = ROBOT_LED_BITS[fi % ROBOT_FRAME_N]
+    const col = ROBOT_LED_COLORS[fi % 3]
+    palette.L = bits & 1 ? col : '#312e81'
+    palette.Z = bits & 2 ? ROBOT_LED_COLORS[(fi + 1) % 3] : '#312e81'
+    palette.X = bits & 4 ? ROBOT_LED_COLORS[(fi + 2) % 3] : '#312e81'
+  } else {
+    const scanCol = ROBOT_SCAN[dir][fi % ROBOT_FRAME_N]
+    for (let x = 0; x < GRID_W; x++) {
+      for (const y of [5, 6]) if (rows[y][x] === 'V') rows[y][x] = x === scanCol ? 'Y' : 'v'
+    }
+  }
+  paintFlame(rows, fi, walkLeg)
+  if (carry) paint(rows, CARRY_OVERLAYS[dir].box)
+  const out: Frame = { rows: rows.map((r) => r.join('')), palette }
+  if (frameCache.size > 4000) frameCache.clear()
+  frameCache.set(key, out)
+  return out
+}
+
+/** Hover bob (art px) per walk frame for the moving robot. */
+export const ROBOT_HOVER_BOB: number[] = [0, -1, -2, -1]
 
 export function actionFrameCount(action: Action): number {
-  return action === 'robot' ? ROBOT_FRAMES.length : ACTION_OVERLAYS[action].length
+  return action === 'robot' ? ROBOT_FRAME_N : ACTION_OVERLAYS[action].length
 }
 
 // Recolor a frame's palette for one worker, deriving matching -hi/-shade tones
@@ -543,6 +718,7 @@ function robotHead(rows: string[][], dir: Dir) {
 export type ComposeOpts = {
   blink?: boolean // eyes closed this frame (front/side only)
   breath?: boolean // head/shoulder settle by 1 px (idle breathing)
+  carry?: boolean // holding a task box (hand-off walkers)
 }
 
 // Close the eyes: 'e' cells in the face rows become skin (human) / dim visor (robot).
@@ -580,8 +756,8 @@ const frameCache = new Map<string, Frame>()
 // body → (robot head) → blink/glance/breath → walk legs OR action/back-work
 // overlay. Front-facing parked sprites show the tool action; parked sprites
 // facing back show BACK_WORK_OVERLAYS (so the worker at the desk visibly
-// works); walking uses the walk cycle. The standalone `robot` action keeps its
-// distinct scanning sprite. Results are memoised (bounded) — callers must not
+// works); walking uses the walk cycle. The standalone `robot` action has its own
+// directional hover sprite (composeRobot). Results are memoised (bounded) — callers must not
 // mutate the returned frame.
 export function composeFrame(
   action: Action,
@@ -592,8 +768,10 @@ export function composeFrame(
   robot = false,
   opts: ComposeOpts = {},
 ): Frame {
+  const carry = !!opts.carry
   if (action === 'robot') {
-    return ROBOT_FRAMES[frameIndex % ROBOT_FRAMES.length]
+    const fi = ((frameIndex % ROBOT_FRAME_N) + ROBOT_FRAME_N) % ROBOT_FRAME_N
+    return composeRobot(dir, fi, walkLeg >= 0 ? walkLeg % WALK_FRAME_COUNT : -1, carry)
   }
   const walking = walkLeg >= 0
   const blink = !!opts.blink && dir !== 'back'
@@ -601,9 +779,9 @@ export function composeFrame(
   const vi = variant ? VARIANTS.indexOf(variant) : -2
   let key = ''
   if (vi !== -1) {
-    const n = walking ? 0 : dir === 'front' ? ACTION_OVERLAYS[action].length : dir === 'back' ? 4 : 1
-    const fi = walking || dir === 'side' ? 0 : ((frameIndex % n) + n) % n
-    key = `${action}|${fi}|${walkLeg}|${vi}|${dir}|${robot ? 1 : 0}|${blink ? 1 : 0}|${breath ? 1 : 0}`
+    const n = walking || carry ? 1 : dir === 'front' ? ACTION_OVERLAYS[action].length : dir === 'back' ? 4 : SIDE_ACTION_OVERLAYS[action].length
+    const fi = walking || carry ? 0 : ((frameIndex % n) + n) % n
+    key = `${action}|${fi}|${walkLeg}|${vi}|${dir}|${robot ? 1 : 0}|${blink ? 1 : 0}|${breath ? 1 : 0}|${carry ? 1 : 0}`
     const hit = frameCache.get(key)
     if (hit) return hit
   }
@@ -614,6 +792,8 @@ export function composeFrame(
   let overlay: Cell[] = []
   if (walking) {
     overlay = (dir === 'side' ? SIDE_WALK_LEGS : WALK_LEGS)[walkLeg % WALK_LEGS.length]
+  } else if (carry) {
+    overlay = []
   } else if (dir === 'front') {
     const frames = ACTION_OVERLAYS[action]
     const o = frames[((frameIndex % frames.length) + frames.length) % frames.length]
@@ -622,11 +802,18 @@ export function composeFrame(
   } else if (dir === 'back') {
     const frames = BACK_WORK_OVERLAYS[action]
     overlay = frames[((frameIndex % frames.length) + frames.length) % frames.length].cells
+  } else {
+    const frames = SIDE_ACTION_OVERLAYS[action]
+    overlay = frames[((frameIndex % frames.length) + frames.length) % frames.length].cells
   }
   if (blink) applyBlink(rows, robot)
   if (glance && !blink) applyGlance(rows, robot, glance)
   if (breath) applyBreath(rows)
   paint(rows, overlay)
+  if (carry) {
+    paint(rows, CARRY_OVERLAYS[dir].hands)
+    paint(rows, CARRY_OVERLAYS[dir].box)
+  }
 
   const composed: Frame = { rows: rows.map((r) => r.join('')), palette: { ...BASE_PALETTE, ...OVERLAY_PALETTE } }
   const themed = applyVariant(composed, variant)

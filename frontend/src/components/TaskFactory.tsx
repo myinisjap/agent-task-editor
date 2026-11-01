@@ -12,7 +12,10 @@
 // zoom, up to 6, that fits every station in one row). When a task moves
 // between labels its worker walks from the old station to the new one; new /
 // removed tasks fade in / out. Workers at human-gate stations wave. The loop
-// pauses while the tab is hidden; prefers-reduced-motion draws one static frame.
+// pauses while the tab is hidden; prefers-reduced-motion draws one static frame
+// (no particles). The scene adds pixel shadows, art-pixel-resolution lighting
+// layers and a small pooled particle system (sparks, paper, steam, confetti);
+// all of that lives in officeScene.ts / officeParticles.ts.
 // Sim in officeScene.ts; station derivation in officeStations.ts; sprite art in
 // pixelSprites.ts; this file measures the container and hosts the canvas.
 import { useEffect, useRef } from 'react'

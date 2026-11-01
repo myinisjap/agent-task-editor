@@ -1,6 +1,20 @@
 import { describe, it, expect } from 'vitest'
 import { bucketize } from './taskBuckets'
-import { composeFrame, actionFrameCount, actionFrameDur, WALK_FRAME_COUNT, GRID_W, GRID_H, type Action } from './pixelSprites'
+import {
+  composeFrame,
+  actionFrameCount,
+  actionFrameDur,
+  actionBob,
+  isImpactFrame,
+  ROBOT_HOVER_BOB,
+  SHADOW_ROWS,
+  SHADOW_ALPHA,
+  WALK_FRAME_COUNT,
+  GRID_W,
+  GRID_H,
+  type Action,
+  type Dir,
+} from './pixelSprites'
 import type { Workflow } from '../api/client'
 
 function label(overrides: Partial<Workflow['labels'][number]>): Workflow['labels'][number] {
@@ -106,13 +120,16 @@ describe('composeFrame', () => {
     expect(robot.rows.slice(0, 10)).not.toEqual(human.rows.slice(0, 10)) // head reshaped
   })
 
-  it('overlays walk legs on a humanoid but not on the robot', () => {
+  it('overlays walk legs on a humanoid and flares the robot thruster', () => {
     const still = composeFrame('idle', 0, -1)
     const walking = composeFrame('idle', 0, 0)
     expect(walking.rows).not.toEqual(still.rows) // legs shifted
 
-    // robot ignores walkLeg (rolls on treads) — identical with or without it
-    expect(composeFrame('robot', 0, 0).rows).toEqual(composeFrame('robot', 0, -1).rows)
+    // the robot hovers: thruster rows 20-23 react to walkLeg, the head does not
+    const rWalk = composeFrame('robot', 0, 0).rows
+    const rPark = composeFrame('robot', 0, -1).rows
+    expect(rWalk.slice(20)).not.toEqual(rPark.slice(20))
+    expect(rWalk.slice(0, 11)).toEqual(rPark.slice(0, 11))
   })
 
   it('wraps out-of-range frame indices instead of crashing', () => {
@@ -188,5 +205,72 @@ describe('composeFrame', () => {
 
   it('has a positive per-action frame duration', () => {
     for (const a of ACTIONS) expect(actionFrameDur(a)).toBeGreaterThan(0)
+  })
+
+  const DIRS: Dir[] = ['front', 'side', 'back']
+
+  it('robot action has distinct, animated front/side/back views', () => {
+    const [front, side, back] = DIRS.map((d) => composeFrame('robot', 0, -1, undefined, d))
+    expect(front.rows).not.toEqual(side.rows)
+    expect(front.rows).not.toEqual(back.rows)
+    expect(side.rows).not.toEqual(back.rows)
+    const mirror = (rows: string[]) => rows.map((r) => [...r].reverse().join(''))
+    expect(side.rows).not.toEqual(mirror(side.rows)) // profile is asymmetric
+    const backFrames = Array.from({ length: 8 }, (_, i) => JSON.stringify(composeFrame('robot', i, -1, undefined, 'back')))
+    expect(new Set(backFrames).size).toBeGreaterThan(2) // LEDs blink
+    expect(actionFrameCount('robot')).toBeGreaterThanOrEqual(6)
+    expect(ROBOT_HOVER_BOB).toHaveLength(WALK_FRAME_COUNT)
+    expect(actionBob('robot', 2)).toBeLessThan(0) // parked hover
+  })
+
+  it('robot frames are well-formed for every dir, leg and carry state', () => {
+    for (const dir of DIRS) {
+      for (let leg = -1; leg < WALK_FRAME_COUNT; leg++) {
+        for (const carry of [false, true]) {
+          for (let i = 0; i < 8; i++) wellFormed(composeFrame('robot', i, leg, undefined, dir, false, { carry }))
+        }
+      }
+    }
+  })
+
+  it('side-view tooled actions have several distinct frames, well-formed for human and robot', () => {
+    for (const a of ACTIONS.filter((x) => x !== 'robot' && x !== 'idle')) {
+      const grids = [0, 1, 2, 3].map((i) => composeFrame(a, i, -1, undefined, 'side').rows.join('\n'))
+      expect(new Set(grids).size).toBeGreaterThan(1)
+      for (const robot of [false, true]) for (let i = 0; i < 8; i++) wellFormed(composeFrame(a, i, -1, undefined, 'side', robot))
+    }
+  })
+
+  it('carrying draws a task box for every dir (humans and the robot sprite)', () => {
+    for (const dir of DIRS) {
+      for (const robot of [false, true]) {
+        const plain = composeFrame('idle', 0, 1, undefined, dir, robot)
+        const carry = composeFrame('idle', 0, 1, undefined, dir, robot, { carry: true })
+        expect(carry.rows.join('')).toContain('w')
+        expect(carry.rows).not.toEqual(plain.rows)
+        wellFormed(carry)
+      }
+      const rp = composeFrame('robot', 0, 1, undefined, dir)
+      const rc = composeFrame('robot', 0, 1, undefined, dir, false, { carry: true })
+      expect(rc.rows.join('')).toContain('w')
+      expect(rc.rows).not.toEqual(rp.rows)
+    }
+  })
+
+  it('flags impact frames per dir (never frame 0)', () => {
+    for (const dir of DIRS) {
+      expect(isImpactFrame('hammering', 0, dir)).toBe(false)
+      expect(Array.from({ length: 8 }, (_, i) => isImpactFrame('hammering', i, dir)).some(Boolean)).toBe(true)
+      expect(Array.from({ length: 8 }, (_, i) => isImpactFrame('celebrating', i, dir)).some(Boolean)).toBe(true)
+    }
+    expect(isImpactFrame('drawing', 3, 'front')).toBe(false)
+  })
+
+  it('shadow tables shrink and fade with lift', () => {
+    expect(SHADOW_ROWS.length).toBe(SHADOW_ALPHA.length)
+    const area = SHADOW_ROWS.map((r) => r.reduce((a, b) => a + b, 0))
+    expect(area[1]).toBeLessThan(area[0])
+    expect(area[2]).toBeLessThan(area[1])
+    expect(SHADOW_ALPHA[2]).toBeLessThan(SHADOW_ALPHA[0])
   })
 })
