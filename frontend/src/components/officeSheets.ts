@@ -11,6 +11,7 @@
 // travel. Feet (or the robot's thruster) sit on the cell's baseline.
 import workerUrl from '../assets/office/worker.png'
 import robotUrl from '../assets/office/robot.png'
+import propsUrl from '../assets/office/props.png'
 import type { Action, Dir, Variant } from './pixelSprites'
 
 export type SheetKind = 'worker' | 'robot'
@@ -51,11 +52,14 @@ export const WORKER_SHEET: SheetSpec = {
     carrying_south: [19, 8],
     carrying_north: [20, 8],
     breath_south: [21, 4],
-    walk_south: [22, 7],
+    walk_south: [22, 8],
     walk_east: [23, 8],
-    walk_north: [24, 6],
+    walk_north: [24, 8],
     wave_south: [25, 4],
     celebrate_south: [26, 5],
+    coffee_south: [27, 6],
+    frustrated_south: [28, 8],
+    dozing_south: [29, 6],
   },
 }
 
@@ -73,7 +77,40 @@ export const ROBOT_SHEET: SheetSpec = {
     fly_north: [6, 6],
     working_north: [7, 6],
     carrying_east: [8, 6],
+    working_east: [9, 6],
+    error_south: [10, 6],
+    celebrate_south: [11, 8],
   },
+}
+
+// Station furniture and scenery (PixelLab), one trimmed prop per rect
+// [x, y, w, h] in props.png. officeScene draws them bottom-centred on the
+// workstation footprint; the hand-drawn rectangles remain the fallback.
+export type PropName =
+  | 'drawing' | 'hammering' | 'testing' | 'robot' | 'inspecting'
+  | 'approving' | 'celebrating' | 'idle' | 'coffee' | 'cooler'
+export const PROP_RECTS: Record<PropName, readonly [x: number, y: number, w: number, h: number]> = {
+  drawing: [0, 19, 54, 40],
+  hammering: [55, 18, 56, 41],
+  testing: [112, 16, 60, 43],
+  robot: [173, 0, 39, 59],
+  inspecting: [213, 17, 57, 42],
+  approving: [271, 19, 60, 40],
+  celebrating: [332, 13, 45, 46],
+  idle: [378, 25, 50, 34],
+  coffee: [429, 11, 30, 48],
+  cooler: [460, 23, 12, 36],
+}
+
+/** Which furniture prop a station's action stands at. */
+export function propFor(action: Action): PropName {
+  switch (action) {
+    case 'drawing': case 'hammering': case 'testing': case 'robot':
+    case 'inspecting': case 'approving': case 'celebrating':
+      return action
+    default:
+      return 'idle'
+  }
 }
 
 export type Clip = { sheet: SheetKind; name: string; row: number; frames: number }
@@ -93,20 +130,23 @@ function clip(sheet: SheetKind, name: string): Clip {
  * and tests cover the mapping. `robots` is the all-robot crew toggle; the
  * 'robot' action (the agent-review station) always shows a robot.
  */
-export function pickClip(o: { action: Action; dir: Dir; moving: boolean; carry: boolean; robots: boolean }): Clip {
+export function pickClip(o: { action: Action; dir: Dir; moving: boolean; carry: boolean; robots: boolean; alt?: boolean }): Clip {
   const d = COMPASS[o.dir]
   if (o.robots || o.action === 'robot') {
     if (o.moving) return clip('robot', o.carry && d === 'east' ? 'carrying_east' : `fly_${d}`)
-    if (o.action === 'waving' || o.action === 'celebrating') return clip('robot', 'idle_south')
+    if (o.action === 'celebrating') return clip('robot', 'celebrate_south')
+    if (o.action === 'waving') return clip('robot', 'idle_south')
     if (d === 'north') return clip('robot', o.action === 'idle' ? 'idle_still_north' : 'working_north')
-    if (d === 'east') return clip('robot', 'idle_still_east')
+    if (d === 'east') return clip('robot', o.action === 'idle' ? 'idle_still_east' : 'working_east')
     return clip('robot', 'idle_south')
   }
   if (o.moving) return clip('worker', o.carry ? `carrying_${d}` : `walk_${d}`)
   if (o.action === 'waving') return clip('worker', 'wave_south')
   if (o.action === 'celebrating') return clip('worker', 'celebrate_south')
   if (TOOLED.has(o.action)) return clip('worker', `${o.action}_${d}`)
-  return clip('worker', d === 'south' ? 'breath_south' : `idle_${d}`)
+  // `alt` (a stable per-sprite coin flip) gives some idle workers a coffee.
+  if (d === 'south') return clip('worker', o.alt ? 'coffee_south' : 'breath_south')
+  return clip('worker', `idle_${d}`)
 }
 
 // ---- loading + per-variant recolour ----------------------------------------
@@ -116,6 +156,8 @@ type Canvasish = HTMLCanvasElement | OffscreenCanvas
 export type Sheets = {
   worker: Canvasish
   robot: Canvasish
+  // Furniture atlas (PROP_RECTS); null if it failed to load.
+  props: Canvasish | null
   // Worker sheet recoloured for a variant's shirt, hair and skin, built on first use.
   workerFor(variant: Variant): Canvasish
 }
@@ -295,14 +337,20 @@ export function loadOfficeSheets(): Promise<Sheets | null> {
   pending = (async () => {
     try {
       if (typeof Image === 'undefined') return null
-      const [wImg, rImg] = await Promise.all([loadImage(workerUrl), loadImage(robotUrl)])
+      const [wImg, rImg, pImg] = await Promise.all([
+        loadImage(workerUrl),
+        loadImage(robotUrl),
+        loadImage(propsUrl).catch(() => null),
+      ])
       const worker = toCanvas(wImg)
       const robot = toCanvas(rImg)
+      const props = pImg ? toCanvas(pImg) : null
       if (!worker || !robot) return null
       const byVariant = new Map<string, Canvasish>()
       return {
         worker,
         robot,
+        props,
         workerFor(variant: Variant): Canvasish {
           if (!variant.T && !variant.r && !variant.K) return worker
           const key = `${variant.T ?? ''}|${variant.r ?? ''}|${variant.K ?? ''}`
