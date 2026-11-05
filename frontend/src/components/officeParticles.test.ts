@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ParticlePool, PARTICLE_CAP, SPARK, PAPER, PARTICLE_COLORS } from './officeParticles'
+import { ParticlePool, PARTICLE_CAP, SPARK, PAPER, PARTICLE_COLORS, DUST } from './officeParticles'
 
 describe('ParticlePool', () => {
   it('caps the live count when over-spawned', () => {
@@ -69,5 +69,16 @@ describe('ParticlePool', () => {
     }
     expect([p.x, p.y, p.vx, p.vy, p.life, p.alive, p.kind, p.color]).toEqual(refs)
     refs.forEach((r, n) => expect([p.x, p.y, p.vx, p.vy, p.life, p.alive, p.kind, p.color][n]).toBe(r))
+  })
+
+  it("spawns dust with a light-brown palette entry, expires, and respects the cap", () => {
+    const p = new ParticlePool(PARTICLE_CAP)
+    const i = p.spawn(DUST, 5, 5, 10, -8, 30, 0.3, 16)
+    expect(p.kind[i]).toBe(DUST)
+    expect(PARTICLE_COLORS[18]).toBeDefined()
+    p.step(0.4)
+    expect(p.alive[i]).toBe(0)
+    for (let k = 0; k < 400; k++) p.spawn(DUST, 0, 0, 0, 0, 0, 1, 16 + (k % 3))
+    expect(p.count()).toBe(PARTICLE_CAP)
   })
 })

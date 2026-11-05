@@ -116,7 +116,7 @@ type Canvasish = HTMLCanvasElement | OffscreenCanvas
 export type Sheets = {
   worker: Canvasish
   robot: Canvasish
-  // Worker sheet recoloured for VARIANTS[i]'s shirt, built on first use.
+  // Worker sheet recoloured for a variant's shirt, hair and skin, built on first use.
   workerFor(variant: Variant): Canvasish
 }
 
@@ -158,7 +158,7 @@ function toCanvas(img: HTMLImageElement): Canvasish | null {
   return c
 }
 
-function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
+export function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
   r /= 255; g /= 255; b /= 255
   const max = Math.max(r, g, b), min = Math.min(r, g, b)
   const l = (max + min) / 2
@@ -178,12 +178,57 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)]
 }
 
-// The generated worker wears a teal shirt (#0c8384 family). Pixels in that hue
-// band are the shirt; nothing else on the sprite is teal.
-const SHIRT_HUE_MIN = 160
-const SHIRT_HUE_MAX = 200
-const SHIRT_REF_S = 0.83
-const SHIRT_REF_L = 0.28
+// Colour bands of the generated worker sheet (sampled from worker.png):
+// - shirt: teal #0c8384 family, hue 160-200.
+// - hair: browns #68371e / #4e2618 / #7a4f3c ..., low lightness. The boots use
+//   exactly the same browns, so hair is also limited to rows above the neck.
+// - skin: #f5b289 family, light and warm; its hue limit (25) keeps the
+//   cardboard box / wooden handles (hue >= 26) out.
+// Hair and skin split at lightness 0.40; the outline, trousers and purple
+// boots have other hues, so the classes never overlap.
+export const SHIRT_HUE_MIN = 160
+export const SHIRT_HUE_MAX = 200
+export const SHIRT_REF_S = 0.83
+export const SHIRT_REF_L = 0.28
+export const HAIR_REF_S = 0.55
+export const HAIR_REF_L = 0.26
+export const SKIN_REF_S = 0.84
+export const SKIN_REF_L = 0.75
+const DEFAULT_NECK = 22
+const NECK_MIN_SHIRT_PX = 6
+
+export const PX_NONE = 0
+export const PX_SHIRT = 1
+export const PX_HAIR = 2
+export const PX_SKIN = 3
+
+/** Which recolour class a pixel (original hsl) belongs to. Pure; exported for tests. */
+export function classifyWorkerPixel(h: number, s: number, l: number, cellY: number, neckY: number, cellH: number): 0 | 1 | 2 | 3 {
+  if (s >= 0.25 && h >= SHIRT_HUE_MIN && h <= SHIRT_HUE_MAX) return PX_SHIRT
+  if (s < 0.3 || (h > 25 && h < 345)) return PX_NONE
+  if (l >= 0.12 && l < 0.4) return cellY < neckY && (h <= 22 || h >= 340) ? PX_HAIR : PX_NONE
+  if (l >= 0.4 && l < 0.9) return cellY < cellH - 8 ? PX_SKIN : PX_NONE
+  return PX_NONE
+}
+
+type Target = { h: number; s: number; l: number; refS: number; refL: number }
+
+function parseTarget(hex: string | undefined, refS: number, refL: number): Target | null {
+  const m = hex ? /^#?([0-9a-f]{6})$/i.exec(hex) : null
+  if (!m) return null
+  const n = parseInt(m[1], 16)
+  const [h, s, l] = rgbToHsl((n >> 16) & 255, (n >> 8) & 255, n & 255)
+  return { h, s, l, refS, refL }
+}
+
+function recolorPixel(data: Uint8ClampedArray, i: number, s: number, l: number, t: Target): void {
+  const ns = Math.max(0, Math.min(1, s * (t.s / t.refS)))
+  // Very dark targets would flatten hair shading into a blob: compress the offset.
+  const off = (t.l - t.refL) * (t.l < t.refL ? 0.6 : 0.8)
+  const nl = Math.max(0.04, Math.min(0.9, l + off))
+  const [r, g, b] = hslToRgb(t.h, ns, nl)
+  data[i] = r; data[i + 1] = g; data[i + 2] = b
+}
 
 /**
  * Recolour the shirt pixels of RGBA data toward `target` (hex), keeping the
@@ -191,18 +236,54 @@ const SHIRT_REF_L = 0.28
  * target's offset from the reference teal. Exported for tests.
  */
 export function recolorShirt(data: Uint8ClampedArray, target: string): void {
-  const m = /^#?([0-9a-f]{6})$/i.exec(target)
-  if (!m) return
-  const n = parseInt(m[1], 16)
-  const [th, ts, tl] = rgbToHsl((n >> 16) & 255, (n >> 8) & 255, n & 255)
+  const t = parseTarget(target, SHIRT_REF_S, SHIRT_REF_L)
+  if (!t) return
   for (let i = 0; i < data.length; i += 4) {
     if (data[i + 3] === 0) continue
     const [h, s, l] = rgbToHsl(data[i], data[i + 1], data[i + 2])
     if (s < 0.25 || h < SHIRT_HUE_MIN || h > SHIRT_HUE_MAX) continue
-    const ns = Math.max(0, Math.min(1, s * (ts / SHIRT_REF_S)))
-    const nl = Math.max(0.04, Math.min(0.9, l + (tl - SHIRT_REF_L) * 0.8))
-    const [r, g, b] = hslToRgb(th, ns, nl)
-    data[i] = r; data[i + 1] = g; data[i + 2] = b
+    recolorPixel(data, i, s, l, t)
+  }
+}
+
+/**
+ * Recolour shirt (variant.T), hair (variant.r) and skin (variant.K) of the
+ * worker sheet in one pass: every pixel is classified from its ORIGINAL colour
+ * so a recoloured shirt can never be picked up again as hair or skin.
+ */
+export function recolorWorker(
+  data: Uint8ClampedArray, width: number, height: number, variant: Variant,
+  cellW: number = WORKER_SHEET.cellW, cellH: number = WORKER_SHEET.cellH,
+): void {
+  const shirt = parseTarget(variant.T, SHIRT_REF_S, SHIRT_REF_L)
+  const hair = parseTarget(variant.r, HAIR_REF_S, HAIR_REF_L)
+  const skin = parseTarget(variant.K, SKIN_REF_S, SKIN_REF_L)
+  if (!shirt && !hair && !skin) return
+  for (let cy = 0; cy + cellH <= height; cy += cellH) {
+    for (let cx = 0; cx + cellW <= width; cx += cellW) {
+      // Neck line: first row of this cell with enough shirt pixels.
+      let neck = DEFAULT_NECK
+      for (let y = 0; y < cellH; y++) {
+        let n = 0
+        for (let x = 0; x < cellW; x++) {
+          const i = ((cy + y) * width + cx + x) * 4
+          if (data[i + 3] === 0) continue
+          const [h, s] = rgbToHsl(data[i], data[i + 1], data[i + 2])
+          if (s >= 0.25 && h >= SHIRT_HUE_MIN && h <= SHIRT_HUE_MAX) n++
+        }
+        if (n >= NECK_MIN_SHIRT_PX) { neck = y; break }
+      }
+      for (let y = 0; y < cellH; y++) {
+        for (let x = 0; x < cellW; x++) {
+          const i = ((cy + y) * width + cx + x) * 4
+          if (data[i + 3] === 0) continue
+          const [h, s, l] = rgbToHsl(data[i], data[i + 1], data[i + 2])
+          const c = classifyWorkerPixel(h, s, l, y, neck, cellH)
+          const t = c === PX_SHIRT ? shirt : c === PX_HAIR ? hair : c === PX_SKIN ? skin : null
+          if (t) recolorPixel(data, i, s, l, t)
+        }
+      }
+    }
   }
 }
 
@@ -218,23 +299,23 @@ export function loadOfficeSheets(): Promise<Sheets | null> {
       const worker = toCanvas(wImg)
       const robot = toCanvas(rImg)
       if (!worker || !robot) return null
-      const byShirt = new Map<string, Canvasish>()
+      const byVariant = new Map<string, Canvasish>()
       return {
         worker,
         robot,
         workerFor(variant: Variant): Canvasish {
-          const shirt = variant.T
-          if (!shirt) return worker
-          const hit = byShirt.get(shirt)
+          if (!variant.T && !variant.r && !variant.K) return worker
+          const key = `${variant.T ?? ''}|${variant.r ?? ''}|${variant.K ?? ''}`
+          const hit = byVariant.get(key)
           if (hit) return hit
           const c = makeCanvas(worker.width, worker.height)
           const g = c && ctx2d(c)
           if (!c || !g) return worker
           g.drawImage(worker as CanvasImageSource, 0, 0)
           const img = g.getImageData(0, 0, c.width, c.height)
-          recolorShirt(img.data, shirt)
+          recolorWorker(img.data, c.width, c.height, variant)
           g.putImageData(img, 0, 0)
-          byShirt.set(shirt, c)
+          byVariant.set(key, c)
           return c
         },
       }

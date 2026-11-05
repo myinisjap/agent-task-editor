@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
+import { PARTICLE_CAP } from './officeParticles'
 import {
   OfficeScene,
   autoZoom,
@@ -6,6 +7,11 @@ import {
   columnsFor,
   pairHandoffs,
   ease,
+  tooClose,
+  pickSeparatedSpot,
+  queueRanks,
+  queueFacing,
+  QUEUE_OFFSETS,
   type Station,
 } from './officeScene'
 
@@ -351,5 +357,154 @@ describe('OfficeScene cached layers', () => {
     scene.settle()
     expect(() => scene.draw(fakeCtx(), scene.width(), scene.height())).not.toThrow()
     expect(scene.particleCount()).toBe(0)
+    // Reduced motion: the only emote is the static gate "!".
+    expect(scene.emoteStates()).toEqual([{ stationKey: "a", kind: 1 }])
+  })
+})
+
+const seeded = () => {
+  let seed = 4242
+  vi.spyOn(Math, "random").mockImplementation(() => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+    return seed / 4294967296
+  })
+}
+
+describe("separation helpers", () => {
+  const script = (...v: number[]) => { let i = 0; return () => v[Math.min(i++, v.length - 1)] }
+  it("tooClose is an ellipse", () => {
+    expect(tooClose(0, 0)).toBe(true)
+    expect(tooClose(29, 0)).toBe(true)
+    expect(tooClose(31, 0)).toBe(false)
+    expect(tooClose(0, 15)).toBe(false)
+    expect(tooClose(22, 10)).toBe(false)
+  })
+  it("retries until a candidate is clear of the others", () => {
+    const others = [{ tx: 0, ty: 0 }]
+    // first candidate lands on the other, second is far away
+    const r = pickSeparatedSpot(0, 100, 0, 100, others, 1, 5, script(0, 0, 0.9, 0.9))
+    expect(r).toEqual({ x: 90, y: 90 })
+  })
+  it("takes the first candidate when there are no others", () => {
+    expect(pickSeparatedSpot(10, 20, 10, 20, [], 0, 5, script(0.5, 0.5, 0.9, 0.9))).toEqual({ x: 15, y: 15 })
+  })
+  it("accepts the last candidate after the retries", () => {
+    const others = [{ tx: 0, ty: 0 }]
+    const r = pickSeparatedSpot(0, 10, 0, 10, others, 1, 3, script(0.1, 0.1, 0.2, 0.2, 0.3, 0.3, 0.9, 0.9))
+    expect(r).toEqual({ x: 3, y: 3 })
+  })
+  it("collapses degenerate bounds to the minimum", () => {
+    expect(pickSeparatedSpot(5, 5, 7, 2, [], 0)).toEqual({ x: 5, y: 7 })
+  })
+})
+
+describe("queue helpers", () => {
+  it("ranks by ticket with ties by index", () => {
+    const out: number[] = []
+    queueRanks([7, 3, 9], 3, out)
+    expect(out).toEqual([1, 0, 2])
+    queueRanks([4, 4, 1], 3, out)
+    expect(out).toEqual([1, 2, 0])
+  })
+  it("has enough, distinct, in-bounds slots receding from the desk", () => {
+    expect(QUEUE_OFFSETS.length).toBeGreaterThanOrEqual(5)
+    let prevDy = -Infinity
+    QUEUE_OFFSETS.forEach(([dx, dy], k) => {
+      expect(Math.abs(dx)).toBeLessThanOrEqual(56)
+      expect(dy).toBeLessThanOrEqual(66)
+      expect(dy).toBeGreaterThan(prevDy) // the line recedes toward the viewer
+      prevDy = dy
+      for (let j = k + 1; j < QUEUE_OFFSETS.length; j++) {
+        expect(Math.hypot(dx - QUEUE_OFFSETS[j][0], dy - QUEUE_OFFSETS[j][1])).toBeGreaterThanOrEqual(20)
+      }
+    })
+  })
+  it("faces the desk", () => {
+    expect(queueFacing(100, 104)).toEqual({ dir: "back", facing: 1 })
+    expect(queueFacing(60, 104)).toEqual({ dir: "side", facing: 1 })
+    expect(queueFacing(150, 104)).toEqual({ dir: "side", facing: -1 })
+  })
+})
+
+describe("OfficeScene crowd behaviour", () => {
+  beforeEach(seeded)
+
+  it("keeps one worker at the desk and a unique, gapless line", () => {
+    const scene = new OfficeScene()
+    scene.layout(1200)
+    scene.setStations(stations({ a: 5 }))
+    let sawQueue = false
+    for (let i = 0; i < 600; i++) {
+      scene.step(0.05)
+      const st = scene.spriteStates()
+      expect(st.filter((s) => s.atWork).length).toBeLessThanOrEqual(1)
+      const slots = st.filter((s) => s.queued).map((s) => s.qSlot).sort()
+      if (slots.length) sawQueue = true
+      // settled lines have unique slots (a fresh joiner may still be -1 for a moment)
+      const assigned = slots.filter((q) => q >= 0)
+      expect(new Set(assigned).size).toBe(assigned.length)
+    }
+    expect(sawQueue).toBe(true)
+  })
+
+  it("spreads parked sprites out instead of stacking", () => {
+    const scene = new OfficeScene()
+    scene.layout(1200)
+    scene.setStations(stations({ a: 6 }))
+    for (let i = 0; i < 400; i++) scene.step(0.05)
+    const st = scene.spriteStates().filter((s) => !s.moving && !s.atWork)
+    for (let i = 0; i < st.length; i++)
+      for (let j = i + 1; j < st.length; j++)
+        expect(Math.hypot(st[i].x - st[j].x, st[i].y - st[j].y)).toBeGreaterThan(8)
+  })
+
+  it("shows at most one emote per station, and one \"!\" at a gate", () => {
+    const scene = new OfficeScene()
+    scene.layout(1200)
+    scene.setStations(stations({ g: 4, p: 3 }, { g: { gate: true, action: "waving" }, p: { action: "drawing" } }))
+    for (let i = 0; i < 400; i++) {
+      scene.step(0.05)
+      const e = scene.emoteStates()
+      for (const key of ["g", "p"]) expect(e.filter((x) => x.stationKey === key).length).toBeLessThanOrEqual(1)
+      expect(e.filter((x) => x.stationKey === "g" && x.kind !== 1)).toHaveLength(0)
+      scene.draw(fakeCtx(), scene.width(), scene.height())
+    }
+  })
+
+  it("pops a lightbulb after a planning turn", () => {
+    const scene = new OfficeScene()
+    scene.layout(1200)
+    scene.setStations(stations({ p: 2 }, { p: { action: "drawing" } }))
+    let bulb = false
+    for (let i = 0; i < 1200 && !bulb; i++) {
+      scene.step(0.05)
+      bulb = scene.emoteStates().some((e) => e.kind === 3)
+    }
+    expect(bulb).toBe(true)
+  })
+
+  it("kicks up dust when walkers start and stays under the particle cap", () => {
+    const scene = new OfficeScene()
+    scene.layout(1200)
+    scene.setStations(stations({ a: 6, b: 6, c: 6 }))
+    let dust = false
+    for (let i = 0; i < 300; i++) {
+      scene.step(0.05)
+      dust = dust || scene.particleCount() > 0
+      expect(scene.particleCount()).toBeLessThanOrEqual(PARTICLE_CAP)
+    }
+    expect(dust).toBe(true)
+  })
+
+  it("shows a +N tag and draws robots with squash without throwing", () => {
+    const scene = new OfficeScene()
+    scene.setRobots(true)
+    scene.layout(1200)
+    scene.setStations(stations({ a: 9 }))
+    for (let i = 0; i < 100; i++) {
+      scene.step(0.05)
+      scene.draw(fakeCtx(), scene.width(), scene.height())
+    }
+    expect(scene.particleCount()).toBe(0) // robots fly: no dust
   })
 })
