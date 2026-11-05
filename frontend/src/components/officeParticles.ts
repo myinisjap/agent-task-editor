@@ -10,18 +10,20 @@ export const PAPER = 1
 export const STEAM = 2
 export const LED = 3
 export const CONFETTI = 4
-export type ParticleKind = 0 | 1 | 2 | 3 | 4
+export const DUST = 5
+export type ParticleKind = 0 | 1 | 2 | 3 | 4 | 5
 
 export const PARTICLE_CAP = 200
 
 // Palette indices by group: sparks 0-2, paper 3-4, steam 5-7, LEDs 8-10,
-// confetti 11-15.
+// confetti 11-15, dust 16-18.
 export const PARTICLE_COLORS: readonly string[] = [
   '#fde047', '#fb923c', '#ffffff',
   '#f8fafc', '#cbd5e1',
   '#e2e8f0', '#94a3b8', '#cbd5e1',
   '#22d3ee', '#f472b6', '#4ade80',
   '#f43f5e', '#facc15', '#38bdf8', '#a3e635', '#c084fc',
+  '#d9c3a0', '#c8a77e', '#a88a64',
 ]
 
 export class ParticlePool {
