@@ -48,7 +48,35 @@ import {
   CONFETTI,
   DUST,
 } from './officeParticles'
-import { pickClip, propFor, PROP_RECTS, WORKER_SHEET, ROBOT_SHEET, type PropName, type Sheets } from './officeSheets'
+import { pickClip, propFor, PROP_RECTS, WORKER_SHEET, ROBOT_SHEET, BOX_TINTS, type PropName, type Sheets, type Mood } from './officeSheets'
+import { CARRY_OVERLAYS } from './pixelSprites'
+
+export type SceneTaskType = 'feature' | 'bug' | 'chore' | 'spike'
+
+// One real task as the scene needs it (derived in officeStations.ts).
+export type SceneTask = {
+  id: string
+  title: string
+  type: SceneTaskType
+  order: number // sort_order of the task's label (forward/backward detection)
+  runStatus?: 'pending' | 'running' | 'waiting_human'
+  blockCode?: string
+  clearsAt?: string | null
+  rateLimited: boolean
+  queuePos?: number | null
+  priority?: number
+}
+
+/** A task that takes the work slot: its run is starting or running. */
+export const isBusy = (t: SceneTask) => t.runStatus === 'running' || t.runStatus === 'pending'
+
+const SHIP_STEPS = [1, 3, 6, 10, 15]
+/** Boxes in the shipped pile: 0 for none, then 1..5 as the done count grows. */
+export function shippedBoxes(doneCount: number): number {
+  let n = 0
+  for (const th of SHIP_STEPS) if (doneCount >= th) n++
+  return n
+}
 
 export type Station = {
   key: string
@@ -57,9 +85,11 @@ export type Station = {
   action: Action
   count: number
   gate?: boolean // human gate: the crew waves for attention instead of working
+  tasks?: SceneTask[] // the real tasks at this station (task mode); absent = count-only
+  terminal?: boolean // done station (task mode): arrivals celebrate and leave
 }
 
-export type SpriteMode = 'local' | 'handoff' | 'fadeIn' | 'fadeOut'
+export type SpriteMode = 'local' | 'handoff' | 'fadeIn' | 'fadeOut' | 'leave'
 
 // One character on the floor. Positions are in base units (top-left of the
 // sprite's grid box). A sprite is either walking (an eased tween from→to) or
@@ -110,6 +140,17 @@ type Sprite = {
   fidgetCool: number
   fidgetSide: 1 | -1
   squashT: number // robot landing squash left (s)
+  task: SceneTask | null // bound task (null = anonymous, count mode)
+  busy: boolean // bound task takes the work slot
+  mood: 0 | 1 | 2 | 3 // none, celebrate, frustrated, doze
+  moodT: number // seconds left of a one-shot mood
+  moodAge: number // seconds into the one-shot
+  delayT: number // hand-off walk starts when this reaches 0
+  leaveAfter: boolean // arrived at the done station: celebrate, then walk off
+  carryImg: CanvasImageSource | null // tinted carry strip (cached per sprite)
+  carryRow0: number
+  carryType: SceneTaskType | ''
+  carryRobot: boolean
   // Last composed frame + the inputs it was built from (skip recomposing).
   lastFrame: Frame | null
   fAct: Action
@@ -147,6 +188,11 @@ const EMOTE_POP = 0.07 // half-size pop-in (s)
 const EMOTE_FADE = 0.3
 const SQUASH_S = 0.08
 const SEP_SPEED = 14 // units/s nudge apart
+
+const MOOD_TOTAL = [0, 1.2, 0.8, 0] // seconds of each one-shot mood (celebrate, frustrated)
+const LEAVE_FADE = 0.5
+const RECENT_DONE_FRESH = 15 // s: a run outcome still explains a label move
+const RECENT_DONE_KEEP = 30
 
 export const SEP_X = 30
 export const SEP_Y = 14
@@ -186,7 +232,9 @@ export function columnsFor(availWidth: number, zoom: number, stationCount: numbe
   return Math.max(1, Math.min(stationCount || 1, fit))
 }
 
-export type Handoffs = { moves: { from: string; to: string }[]; spawns: string[]; despawns: string[] }
+export type Handoffs = { moves: { from: string; to: string; taskId?: string }[]; spawns: string[]; despawns: string[] }
+
+const taskMode = (a: Station[]) => a.length > 0 && a.every((s) => s.tasks)
 
 /**
  * Pair count decrements with increments between two station snapshots. Each
@@ -197,6 +245,28 @@ export type Handoffs = { moves: { from: string; to: string }[]; spawns: string[]
  * counts (not the capped visible ones).
  */
 export function pairHandoffs(prev: Station[], next: Station[]): Handoffs {
+  if (!taskMode(prev) || !taskMode(next)) return pairCounts(prev, next)
+  const pm = new Map<string, string>()
+  const nm = new Map<string, string>()
+  for (const s of prev) for (const t of s.tasks!) pm.set(t.id, s.key)
+  for (const s of next) for (const t of s.tasks!) nm.set(t.id, s.key)
+  const out: Handoffs = { moves: [], spawns: [], despawns: [] }
+  for (const [id, key] of nm) {
+    const pk = pm.get(id)
+    if (pk === undefined) out.spawns.push(key)
+    else if (pk !== key) out.moves.push({ from: pk, to: key, taskId: id })
+  }
+  for (const [id, key] of pm) if (!nm.has(id)) out.despawns.push(key)
+  // Count changes the ids don't explain (count > tasks): pair them as before.
+  const resid = (a: Station[]) => a.map((s) => ({ ...s, count: Math.max(0, s.count - s.tasks!.length) }))
+  const r = pairCounts(resid(prev), resid(next))
+  out.moves.push(...r.moves)
+  out.spawns.push(...r.spawns)
+  out.despawns.push(...r.despawns)
+  return out
+}
+
+function pairCounts(prev: Station[], next: Station[]): Handoffs {
   const before = new Map(prev.map((s) => [s.key, s.count]))
   const dec: { key: string; i: number }[] = []
   let inc: { key: string; i: number }[] = []
@@ -217,6 +287,33 @@ export function pairHandoffs(prev: Station[], next: Station[]): Handoffs {
     spawns: inc.map((u) => u.key),
     despawns: dec.slice(moves.length).map((u) => u.key),
   }
+}
+
+export type Outcome = 'success' | 'failure' | null
+
+/**
+ * What a label move means for the worker. A move backwards (testing → work) or
+ * a failed run is a setback; a forward move right after a finished run is a
+ * success; a forward move without a recent run (a human drag) is neither.
+ * `consumed` = the setback was already played in place when the run failed.
+ */
+export function detectOutcome(
+  prevOrder: number, nextOrder: number, done?: { status: string; consumed?: boolean },
+): Outcome {
+  if (nextOrder < prevOrder) return done?.consumed ? null : 'failure'
+  if (done && (done.status === 'failed' || done.status === 'interrupted')) return done.consumed ? null : 'failure'
+  if (nextOrder > prevOrder && done && (done.status === 'completed' || done.status === 'waiting_human')) return 'success'
+  return null
+}
+
+/** Index of the earliest-ticket busy candidate (the one who gets the work slot), or -1. */
+export function pickWorker(cands: ArrayLike<{ busy: boolean; ticket: number }>, n: number): number {
+  let best = -1
+  for (let i = 0; i < n; i++) {
+    if (!cands[i].busy) continue
+    if (best < 0 || cands[i].ticket < cands[best].ticket) best = i
+  }
+  return best
 }
 
 /** True when two sprites at offset (dx, dy) overlap: an ellipse (sprites are wide, depth spacing is small). */
@@ -278,7 +375,17 @@ const GLYPHS: readonly (readonly number[])[] = [
   [7, 1, 3, 0, 2], // ?
   [7, 5, 7, 2, 2], // lightbulb (bottom two rows are the base)
   [1, 2, 20, 8], // check
+  [7, 1, 2, 4, 7], // z
 ]
+
+// The 'E' (tape) cells of the carried box per view: the grid fallback paints
+// the task-type colour over them.
+const BOX_CELLS: Record<Dir, (readonly [number, number])[]> = {
+  front: [], side: [], back: [],
+}
+for (const d of ['front', 'side', 'back'] as Dir[]) {
+  for (const c of CARRY_OVERLAYS[d].box) if (c[2] === 'E') BOX_CELLS[d].push([c[0], c[1]])
+}
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a)
 const actionOf = (st: Station): Action => (st.gate ? 'waving' : st.action)
@@ -301,6 +408,8 @@ export class OfficeScene {
   private tmpX = 0
   private tmpY = 0
   private ticketSeq = 0
+  private inTasks = false // stations carry real tasks (task mode)
+  private recentDone = new Map<string, { status: string; at: number; consumed: boolean }>()
   private near: Sprite[] = [] // scratch: obstacles when picking a spot
   private qScratch: Sprite[] = [] // scratch: one station's line
   private sepScratch: Sprite[] = [] // scratch: parked sprites of one station
@@ -310,7 +419,7 @@ export class OfficeScene {
   private bMinY = 0
   private bMaxY = 0
   // One emote bubble per station at most.
-  private emoteKind = new Uint8Array(0) // 0 none, 1 !, 2 ?, 3 bulb, 4 check
+  private emoteKind = new Uint8Array(0) // 0 none, 1 !, 2 ?, 3 bulb, 4 check, 5 z
   private emoteAge = new Float32Array(0)
   private emoteLife = new Float32Array(0) // for "!": seconds until it moves to another crew member
   private emoteOwner: (Sprite | null)[] = []
@@ -358,8 +467,11 @@ export class OfficeScene {
 
   setStations(next: Station[]) {
     const prev = this.stations
+    const nextTasks = taskMode(next)
+    // Switching between count and task mode (or workflows) rebuilds.
     const sameKeys =
-      prev.length > 0 && prev.length === next.length && next.every((s) => prev.some((p) => p.key === s.key))
+      prev.length > 0 && prev.length === next.length && nextTasks === this.inTasks && next.every((s) => prev.some((p) => p.key === s.key))
+    this.inTasks = nextTasks
     this.stations = next
     this.applyZoom()
     this.relayout()
@@ -381,6 +493,10 @@ export class OfficeScene {
     const index = new Map(next.map((s, i) => [s.key, i]))
     for (const s of this.sprites) s.stationIndex = index.get(s.stationKey) ?? s.stationIndex
     if (orderChanged) this.replaceSprites()
+    if (nextTasks) {
+      this.syncTasks(prev, next)
+      return
+    }
 
     const { moves, spawns, despawns } = pairHandoffs(prev, next)
     for (const m of moves) this.applyMove(m.from, m.to)
@@ -393,14 +509,16 @@ export class OfficeScene {
 
   private want(key: string): number {
     const st = this.stations.find((s) => s.key === key)
-    return st ? Math.min(st.count, CAP) : 0
+    if (!st) return 0
+    if (this.inTasks) return st.terminal ? 0 : Math.min(st.tasks!.length, CAP)
+    return Math.min(st.count, CAP)
   }
 
   // Sprites that count toward a station's visible crew (walkers count toward
   // their destination; overflow walkers and fading-out sprites don't).
   private live(key: string): number {
     let n = 0
-    for (const s of this.sprites) if (s.stationKey === key && s.mode !== 'fadeOut' && !s.overflow) n++
+    for (const s of this.sprites) if (s.stationKey === key && s.mode !== 'fadeOut' && s.mode !== 'leave' && !s.overflow) n++
     return n
   }
 
@@ -432,18 +550,185 @@ export class OfficeScene {
     w.stationIndex = di
     w.stationKey = toKey
     w.speed = HANDOFF_SPEED + Math.random() * 10
+    this.startHandoff(w, di)
+  }
+
+  // Start the hand-off walk toward an idle spot at station di.
+  private startHandoff(w: Sprite, di: number) {
     const spot = this.idleTarget(di, w)
     this.startMove(w, spot.x, spot.y, 0.8, 4)
   }
 
-  private spawnFade(key: string) {
+  private spawnFade(key: string, task?: SceneTask) {
     const i = this.stations.findIndex((s) => s.key === key)
     if (i < 0) return
     const spot = this.idleTarget(i)
     const s = this.makeSprite(i, spot.x, spot.y)
     s.mode = 'fadeIn'
     s.alpha = 0
+    if (task) this.bindTask(s, task)
     this.sprites.push(s)
+  }
+
+  // ---- task mode -----------------------------------------------------------
+
+  // Bind a sprite to its task: busy/doze state follow the task's fields.
+  private bindTask(s: Sprite, t: SceneTask) {
+    s.task = t
+    s.busy = isBusy(t) && !t.rateLimited
+    if (t.rateLimited) {
+      if (s.mood !== 3) { s.mood = 3; s.moodT = 0 }
+    } else if (s.mood === 3) s.mood = 0
+  }
+
+  private stationIdx(key: string): number {
+    for (let i = 0; i < this.stations.length; i++) if (this.stations[i].key === key) return i
+    return -1
+  }
+
+  private startMood(s: Sprite, mood: 1 | 2) {
+    s.mood = mood
+    s.moodT = MOOD_TOTAL[mood]
+    s.moodAge = 0
+    if (mood === 2) this.smoke(s)
+  }
+
+  // Small grey puff over the head (non-emissive steam, greys 6/7).
+  private smoke(s: Sprite) {
+    const n = 4 + Math.floor(Math.random() * 3)
+    const lift = this.sheets && !this.robots ? 10 : 6
+    for (let k = 0; k < n; k++) {
+      this.particles.spawn(
+        STEAM, s.x + SPRITE_W / 2 + rand(-6, 6), s.y + lift, rand(-8, 8), rand(-34, -20), 0, rand(0.6, 0.9), 6 + Math.floor(Math.random() * 2),
+      )
+    }
+  }
+
+  private fadeOutSprite(s: Sprite) {
+    s.mode = 'fadeOut'
+    s.atWork = false
+    s.queued = false
+    s.qSlot = -1
+    s.moving = false
+    s.delayT = 0
+  }
+
+  /**
+   * Task mode diff: sprites follow tasks by id. A label move sends that
+   * task's own sprite to the new station (after a celebrate / frustrated beat
+   * when a run outcome explains it); new visible tasks fade in; gone or
+   * pushed-past-CAP tasks fade out.
+   */
+  private syncTasks(prev: Station[], next: Station[]) {
+    const info = new Map<string, { t: SceneTask; key: string; vis: boolean }>()
+    for (const st of next) st.tasks!.forEach((t, k) => info.set(t.id, { t, key: st.key, vis: !st.terminal && k < CAP }))
+    const prevTask = new Map<string, SceneTask>()
+    for (const st of prev) for (const t of st.tasks!) prevTask.set(t.id, t)
+    const bound = new Map<string, Sprite>()
+    for (const s of this.sprites) if (s.task && s.mode !== 'fadeOut' && s.mode !== 'leave') bound.set(s.task.id, s)
+
+    const moved = new Set<string>()
+    for (const m of pairHandoffs(prev, next).moves) {
+      if (!m.taskId) continue
+      const inf = info.get(m.taskId)
+      const pt = prevTask.get(m.taskId)
+      const di = this.stationIdx(m.to)
+      const si = this.stationIdx(m.from)
+      if (!inf || !pt || di < 0 || si < 0) continue
+      const dest = this.stations[di]
+      let w = bound.get(m.taskId)
+      if (!w) {
+        if (!inf.vis && !dest.terminal) continue
+        const slot = this.workSlot(si) // source was beyond CAP: leave from its work slot
+        w = this.makeSprite(si, slot.x, slot.y)
+        this.sprites.push(w)
+        bound.set(m.taskId, w)
+      }
+      moved.add(m.taskId)
+      this.bindTask(w, inf.t)
+      const d = this.recentDone.get(m.taskId)
+      const outcome = detectOutcome(pt.order, inf.t.order, d && this.clock - d.at < RECENT_DONE_FRESH ? d : undefined)
+      this.recentDone.delete(m.taskId)
+      w.overflow = !inf.vis && !dest.terminal
+      w.leaveAfter = !!dest.terminal
+      w.mode = 'handoff'
+      w.alpha = 1
+      w.atWork = false
+      w.queued = false
+      w.qSlot = -1
+      w.stationIndex = di
+      w.stationKey = m.to
+      w.speed = HANDOFF_SPEED + Math.random() * 10
+      if (outcome) {
+        w.moving = false
+        this.startMood(w, outcome === 'success' ? 1 : 2)
+        w.delayT = w.moodT
+      } else {
+        if (w.mood !== 3) w.mood = 0
+        w.moodT = 0
+        w.delayT = 0
+        this.startHandoff(w, di)
+      }
+    }
+
+    for (const [id, s] of bound) {
+      if (moved.has(id)) continue
+      const inf = info.get(id)
+      if (!inf) { this.fadeOutSprite(s); continue }
+      this.bindTask(s, inf.t)
+      if (!inf.vis && s.mode !== 'handoff' && !s.leaveAfter) this.fadeOutSprite(s)
+    }
+    for (const st of next) {
+      if (st.terminal) continue
+      for (let k = 0; k < st.tasks!.length && k < CAP; k++) {
+        const t = st.tasks![k]
+        const b = bound.get(t.id)
+        if (!b || b.mode === 'fadeOut') this.spawnFade(st.key, t)
+      }
+    }
+  }
+
+  /**
+   * A run for `taskId` finished with `status` (WS task.agent_done). Remembered
+   * for the label move that usually follows; a failed run plays frustrated in
+   * place right away.
+   */
+  noteRunDone(taskId: string, status: string) {
+    for (const [k, v] of this.recentDone) if (this.clock - v.at > RECENT_DONE_KEEP) this.recentDone.delete(k)
+    const entry = { status, at: this.clock, consumed: false }
+    this.recentDone.set(taskId, entry)
+    if (status !== 'failed' && status !== 'interrupted') return
+    for (const s of this.sprites) {
+      if (s.task?.id === taskId && s.mode === 'local' && !s.moving) {
+        this.startMood(s, 2)
+        entry.consumed = true
+        break
+      }
+    }
+  }
+
+  /** The sprite under (x, y) in base units (front-most), or null. Pure; no allocation. */
+  spriteAt(x: number, y: number): { taskId: string; task: SceneTask; gate: boolean } | null {
+    let best: Sprite | null = null
+    for (let k = 0; k < this.sprites.length; k++) {
+      const s = this.sprites[k]
+      if (!s.task || s.mode === 'fadeOut' || s.mode === 'leave' || s.alpha < 0.5) continue
+      const st = this.stations[s.stationIndex]
+      if (!st) continue
+      const tall = this.sheets !== null && !(this.robots || actionOf(st) === 'robot')
+      const h = tall ? 84 : SPRITE_H
+      const fx = s.x + SPRITE_W / 2
+      const fy = s.y + SPRITE_H
+      if (Math.abs(x - fx) > 14 || y < fy - h || y > fy) continue
+      if (!best || s.y > best.y) best = s
+    }
+    if (!best) return null
+    return { taskId: best.task!.id, task: best.task!, gate: !!this.stations[best.stationIndex].gate }
+  }
+
+  /** spriteAt in CSS px of the canvas. */
+  pickAt(cssX: number, cssY: number) {
+    return this.spriteAt(cssX / this.scale, cssY / this.scale)
   }
 
   private fadeOutOne(key: string) {
@@ -458,6 +743,7 @@ export class OfficeScene {
 
   // Enforce min(count, CAP) visible per station against whatever drifted.
   private reconcile() {
+    if (this.inTasks) return // task mode binds sprites by id (syncTasks)
     for (const st of this.stations) {
       while (this.live(st.key) < this.want(st.key)) this.spawnFade(st.key)
       while (this.live(st.key) > this.want(st.key)) {
@@ -491,10 +777,12 @@ export class OfficeScene {
   private replaceSprites() {
     this.particles.clear()
     for (const s of this.sprites) {
+      if (s.mode === 'leave') { s.alpha = 0; s.moving = false; continue }
       const spot = this.idleTarget(s.stationIndex, s)
       s.queued = false
       s.qSlot = -1
       if (s.mode === 'handoff') {
+        s.delayT = 0
         this.startMove(s, spot.x, spot.y, 0.8, 4)
         continue
       }
@@ -640,6 +928,17 @@ export class OfficeScene {
       fidgetCool: rand(2, 7),
       fidgetSide: 1,
       squashT: 0,
+      task: null,
+      busy: false,
+      mood: 0,
+      moodT: 0,
+      moodAge: 0,
+      delayT: 0,
+      leaveAfter: false,
+      carryImg: null,
+      carryRow0: 0,
+      carryType: '',
+      carryRobot: false,
       lastFrame: null,
       fAct: 'idle',
       fIdx: -1,
@@ -653,11 +952,13 @@ export class OfficeScene {
     this.sprites = []
     this.particles.clear()
     this.clearEmotes()
+    this.recentDone.clear()
     this.stations.forEach((st, i) => {
-      const n = Math.min(st.count, CAP)
+      const n = this.inTasks ? this.want(st.key) : Math.min(st.count, CAP)
       for (let k = 0; k < n; k++) {
         const start = this.idleTarget(i)
         const s = this.makeSprite(i, start.x, start.y)
+        if (this.inTasks) this.bindTask(s, st.tasks![k])
         this.sprites.push(s)
         const t = this.idleTarget(i, s)
         this.startMove(s, t.x, t.y)
@@ -697,15 +998,25 @@ export class OfficeScene {
     s.x = s.tx
     s.y = s.ty
     s.moving = false
+    if (s.mode === 'leave') {
+      s.alpha = 0 // walked off the bottom edge: step() removes it
+      return
+    }
     if (s.mode === 'handoff') {
       const key = s.stationKey
       s.speed = 16 + Math.random() * 14
       s.atWork = false
-      if (s.overflow && this.live(key) >= this.want(key)) {
+      if (s.overflow && (s.task !== null || this.live(key) >= this.want(key))) {
         s.mode = 'fadeOut' // destination is full: join the overflow
       } else {
         s.overflow = false
         s.mode = 'local'
+        if (s.leaveAfter && s.task) {
+          // Done: celebrate, then step() walks it off the bottom edge.
+          s.mood = 1
+          s.moodT = MOOD_TOTAL[1]
+          s.moodAge = 0
+        }
       }
     }
     const st = this.stations[s.stationIndex]
@@ -730,6 +1041,18 @@ export class OfficeScene {
     if (this.robots || (st && actionOf(st) === 'robot')) s.squashT = SQUASH_S
   }
 
+  // Done and celebrated: walk straight off the bottom edge of the scene and fade.
+  private beginLeave(s: Sprite) {
+    const rows = Math.max(1, Math.ceil((this.stations.length || 1) / Math.max(1, this.cols)))
+    s.mode = 'leave'
+    s.leaveAfter = false
+    s.atWork = false
+    s.queued = false
+    s.qSlot = -1
+    s.speed = 40
+    this.startMove(s, s.x, PAD * 2 + rows * CELL_H + SPRITE_H, 0.8, 6)
+  }
+
   // Small dust puff at a walker's feet (workers only; robots fly).
   private puff(s: Sprite) {
     const st = this.stations[s.stationIndex]
@@ -746,6 +1069,10 @@ export class OfficeScene {
   // The action a sprite plays when parked: gate crews wave, queued workers
   // breathe idly instead of air-hammering, everyone else does the station job.
   private poseAction(s: Sprite, st: Station): Action {
+    if (!s.moving) {
+      if (s.mood === 1) return 'celebrating'
+      if (s.mood === 2 || s.mood === 3) return 'idle'
+    }
     return st.gate ? 'waving' : s.queued && st.action !== 'robot' ? 'idle' : st.action
   }
 
@@ -760,7 +1087,7 @@ export class OfficeScene {
     let dir = s.dir
     let facing = s.facing
     let idx = -1
-    if (s.fidget && !s.moving && !s.atWork && s.settleT <= 0 && !st.gate) {
+    if (s.fidget && !s.moving && !s.atWork && s.settleT <= 0 && !st.gate && s.mood === 0) {
       const robotStation = st.action === 'robot'
       if (s.fidget === 1) {
         if (dir === 'side') dir = 'front'
@@ -804,6 +1131,22 @@ export class OfficeScene {
     return this.sprites.some((s) => s.stationIndex === stationIndex && s.atWork)
   }
 
+  private busyQueued(stationIndex: number): boolean {
+    for (let k = 0; k < this.sprites.length; k++) {
+      const s = this.sprites[k]
+      if (s.stationIndex === stationIndex && s.queued && s.busy) return true
+    }
+    return false
+  }
+
+  private joinQueue(s: Sprite) {
+    s.queued = true
+    s.ticket = ++this.ticketSeq
+    s.waitT = 0
+    s.qSlot = -1
+    s.frameTimer = Math.random() * actionFrameDur('idle') * s.jitter
+  }
+
   private anyQueued(stationIndex: number): boolean {
     for (let k = 0; k < this.sprites.length; k++) {
       const s = this.sprites[k]
@@ -815,15 +1158,15 @@ export class OfficeScene {
   /** Test introspection only (read-only): the current sprite roster. */
   spriteStates(): {
     stationKey: string; mode: SpriteMode; alpha: number; atWork: boolean; dir: Dir; moving: boolean
-    queued: boolean; qSlot: number; x: number; y: number
+    queued: boolean; qSlot: number; x: number; y: number; taskId: string | null; mood: number; delayT: number
   }[] {
     return this.sprites.map((s) => ({
       stationKey: s.stationKey, mode: s.mode, alpha: s.alpha, atWork: s.atWork, dir: s.dir, moving: s.moving,
-      queued: s.queued, qSlot: s.qSlot, x: s.x, y: s.y,
+      queued: s.queued, qSlot: s.qSlot, x: s.x, y: s.y, taskId: s.task?.id ?? null, mood: s.mood, delayT: s.delayT,
     }))
   }
 
-  /** Test introspection only: the visible emote (1 "!", 2 "?", 3 bulb, 4 check) per station. */
+  /** Test introspection only: the visible emote (1 "!", 2 "?", 3 bulb, 4 check, 5 z) per station. */
   emoteStates(): { stationKey: string; kind: number }[] {
     const out: { stationKey: string; kind: number }[] = []
     for (let i = 0; i < this.stations.length; i++) {
@@ -846,20 +1189,21 @@ export class OfficeScene {
   }
 
   // A random parked local sprite of station i (optionally only long-waiting queuers).
-  private pickEmoteOwner(i: number, waiting: boolean): Sprite | null {
+  private pickEmoteOwner(i: number, waiting: boolean, doze = false): Sprite | null {
     let n = 0
-    for (let k = 0; k < this.sprites.length; k++) if (this.emoteCandidate(this.sprites[k], i, waiting)) n++
+    for (let k = 0; k < this.sprites.length; k++) if (this.emoteCandidate(this.sprites[k], i, waiting, doze)) n++
     if (n === 0) return null
     let r = Math.floor(Math.random() * n)
     for (let k = 0; k < this.sprites.length; k++) {
       const c = this.sprites[k]
-      if (this.emoteCandidate(c, i, waiting) && r-- === 0) return c
+      if (this.emoteCandidate(c, i, waiting, doze) && r-- === 0) return c
     }
     return null
   }
 
-  private emoteCandidate(s: Sprite, i: number, waiting: boolean): boolean {
+  private emoteCandidate(s: Sprite, i: number, waiting: boolean, doze = false): boolean {
     if (s.stationIndex !== i || s.mode !== 'local' || s.moving || s.alpha < 1) return false
+    if (doze) return s.mood === 3
     return waiting ? s.queued && (s.waitT > 6 || s.qSlot >= 2) : true
   }
 
@@ -874,6 +1218,8 @@ export class OfficeScene {
         if (k === 1) {
           // "!" lives while the station is a gate, hopping between crew members.
           if (!st.gate || (o && o.moving) || this.emoteAge[i] >= this.emoteLife[i]) drop = true
+        } else if (k === 5) {
+          if ((o && o.mood !== 3) || this.emoteAge[i] >= this.emoteLife[i]) drop = true // "z" lasts while dozing
         } else if (this.emoteAge[i] >= this.emoteLife[i]) drop = true
         if (drop) { this.emoteKind[i] = 0; this.emoteOwner[i] = null }
       }
@@ -881,9 +1227,13 @@ export class OfficeScene {
       if (st.gate) {
         const o = this.pickEmoteOwner(i, false)
         if (o) this.setEmote(i, 1, o, rand(2.5, 4))
-      } else if (Math.random() < dt * 0.12) {
-        const o = this.pickEmoteOwner(i, true)
-        if (o) this.setEmote(i, 2, o, 1.6)
+      } else {
+        const z = this.pickEmoteOwner(i, false, true) // dozing beats "?"
+        if (z) this.setEmote(i, 5, z, rand(2, 3))
+        else if (Math.random() < dt * 0.12) {
+          const o = this.pickEmoteOwner(i, true)
+          if (o) this.setEmote(i, 2, o, 1.6)
+        }
       }
     }
   }
@@ -903,25 +1253,30 @@ export class OfficeScene {
         q[j] = s
       }
       if (q.length === 0) continue
-      let first = 0
+      let head: Sprite | null = null
       if (!this.slotTaken(i)) {
-        const h = q[0]
-        h.queued = false
-        h.qSlot = -1
-        h.atWork = true
-        this.workSlotXY(i)
-        this.startMove(h, this.tmpX, this.tmpY)
-        first = 1
+        // Task mode: only a busy worker takes the slot; idle ones just wait.
+        const wi = q[0].task !== null ? pickWorker(q, q.length) : 0
+        if (wi >= 0) head = q[wi]
       }
-      for (let k = first; k < q.length; k++) {
+      if (head) {
+        head.queued = false
+        head.qSlot = -1
+        head.atWork = true
+        this.workSlotXY(i)
+        this.startMove(head, this.tmpX, this.tmpY)
+      }
+      let rank = 0
+      for (let k = 0; k < q.length; k++) {
         const s = q[k]
-        const rank = k - first
+        if (s === head) continue
         s.waitT += dt
         if (s.qSlot !== rank) {
           s.qSlot = rank
           this.queueSlotPos(rank, i)
           this.startMove(s, this.tmpX, this.tmpY)
         }
+        rank++
       }
     }
     q.length = 0
@@ -979,10 +1334,17 @@ export class OfficeScene {
   // fades complete, walkers join their crew, blink/breath off.
   settle() {
     for (const s of this.sprites) {
-      if (s.mode === 'fadeOut') continue
+      if (s.mode === 'fadeOut' || s.mode === 'leave') continue
       if (s.mode === 'fadeIn') {
         s.mode = 'local'
         s.alpha = 1
+      }
+      if (s.delayT > 0 || s.moodT > 0) {
+        // Skip the celebrate / frustrated beats: go straight to the end state.
+        s.delayT = 0
+        s.moodT = 0
+        if (s.mood !== 3) s.mood = 0
+        if (s.mode === 'handoff' && !s.moving) this.startHandoff(s, s.stationIndex)
       }
       if (s.moving) this.arrive(s)
       s.startT = 0
@@ -992,18 +1354,20 @@ export class OfficeScene {
       s.fidget = 0
       s.squashT = 0
     }
-    this.sprites = this.sprites.filter((s) => s.mode !== 'fadeOut')
+    // Finished workers (walking off / celebrating at done) are simply gone.
+    const gone = (s: Sprite) => s.mode === 'fadeOut' || s.mode === 'leave' || s.leaveAfter
+    this.sprites = this.sprites.filter((s) => !gone(s))
     this.reconcile()
-    this.sprites = this.sprites.filter((s) => s.mode !== 'fadeOut')
-    for (const s of this.sprites) { s.mode = 'local'; s.alpha = 1 }
+    this.sprites = this.sprites.filter((s) => !gone(s))
+    for (const s of this.sprites) { s.mode = 'local'; s.alpha = 1; if (s.mood !== 3) s.mood = 0 }
     this.particles.clear()
-    // Static emotes only: one "!" per gate station.
+    // Static emotes only: one "!" per gate station, a "z" over a dozer elsewhere.
     this.clearEmotes()
     for (let i = 0; i < this.stations.length && i < this.emoteKind.length; i++) {
-      if (!this.stations[i].gate) continue
-      const o = this.pickEmoteOwner(i, false)
+      const gate = this.stations[i].gate
+      const o = gate ? this.pickEmoteOwner(i, false) : this.pickEmoteOwner(i, false, true)
       if (o) {
-        this.setEmote(i, 1, o, Infinity)
+        this.setEmote(i, gate ? 1 : 5, o, Infinity)
         this.emoteAge[i] = 1 // past the pop-in
       }
     }
@@ -1023,6 +1387,17 @@ export class OfficeScene {
       } else if (s.mode === 'fadeOut') {
         s.alpha = Math.max(0, s.alpha - dt / FADE_S)
         if (s.alpha <= 0) anyGone = true
+      }
+
+      if (s.moodT > 0) {
+        s.moodT -= dt
+        s.moodAge += dt
+        if (s.moodT <= 0) {
+          s.moodT = 0
+          s.moodAge = 0
+          if (s.mood !== 3) s.mood = 0
+          if (s.leaveAfter && s.mode === 'local') this.beginLeave(s)
+        }
       }
 
       const act = this.poseAction(s, st)
@@ -1063,9 +1438,14 @@ export class OfficeScene {
         }
         s.x = nx
         s.y = ny
+        if (s.mode === 'leave') {
+          const rem = s.dur - s.t
+          s.alpha = rem >= LEAVE_FADE ? 1 : Math.max(0, rem / LEAVE_FADE)
+        }
         if (u >= 1) {
           this.arrive(s)
-          this.puff(s)
+          if (s.mode !== 'leave') this.puff(s)
+          else anyGone = true
         }
       } else {
         // Idle life: breathing settle + occasional blink.
@@ -1079,17 +1459,39 @@ export class OfficeScene {
             s.blinkTimer = rand(2, 5)
           }
         }
-        if (!s.queued) {
+        if (s.mode === 'handoff' && s.delayT > 0) {
+          // Celebrate / frustrated beat before the hand-off walk.
+          s.delayT -= dt
+          if (s.delayT <= 0) {
+            s.delayT = 0
+            this.startHandoff(s, s.stationIndex)
+          }
+        }
+        const tm = s.task !== null && !st.gate // task mode, not a gate: busy tasks work, others queue
+        if (tm && s.atWork && !s.busy && s.moodT <= 0 && s.mode === 'local') {
+          s.atWork = false // run ended or rate limited: yield the slot at once
+          this.joinQueue(s)
+        } else if (!s.queued && s.moodT <= 0 && s.delayT <= 0 && s.mode !== 'handoff') {
           s.pause -= dt
           if (s.pause <= 0) {
             const i = s.stationIndex
-            if (s.atWork) {
+            if (s.atWork && tm && !this.busyQueued(i)) {
+              s.pause = 2.5 + Math.random() * 3 // still the only busy one: keep working
+            } else if (s.atWork) {
               // Done working: yield the slot and step aside to idle.
               s.atWork = false
               if (st.action === 'drawing') this.setEmote(i, 3, s, 1.4)
               else if (st.action === 'approving') this.setEmote(i, 4, s, 1.4)
               const t = this.idleTarget(i, s)
               this.startMove(s, t.x, t.y)
+            } else if (tm) {
+              if (s.busy && !this.slotTaken(i) && !this.busyQueued(i)) {
+                s.atWork = true
+                this.workSlotXY(i)
+                this.startMove(s, this.tmpX, this.tmpY)
+              } else {
+                this.joinQueue(s) // not busy (or desk taken): stand in line
+              }
             } else if (!st.gate && !this.slotTaken(i) && !this.anyQueued(i)) {
               // Slot free and nobody ahead: claim it and walk up to the workstation.
               s.atWork = true
@@ -1097,11 +1499,7 @@ export class OfficeScene {
               this.startMove(s, this.tmpX, this.tmpY)
             } else if (!st.gate) {
               // Slot busy: join the line (updateQueues gives it a place).
-              s.queued = true
-              s.ticket = ++this.ticketSeq
-              s.waitT = 0
-              s.qSlot = -1
-              s.frameTimer = Math.random() * actionFrameDur('idle') * s.jitter
+              this.joinQueue(s)
             } else {
               // Human gate: mill around and re-check next pause.
               const t = this.idleTarget(i, s)
@@ -1109,10 +1507,10 @@ export class OfficeScene {
             }
           }
         }
-        if (!s.moving && !s.atWork && !st.gate && s.mode === 'local' && s.settleT <= 0) this.stepFidget(s, dt)
+        if (!s.moving && !s.atWork && !st.gate && s.mode === 'local' && s.settleT <= 0 && s.mood === 0) this.stepFidget(s, dt)
       }
     }
-    if (anyGone) this.sprites = this.sprites.filter((s) => !(s.mode === 'fadeOut' && s.alpha <= 0))
+    if (anyGone) this.sprites = this.sprites.filter((s) => !((s.mode === 'fadeOut' || s.mode === 'leave') && s.alpha <= 0))
     this.updateQueues(dt)
     this.separate(dt)
     this.stepEmotes(dt)
@@ -1260,6 +1658,7 @@ export class OfficeScene {
       if (props) drawPropWorkstation(ctx, props as CanvasImageSource, st.action, this.workstation(i))
       else drawWorkstation(ctx, st.action, this.workstation(i), st.color)
       drawSign(ctx, this.workstation(i), st)
+      if (st.terminal) drawShipped(ctx, this.workstation(i), shippedBoxes(st.count))
     })
     // Tall floor lamps AFTER workstations (so a lamp beside a desk isn't
     // clipped by it) but before sprites. Same seed → same positions.
@@ -1482,11 +1881,12 @@ export class OfficeScene {
     } else {
       bob = actionBob(act, fidx)
     }
-    const blink = parked && walkLeg < 0 && s.blinkLeft > 0
+    const blink = parked && walkLeg < 0 && (s.blinkLeft > 0 || s.mood === 3) // dozers keep their eyes shut
     const breath = parked && Math.sin((2 * Math.PI * s.breathPhase) / BREATH_PERIOD) > 0.6
     const carry = s.mode === 'handoff' && s.moving
     if (this.sheets) {
-      this.drawFromSheet(ctx, s, act, dir, facing, this.pIdx, robotLook, scale, s.moving ? 0 : bob, carry)
+      const mood: Mood | undefined = parked ? (s.mood === 1 ? 'celebrate' : s.mood === 2 ? 'frustrated' : s.mood === 3 ? 'doze' : undefined) : undefined
+      this.drawFromSheet(ctx, s, act, dir, facing, this.pIdx, robotLook, scale, s.moving ? 0 : bob, carry, mood)
       return
     }
     const flags = (blink ? 1 : 0) | (breath ? 2 : 0) | (carry ? 4 : 0) | (this.robots ? 8 : 0)
@@ -1507,21 +1907,47 @@ export class OfficeScene {
     const sy = Math.round(s.y * scale) / scale
     if (s.alpha < 1) ctx.globalAlpha = s.alpha
     drawSprite(ctx, f, sx, sy, bob * ART_PX, flip ? -1 : 1, robotLook && s.squashT > 0)
+    if (carry && s.task) {
+      // Task-type colour on the box's tape cells.
+      ctx.fillStyle = BOX_TINTS[s.task.type]
+      const cells = BOX_CELLS[dir]
+      for (let k = 0; k < cells.length; k++) {
+        const cx = flip ? sx + SPRITE_W - (cells[k][0] + 1) * ART_PX : sx + cells[k][0] * ART_PX
+        ctx.fillRect(cx, sy + (bob + cells[k][1]) * ART_PX, ART_PX, ART_PX)
+      }
+    }
     if (s.alpha < 1) ctx.globalAlpha = 1
   }
 
   private drawFromSheet(
     ctx: CanvasRenderingContext2D, s: Sprite, act: Action, dir: Dir, facing: 1 | -1, fidx: number,
-    robotLook: boolean, scale: number, bob: number, carry: boolean,
+    robotLook: boolean, scale: number, bob: number, carry: boolean, mood?: Mood,
   ) {
     const sheets = this.sheets!
     const walking = s.moving && s.startT <= 0
     // A queued robot-station sprite waits on the robot's idle rows.
     const pa = robotLook && act === 'robot' && s.queued && !s.moving ? 'idle' : act
-    const clip = pickClip({ action: pa, dir, moving: walking, carry, robots: robotLook, alt: s.jitter > 1.1 })
+    const clip = pickClip({ action: pa, dir, moving: walking, carry, robots: robotLook, alt: s.jitter > 1.1, mood })
     const spec = clip.sheet === 'worker' ? WORKER_SHEET : ROBOT_SHEET
-    const img = (clip.sheet === 'worker' ? sheets.workerFor(s.variant) : sheets.robot) as CanvasImageSource
-    const idx = (walking ? s.steps : fidx >= 0 ? fidx : s.tick) % clip.frames
+    let img = (clip.sheet === 'worker' ? sheets.workerFor(s.variant) : sheets.robot) as CanvasImageSource
+    let row = clip.row
+    if (carry && s.task && clip.name.startsWith('carrying')) {
+      // Box tinted for the task type; resolved once per hand-off, then cached on the sprite.
+      if (!s.carryImg || s.carryType !== s.task.type || s.carryRobot !== robotLook) {
+        const c = sheets.carryFor(robotLook ? null : s.variant, s.task.type, robotLook)
+        s.carryImg = c.img as CanvasImageSource
+        s.carryRow0 = c.row0
+        s.carryType = s.task.type
+        s.carryRobot = robotLook
+      }
+      img = s.carryImg
+      row = clip.row - s.carryRow0
+    }
+    // One-shot moods play once through; everything else loops.
+    const oneShot = mood === 'celebrate' || mood === 'frustrated'
+    const idx = oneShot
+      ? Math.min(clip.frames - 1, Math.floor(s.moodAge / (MOOD_TOTAL[s.mood] / clip.frames)))
+      : (walking ? s.steps : fidx >= 0 ? fidx : s.tick) % clip.frames
     const sx = Math.round(s.x * scale) / scale
     const sy = Math.round(s.y * scale) / scale
     const footX = sx + SPRITE_W / 2
@@ -1542,7 +1968,7 @@ export class OfficeScene {
     ctx.save()
     ctx.translate(footX, 0)
     if (dir === 'side' && facing === -1) ctx.scale(-1, 1)
-    ctx.drawImage(img, idx * spec.cellW, clip.row * spec.cellH, spec.cellW, spec.cellH, -dw / 2, dy, dw, dh)
+    ctx.drawImage(img, idx * spec.cellW, row * spec.cellH, spec.cellW, spec.cellH, -dw / 2, dy, dw, dh)
     ctx.restore()
     if (squash) ctx.restore()
     if (s.alpha < 1) ctx.globalAlpha = 1
@@ -1785,6 +2211,14 @@ function drawBox(ctx: CanvasRenderingContext2D, x: number, y: number) {
   ctx.fillStyle = '#a8834f'; ctx.fillRect(x, y + 2, 10, 1); ctx.fillRect(x + 4, y + 2, 2, 8)
 }
 
+// Shipped pile beside the done desk: 1-5 boxes (2 bottom, 2 middle, 1 top).
+const PILE_SPOTS: readonly (readonly [number, number])[] = [[0, 0], [11, 0], [0, -8], [11, -8], [5, -16]]
+function drawShipped(ctx: CanvasRenderingContext2D, ws: { x: number; y: number; w: number; h: number }, n: number) {
+  const x0 = Math.round(ws.x + ws.w + 8)
+  const y0 = Math.round(ws.y + ws.h - 12)
+  for (let k = 0; k < n && k < PILE_SPOTS.length; k++) drawBox(ctx, x0 + PILE_SPOTS[k][0], y0 + PILE_SPOTS[k][1])
+}
+
 function drawMug(ctx: CanvasRenderingContext2D, x: number, y: number) {
   propShadow(ctx, x, y + 6, 5)
   ctx.fillStyle = '#e2e8f0'; ctx.fillRect(x, y + 1, 5, 5)
@@ -1975,7 +2409,7 @@ function drawEmote(ctx: CanvasRenderingContext2D, kind: number, cx: number, y: n
   const w = wide ? 5 : 3
   const gx = x0 + (wide ? 0 : cell)
   const gy = y + (wide ? 2 : 1) * cell
-  const main = kind === 1 ? color : kind === 2 ? '#f1f5f9' : kind === 3 ? '#fde047' : '#4ade80'
+  const main = kind === 1 ? color : kind === 2 ? '#f1f5f9' : kind === 3 ? '#fde047' : kind === 5 ? '#93c5fd' : '#4ade80'
   for (let r = 0; r < rows.length; r++) {
     ctx.fillStyle = kind === 3 && r >= 3 ? '#94a3b8' : main
     for (let c = 0; c < w; c++) {

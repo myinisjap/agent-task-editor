@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import type { Workflow } from '../../api/client'
 import TaskFactory from '../TaskFactory'
 import FactoryLine from '../FactoryLine'
@@ -6,6 +7,7 @@ import { Button, cx } from '../ui'
 import { useMediaQuery } from '../../lib/useMediaQuery'
 import { homeStations } from '../../lib/homeInbox'
 import PipelineStrip from './PipelineStrip'
+import { useSceneTasks } from './useSceneTasks'
 
 const ROBOTS_KEY = 'dashboard.visualize.robots' // legacy; migrated into MODE_KEY
 const MODE_KEY = 'dashboard.visualize.mode'
@@ -52,6 +54,10 @@ type Props = {
 
 export default function SceneBand({ workflow, labelCounts }: Props) {
   const compact = useMediaQuery(COMPACT_QUERY)
+  const navigate = useNavigate()
+  // Real tasks (kept live over the WebSocket) so the Office/Robots scene shows
+  // one worker per task; counts-only until the first load.
+  const { tasks, rateLimitedUntil, now } = useSceneTasks()
   // Remember an explicit choice per viewport class; otherwise follow the default.
   const [override, setOverride] = useState<{ compact: boolean; value: boolean } | null>(null)
   const stored = readExpanded(compact)
@@ -106,7 +112,15 @@ export default function SceneBand({ workflow, labelCounts }: Props) {
           {mode === 'factory' ? (
             <FactoryLine workflow={workflow} labelCounts={labelCounts} />
           ) : (
-            <TaskFactory workflow={workflow} labelCounts={labelCounts} robots={mode === 'robots'} />
+            <TaskFactory
+              workflow={workflow}
+              labelCounts={labelCounts}
+              robots={mode === 'robots'}
+              tasks={tasks}
+              rateLimitedUntil={rateLimitedUntil}
+              now={now}
+              onOpenTask={(id) => navigate(`/tasks/${id}`)}
+            />
           )}
           <ul data-testid="station-legend" className="flex flex-wrap gap-2 mt-3 min-w-0">
             {stations.map((s) => (

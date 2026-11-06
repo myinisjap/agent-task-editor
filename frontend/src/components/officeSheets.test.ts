@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pickClip, propFor, recolorShirt, recolorWorker, classifyWorkerPixel, rgbToHsl, PROP_RECTS, WORKER_SHEET, ROBOT_SHEET, type SheetSpec } from './officeSheets'
+import { pickClip, isBoxPixel, tintBox, BOX_TINTS, propFor, recolorShirt, recolorWorker, classifyWorkerPixel, rgbToHsl, PROP_RECTS, WORKER_SHEET, ROBOT_SHEET, type SheetSpec } from './officeSheets'
 import type { Action, Dir } from './pixelSprites'
 
 const ACTIONS: Action[] = ['idle', 'drawing', 'inspecting', 'hammering', 'testing', 'robot', 'approving', 'celebrating', 'waving']
@@ -127,5 +127,51 @@ describe('recolorWorker', () => {
     recolorWorker(px, W, H, { r: '#1c1310' }, W, H)
     const ref = build()
     expect(Array.from(px.slice(W * 4))).toEqual(Array.from(ref.slice(W * 4)))
+  })
+})
+
+describe('pickClip moods', () => {
+  const base = { action: 'hammering' as Action, dir: 'front' as Dir, moving: false, carry: false }
+  it('maps moods to the worker poses', () => {
+    expect(pickClip({ ...base, robots: false, mood: 'celebrate' }).name).toBe('celebrate_south')
+    expect(pickClip({ ...base, robots: false, mood: 'frustrated' }).name).toBe('frustrated_south')
+    expect(pickClip({ ...base, robots: false, mood: 'doze' }).name).toBe('dozing_south')
+  })
+  it('maps moods to the robot poses', () => {
+    expect(pickClip({ ...base, robots: true, mood: 'celebrate' }).name).toBe('celebrate_south')
+    expect(pickClip({ ...base, robots: true, mood: 'frustrated' }).name).toBe('error_south')
+    expect(pickClip({ ...base, robots: true, mood: 'doze' }).name).toBe('idle_still_south')
+    expect(pickClip({ ...base, action: 'robot', robots: false, mood: 'frustrated' }).sheet).toBe('robot')
+  })
+  it('walking beats a mood', () => {
+    expect(pickClip({ ...base, moving: true, robots: false, mood: 'celebrate' }).name).toBe('walk_south')
+  })
+})
+
+describe('box tint', () => {
+  const hsl = (hex: string) => {
+    const n = parseInt(hex.slice(1), 16)
+    return rgbToHsl((n >> 16) & 255, (n >> 8) & 255, n & 255)
+  }
+  const px = (hex: string, a = 255) => { const n = parseInt(hex.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255, a] }
+  it('classifies the cardboard colours as box and skin, hair, tape, shirt as not', () => {
+    for (const c of ['#b07a45', '#d4a064', '#8a5a32', '#794b26']) expect(isBoxPixel(...hsl(c))).toBe(true)
+    for (const c of ['#f5b289', '#efae8b', '#4e2618', '#e8d3a0', '#0c8384']) expect(isBoxPixel(...hsl(c))).toBe(false)
+  })
+  it('moves box pixels to the type hue and leaves the rest alone', () => {
+    const cases: [keyof typeof BOX_TINTS, (h: number, s: number) => boolean][] = [
+      ['bug', (h) => h < 8 || h > 352],
+      ['feature', (h) => Math.abs(h - 217) < 8],
+      ['spike', (h) => Math.abs(h - 271) < 8],
+      ['chore', (_h, s) => s < 0.2],
+    ]
+    for (const [type, ok] of cases) {
+      const data = new Uint8ClampedArray([...px('#b07a45'), ...px('#f5b289'), ...px('#0c8384'), ...px('#b07a45', 0)])
+      const ref = Array.from(data)
+      tintBox(data, BOX_TINTS[type])
+      const [h, s] = rgbToHsl(data[0], data[1], data[2])
+      expect(ok(h, s)).toBe(true)
+      expect(Array.from(data.slice(4))).toEqual(ref.slice(4))
+    }
   })
 })

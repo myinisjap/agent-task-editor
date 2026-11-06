@@ -12,6 +12,9 @@ import {
   queueRanks,
   queueFacing,
   QUEUE_OFFSETS,
+  detectOutcome,
+  pickWorker,
+  type SceneTask,
   type Station,
 } from './officeScene'
 
@@ -506,5 +509,235 @@ describe("OfficeScene crowd behaviour", () => {
       scene.draw(fakeCtx(), scene.width(), scene.height())
     }
     expect(scene.particleCount()).toBe(0) // robots fly: no dust
+  })
+})
+
+// ---- task mode (live board view) -------------------------------------------
+
+
+const tk = (id: string, order = 0, extra: Partial<SceneTask> = {}): SceneTask => ({
+  id, title: `Task ${id}`, type: 'feature', order, rateLimited: false, ...extra,
+})
+// Task-mode stations: layout is label key → task list (count = tasks.length).
+const tstations = (m: Record<string, SceneTask[]>, extra: Record<string, Partial<Station>> = {}): Station[] =>
+  Object.entries(m).map(([k, ts]) => mk(k, ts.length, { tasks: ts, ...extra[k] }))
+const run = (scene: OfficeScene, secs: number, dt = 0.05) => { for (let i = 0; i < secs / dt; i++) scene.step(dt) }
+const spr = (scene: OfficeScene, id: string) => scene.spriteStates().find((s) => s.taskId === id)
+
+describe('pairHandoffs by task id', () => {
+  it('pairs moves by id where counts alone would pair differently', () => {
+    // Counts: A -1, B 0, C +1 → count pairing sends A→C. By id, t1 goes A→C and t2 goes B→A.
+    const prev = tstations({ A: [tk('t1'), tk('t3')], B: [tk('t2')], C: [] })
+    const next = tstations({ A: [tk('t2'), tk('t3')], B: [], C: [tk('t1')] })
+    const h = pairHandoffs(prev, next)
+    expect(h.moves).toEqual(expect.arrayContaining([
+      { from: 'A', to: 'C', taskId: 't1' },
+      { from: 'B', to: 'A', taskId: 't2' },
+    ]))
+    expect(h.moves).toHaveLength(2)
+    expect(h.spawns).toEqual([])
+    expect(h.despawns).toEqual([])
+  })
+  it('spawns and despawns by id', () => {
+    const prev = tstations({ A: [tk('t1')], B: [] })
+    const next = tstations({ A: [], B: [tk('n1')] })
+    const h = pairHandoffs(prev, next)
+    expect(h.moves).toEqual([])
+    expect(h.spawns).toEqual(['B'])
+    expect(h.despawns).toEqual(['A'])
+  })
+  it('falls back to counts when either side has no tasks', () => {
+    const h = pairHandoffs(stations({ A: 2, B: 0 }), tstations({ A: [tk('t1')], B: [tk('t2')] }))
+    expect(h.moves).toEqual([{ from: 'A', to: 'B' }])
+  })
+})
+
+describe('detectOutcome / pickWorker', () => {
+  it('classifies label moves and run results', () => {
+    expect(detectOutcome(1, 2, { status: 'completed' })).toBe('success')
+    expect(detectOutcome(1, 2, { status: 'waiting_human' })).toBe('success')
+    expect(detectOutcome(1, 2)).toBe(null)
+    expect(detectOutcome(3, 2)).toBe('failure')
+    expect(detectOutcome(3, 2, { status: 'completed' })).toBe('failure')
+    expect(detectOutcome(2, 2, { status: 'failed' })).toBe('failure')
+    expect(detectOutcome(2, 2, { status: 'interrupted' })).toBe('failure')
+    expect(detectOutcome(2, 2, { status: 'failed', consumed: true })).toBe(null)
+    expect(detectOutcome(3, 2, { status: 'failed', consumed: true })).toBe(null)
+    expect(detectOutcome(1, 2, { status: 'cancelled' })).toBe(null)
+  })
+  it('picks the earliest-ticket busy candidate', () => {
+    const c = [{ busy: false, ticket: 1 }, { busy: true, ticket: 5 }, { busy: true, ticket: 3 }]
+    expect(pickWorker(c, 3)).toBe(2)
+    expect(pickWorker(c, 1)).toBe(-1)
+    expect(pickWorker([], 0)).toBe(-1)
+  })
+})
+
+describe('task-mode scene', () => {
+  it('binds one sprite per task and moves the right one', () => {
+    const scene = new OfficeScene()
+    scene.setStations(tstations({ A: [tk('t1'), tk('t2'), tk('t3')], B: [] }))
+    expect(scene.spriteStates().map((s) => s.taskId).sort()).toEqual(['t1', 't2', 't3'])
+    scene.setStations(tstations({ A: [tk('t1'), tk('t3')], B: [tk('t2')] }))
+    const m = spr(scene, 't2')!
+    expect(m.mode).toBe('handoff')
+    expect(m.stationKey).toBe('B')
+    expect(m.moving).toBe(true)
+    expect(spr(scene, 't1')!.stationKey).toBe('A')
+    expect(spr(scene, 't3')!.stationKey).toBe('A')
+    expect(scene.spriteStates().map((s) => s.taskId).sort()).toEqual(['t1', 't2', 't3'])
+  })
+
+  it('only busy tasks take the work slot; the rest queue', () => {
+    const scene = new OfficeScene()
+    scene.setStations(tstations({ A: [tk('t1', 0, { runStatus: 'running' }), tk('t2'), tk('t3')] }))
+    const atWork = new Set<string>()
+    for (let i = 0; i < 400; i++) {
+      scene.step(0.05)
+      for (const s of scene.spriteStates()) if (s.atWork) atWork.add(s.taskId!)
+    }
+    expect([...atWork]).toEqual(['t1'])
+    expect(spr(scene, 't2')!.queued).toBe(true)
+    expect(spr(scene, 't3')!.queued).toBe(true)
+    // t2 starts running and t1 stops: t2 takes over.
+    scene.setStations(tstations({ A: [tk('t2', 0, { runStatus: 'running' }), tk('t1'), tk('t3')] }))
+    run(scene, 12)
+    expect(spr(scene, 't2')!.atWork).toBe(true)
+    expect(spr(scene, 't1')!.atWork).toBe(false)
+  })
+
+  it('celebrates after a finished run, then walks', () => {
+    const scene = new OfficeScene()
+    scene.setStations(tstations({ A: [tk('t1', 1)], B: [] }))
+    run(scene, 3)
+    scene.noteRunDone('t1', 'completed')
+    scene.setStations(tstations({ A: [], B: [tk('t1', 2)] }))
+    const s = spr(scene, 't1')!
+    expect(s.mood).toBe(1)
+    expect(s.delayT).toBeGreaterThan(0)
+    expect(s.moving).toBe(false)
+    expect(s.mode).toBe('handoff')
+    run(scene, 0.4)
+    expect(spr(scene, 't1')!.moving).toBe(false)
+    run(scene, 1.2)
+    expect(spr(scene, 't1')!.moving).toBe(true)
+    expect(spr(scene, 't1')!.mood).toBe(0)
+  })
+
+  it('a plain forward move (human drag) just walks', () => {
+    const scene = new OfficeScene()
+    scene.setStations(tstations({ A: [tk('t1', 1)], B: [] }))
+    scene.setStations(tstations({ A: [], B: [tk('t1', 2)] }))
+    const s = spr(scene, 't1')!
+    expect(s.mood).toBe(0)
+    expect(s.moving).toBe(true)
+  })
+
+  it('a backward move is frustrated with a smoke puff', () => {
+    const scene = new OfficeScene()
+    scene.setStations(tstations({ A: [tk('t1', 1)], B: [tk('t2', 2)] }))
+    const before = scene.particleCount()
+    scene.setStations(tstations({ A: [tk('t1', 1), tk('t2', 1)], B: [] }))
+    const s = spr(scene, 't2')!
+    expect(s.mood).toBe(2)
+    expect(s.moving).toBe(false)
+    expect(scene.particleCount()).toBeGreaterThan(before)
+  })
+
+  it('a failed run plays frustrated in place, once', () => {
+    const scene = new OfficeScene()
+    scene.setStations(tstations({ A: [tk('t1', 1)], B: [] }))
+    scene.settle() // parked
+    scene.noteRunDone('t1', 'failed')
+    expect(spr(scene, 't1')!.mood).toBe(2)
+    run(scene, 1.2)
+    expect(spr(scene, 't1')!.mood).toBe(0)
+    // The later backward label move doesn't replay it.
+    scene.setStations(tstations({ A: [], B: [tk('t1', 0)] }))
+    expect(spr(scene, 't1')!.mood).toBe(0)
+  })
+
+  it('rate-limited tasks doze with a z and never take the slot', () => {
+    const scene = new OfficeScene()
+    scene.setStations(tstations({ A: [tk('t1', 0, { runStatus: 'running', rateLimited: true })] }))
+    let worked = false
+    for (let i = 0; i < 200; i++) {
+      scene.step(0.05)
+      if (scene.spriteStates().some((s) => s.atWork)) worked = true
+    }
+    expect(worked).toBe(false)
+    expect(spr(scene, 't1')!.mood).toBe(3)
+    expect(scene.emoteStates().some((e) => e.kind === 5)).toBe(true)
+    scene.setStations(tstations({ A: [tk('t1', 0, { runStatus: 'running' })] }))
+    expect(spr(scene, 't1')!.mood).toBe(0)
+    scene.step(0.05)
+    expect(scene.emoteStates().some((e) => e.kind === 5)).toBe(false)
+  })
+
+  it('done workers celebrate, walk off and are removed', () => {
+    const scene = new OfficeScene()
+    scene.setStations(tstations({ A: [tk('t1', 1)], D: [] }, { D: { terminal: true } }))
+    scene.noteRunDone('t1', 'completed')
+    scene.setStations(tstations({ A: [], D: [tk('t1', 2)] }, { D: { terminal: true } }))
+    let sawCelebrate = false
+    let sawLeave = false
+    for (let i = 0; i < 400; i++) {
+      scene.step(0.05)
+      const s = spr(scene, 't1')
+      if (!s) break
+      if (s.mode === 'local' && s.mood === 1) sawCelebrate = true
+      if (s.mode === 'leave') sawLeave = true
+    }
+    expect(sawCelebrate).toBe(true)
+    expect(sawLeave).toBe(true)
+    expect(spr(scene, 't1')).toBeUndefined()
+  })
+
+  it('settle drops finished workers', () => {
+    const scene = new OfficeScene()
+    scene.setStations(tstations({ A: [tk('t1', 1)], D: [] }, { D: { terminal: true } }))
+    scene.setStations(tstations({ A: [], D: [tk('t1', 2)] }, { D: { terminal: true } }))
+    scene.settle()
+    expect(scene.spriteStates()).toEqual([])
+  })
+
+  it('does not bind sprites to done tasks at start', () => {
+    const scene = new OfficeScene()
+    scene.setStations(tstations({ A: [tk('t1')], D: [tk('t2')] }, { D: { terminal: true } }))
+    expect(scene.spriteStates().map((s) => s.taskId)).toEqual(['t1'])
+  })
+})
+
+describe('spriteAt', () => {
+  it('hits near the foot point and returns the front-most sprite', () => {
+    const scene = new OfficeScene()
+    scene.setStations(tstations({ A: [tk('t1'), tk('t2')] }))
+    scene.settle()
+    const [a, b] = scene.spriteStates()
+    const foot = (s: { x: number; y: number }) => [s.x + 24, s.y + 72]
+    const [fx, fy] = foot(a)
+    expect(scene.spriteAt(fx, fy - 5)!.taskId).toBe(a.taskId)
+    expect(scene.spriteAt(fx + 40, fy - 5)?.taskId).not.toBe(a.taskId)
+    const solo = new OfficeScene()
+    solo.setStations(tstations({ A: [tk('s1')] }))
+    solo.settle()
+    const o = solo.spriteStates()[0]
+    expect(solo.spriteAt(o.x + 24, o.y + 72 - 5)!.taskId).toBe('s1')
+    expect(solo.spriteAt(o.x + 24, o.y + 72 - 72 - 30)).toBeNull()
+    // Overlap: move both to the same x with b lower → b is in front.
+    expect(b).toBeDefined()
+    const front = a.y >= b.y ? a : b
+    const mid = [(a.x + b.x) / 2 + 24, Math.min(a.y, b.y) + 72 - 2]
+    const hit = scene.spriteAt(mid[0], mid[1])
+    if (hit && Math.abs(a.x - b.x) < 20) expect(hit.taskId).toBe(front.taskId)
+    expect(scene.pickAt(fx, fy - 5)).not.toBeNull() // scale 1 at default zoom
+  })
+  it('returns null for count-mode sprites', () => {
+    const scene = new OfficeScene()
+    scene.setStations(stations({ A: 2 }))
+    scene.settle()
+    const s = scene.spriteStates()[0]
+    expect(s.taskId).toBeNull()
+    expect(scene.spriteAt(s.x + 24, s.y + 70)).toBeNull()
   })
 })
