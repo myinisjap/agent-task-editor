@@ -13,6 +13,7 @@ import workerUrl from '../assets/office/worker.png'
 import robotUrl from '../assets/office/robot.png'
 import propsUrl from '../assets/office/props.png'
 import type { Action, Dir, Variant } from './pixelSprites'
+import type { SceneTaskType } from './officeScene'
 
 export type SheetKind = 'worker' | 'robot'
 
@@ -130,10 +131,15 @@ function clip(sheet: SheetKind, name: string): Clip {
  * and tests cover the mapping. `robots` is the all-robot crew toggle; the
  * 'robot' action (the agent-review station) always shows a robot.
  */
-export function pickClip(o: { action: Action; dir: Dir; moving: boolean; carry: boolean; robots: boolean; alt?: boolean }): Clip {
+export type Mood = 'celebrate' | 'frustrated' | 'doze'
+
+export function pickClip(o: { action: Action; dir: Dir; moving: boolean; carry: boolean; robots: boolean; alt?: boolean; mood?: Mood }): Clip {
   const d = COMPASS[o.dir]
   if (o.robots || o.action === 'robot') {
     if (o.moving) return clip('robot', o.carry && d === 'east' ? 'carrying_east' : `fly_${d}`)
+    if (o.mood === 'celebrate') return clip('robot', 'celebrate_south')
+    if (o.mood === 'frustrated') return clip('robot', 'error_south')
+    if (o.mood === 'doze') return clip('robot', 'idle_still_south') // no doze row on the robot sheet
     if (o.action === 'celebrating') return clip('robot', 'celebrate_south')
     if (o.action === 'waving') return clip('robot', 'idle_south')
     if (d === 'north') return clip('robot', o.action === 'idle' ? 'idle_still_north' : 'working_north')
@@ -141,6 +147,9 @@ export function pickClip(o: { action: Action; dir: Dir; moving: boolean; carry: 
     return clip('robot', 'idle_south')
   }
   if (o.moving) return clip('worker', o.carry ? `carrying_${d}` : `walk_${d}`)
+  if (o.mood === 'celebrate') return clip('worker', 'celebrate_south')
+  if (o.mood === 'frustrated') return clip('worker', 'frustrated_south')
+  if (o.mood === 'doze') return clip('worker', 'dozing_south')
   if (o.action === 'waving') return clip('worker', 'wave_south')
   if (o.action === 'celebrating') return clip('worker', 'celebrate_south')
   if (TOOLED.has(o.action)) return clip('worker', `${o.action}_${d}`)
@@ -160,6 +169,41 @@ export type Sheets = {
   props: Canvasish | null
   // Worker sheet recoloured for a variant's shirt, hair and skin, built on first use.
   workerFor(variant: Variant): Canvasish
+  // Strip holding only the carrying rows (worker 18-20, robot 8) with the box
+  // tinted for a task type. Draw with source row `clip.row - row0`.
+  carryFor(variant: Variant | null, type: SceneTaskType, robot: boolean): { img: Canvasish; row0: number }
+}
+
+// ---- task-type box tint -----------------------------------------------------
+
+/** Box colour per task type: bug red, feature blue, chore grey, spike purple. */
+export const BOX_TINTS: Record<SceneTaskType, string> = { bug: '#ef4444', feature: '#3b82f6', chore: '#9ca3af', spike: '#a855f7' }
+
+// The cardboard in the carrying rows (sampled): #b07a45 #d4a064 #8a5a32 #794b26,
+// hue 27-32, s >= 0.44. Skin/hair there top out at hue 24, and the light tape
+// (#e8d3a0, l 0.77) is left alone so the box keeps its contrast.
+export const BOX_HUE_MIN = 26
+export const BOX_HUE_MAX = 45
+export const BOX_S_MIN = 0.4
+export const BOX_L_MIN = 0.28
+export const BOX_L_MAX = 0.75
+export const BOX_REF_S = 0.44
+export const BOX_REF_L = 0.48
+
+/** Whether an original pixel (hsl) is cardboard. */
+export function isBoxPixel(h: number, s: number, l: number): boolean {
+  return h >= BOX_HUE_MIN && h <= BOX_HUE_MAX && s >= BOX_S_MIN && l >= BOX_L_MIN && l < BOX_L_MAX
+}
+
+/** Recolour the cardboard pixels of carrying-row RGBA data to `hex`, keeping the shading. */
+export function tintBox(data: Uint8ClampedArray, hex: string): void {
+  const t = parseTarget(hex, BOX_REF_S, BOX_REF_L)
+  if (!t) return
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] === 0) continue
+    const [h, s, l] = rgbToHsl(data[i], data[i + 1], data[i + 2])
+    if (isBoxPixel(h, s, l)) recolorPixel(data, i, s, l, t)
+  }
 }
 
 function makeCanvas(w: number, h: number): Canvasish | null {
@@ -347,7 +391,8 @@ export function loadOfficeSheets(): Promise<Sheets | null> {
       const props = pImg ? toCanvas(pImg) : null
       if (!worker || !robot) return null
       const byVariant = new Map<string, Canvasish>()
-      return {
+      const carryCache = new Map<string, { img: Canvasish; row0: number }>()
+      const sheets: Sheets = {
         worker,
         robot,
         props,
@@ -366,7 +411,27 @@ export function loadOfficeSheets(): Promise<Sheets | null> {
           byVariant.set(key, c)
           return c
         },
+        carryFor(variant: Variant | null, type: SceneTaskType, isRobot: boolean) {
+          const key = `${isRobot ? 'r' : variant ? `${variant.T ?? ''}|${variant.r ?? ''}|${variant.K ?? ''}` : 'w'}|${type}`
+          const hit = carryCache.get(key)
+          if (hit) return hit
+          const spec = isRobot ? ROBOT_SHEET : WORKER_SHEET
+          const row0 = isRobot ? ROBOT_SHEET.rows.carrying_east[0] : WORKER_SHEET.rows.carrying_east[0]
+          const rows = isRobot ? 1 : 3
+          const src = isRobot ? robot : variant ? sheets.workerFor(variant) : worker
+          const c = makeCanvas(src.width, rows * spec.cellH)
+          const g = c && ctx2d(c)
+          if (!c || !g) return { img: src, row0: 0 }
+          g.drawImage(src as CanvasImageSource, 0, row0 * spec.cellH, src.width, rows * spec.cellH, 0, 0, src.width, rows * spec.cellH)
+          const img = g.getImageData(0, 0, c.width, c.height)
+          tintBox(img.data, BOX_TINTS[type])
+          g.putImageData(img, 0, 0)
+          const out = { img: c, row0 }
+          carryCache.set(key, out)
+          return out
+        },
       }
+      return sheets
     } catch {
       return null
     }
