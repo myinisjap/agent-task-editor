@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pickClip, recolorShirt, recolorWorker, classifyWorkerPixel, rgbToHsl, WORKER_SHEET, ROBOT_SHEET, type SheetSpec } from './officeSheets'
+import { pickClip, propFor, recolorShirt, recolorWorker, classifyWorkerPixel, rgbToHsl, PROP_RECTS, WORKER_SHEET, ROBOT_SHEET, type SheetSpec } from './officeSheets'
 import type { Action, Dir } from './pixelSprites'
 
 const ACTIONS: Action[] = ['idle', 'drawing', 'inspecting', 'hammering', 'testing', 'robot', 'approving', 'celebrating', 'waving']
@@ -11,8 +11,9 @@ describe('pickClip', () => {
       for (const dir of DIRS)
         for (const moving of [false, true])
           for (const carry of [false, true])
-            for (const robots of [false, true]) {
-              const c = pickClip({ action, dir, moving, carry, robots })
+            for (const robots of [false, true])
+            for (const alt of [false, true]) {
+              const c = pickClip({ action, dir, moving, carry, robots, alt })
               const spec: SheetSpec = c.sheet === 'worker' ? WORKER_SHEET : ROBOT_SHEET
               expect(spec.rows[c.name]).toEqual([c.row, c.frames])
               expect(c.frames).toBeGreaterThan(0)
@@ -34,6 +35,30 @@ describe('pickClip', () => {
     expect(pickClip({ action: 'robot', dir: 'back', moving: false, carry: false, robots: false })).toMatchObject({ sheet: 'robot', name: 'working_north' })
     expect(pickClip({ action: 'testing', dir: 'side', moving: true, carry: true, robots: true })).toMatchObject({ sheet: 'robot', name: 'carrying_east' })
     expect(pickClip({ action: 'testing', dir: 'front', moving: true, carry: false, robots: true }).name).toBe('fly_south')
+  })
+})
+
+describe('new PixelLab rows', () => {
+  it('gives some idle workers a coffee and robots a side work pose and a celebration', () => {
+    expect(pickClip({ action: 'idle', dir: 'front', moving: false, carry: false, robots: false, alt: true }).name).toBe('coffee_south')
+    expect(pickClip({ action: 'idle', dir: 'front', moving: false, carry: false, robots: false }).name).toBe('breath_south')
+    expect(pickClip({ action: 'testing', dir: 'side', moving: false, carry: false, robots: true }).name).toBe('working_east')
+    expect(pickClip({ action: 'idle', dir: 'side', moving: false, carry: false, robots: true }).name).toBe('idle_still_east')
+    expect(pickClip({ action: 'celebrating', dir: 'front', moving: false, carry: false, robots: true }).name).toBe('celebrate_south')
+  })
+
+  it('has 8-frame front and back walks so the loop does not hitch', () => {
+    expect(WORKER_SHEET.rows.walk_south[1]).toBe(8)
+    expect(WORKER_SHEET.rows.walk_north[1]).toBe(8)
+  })
+
+  it('maps every action to a furniture prop with a real atlas rect', () => {
+    for (const a of ACTIONS) {
+      const r = PROP_RECTS[propFor(a)]
+      expect(r[2]).toBeGreaterThan(0)
+      expect(r[3]).toBeGreaterThan(0)
+    }
+    expect(propFor('waving')).toBe('idle')
   })
 })
 

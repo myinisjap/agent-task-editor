@@ -48,7 +48,7 @@ import {
   CONFETTI,
   DUST,
 } from './officeParticles'
-import { pickClip, WORKER_SHEET, ROBOT_SHEET, type Sheets } from './officeSheets'
+import { pickClip, propFor, PROP_RECTS, WORKER_SHEET, ROBOT_SHEET, type PropName, type Sheets } from './officeSheets'
 
 export type Station = {
   key: string
@@ -333,6 +333,7 @@ export class OfficeScene {
   private sheets: Sheets | null = null
   setSheets(sheets: Sheets | null) {
     this.sheets = sheets
+    this.bgDirty = true // furniture props live in the cached background
   }
   usingSheets(): boolean {
     return this.sheets !== null
@@ -1255,7 +1256,9 @@ export class OfficeScene {
     this.stations.forEach((st, i) => {
       const p = this.patch(i)
       drawScatter(ctx, p, mulberry32(0x9e37 + i * 2654435761), 'back', 'noLamp')
-      drawWorkstation(ctx, st.action, this.workstation(i), st.color)
+      const props = this.sheets?.props
+      if (props) drawPropWorkstation(ctx, props as CanvasImageSource, st.action, this.workstation(i))
+      else drawWorkstation(ctx, st.action, this.workstation(i), st.color)
       drawSign(ctx, this.workstation(i), st)
     })
     // Tall floor lamps AFTER workstations (so a lamp beside a desk isn't
@@ -1515,7 +1518,7 @@ export class OfficeScene {
     const walking = s.moving && s.startT <= 0
     // A queued robot-station sprite waits on the robot's idle rows.
     const pa = robotLook && act === 'robot' && s.queued && !s.moving ? 'idle' : act
-    const clip = pickClip({ action: pa, dir, moving: walking, carry, robots: robotLook })
+    const clip = pickClip({ action: pa, dir, moving: walking, carry, robots: robotLook, alt: s.jitter > 1.1 })
     const spec = clip.sheet === 'worker' ? WORKER_SHEET : ROBOT_SHEET
     const img = (clip.sheet === 'worker' ? sheets.workerFor(s.variant) : sheets.robot) as CanvasImageSource
     const idx = (walking ? s.steps : fidx >= 0 ? fidx : s.tick) % clip.frames
@@ -1814,6 +1817,41 @@ function contactShadow(ctx: CanvasRenderingContext2D, ws: { x: number; y: number
     ctx.fillRect(x0 + ART_PX, y + ART_PX * 2, x1 - x0 - ART_PX * 2, ART_PX)
   }
 }
+
+// Base units per furniture-prop pixel. Props are drawn a bit finer than the
+// crew (SHEET_PX = 2) so a desk sits about waist high next to a worker; at
+// the default zoom on a 2x screen that is a whole 3 device px per pixel.
+const PROP_PX = 1.5
+
+// Draw one atlas prop bottom-centred at (cx, footY) in base units.
+function drawPropAt(ctx: CanvasRenderingContext2D, props: CanvasImageSource, name: PropName, cx: number, footY: number) {
+  const [x, y, w, h] = PROP_RECTS[name]
+  const dw = w * PROP_PX
+  const dh = h * PROP_PX
+  const dx = Math.round(cx - dw / 2)
+  const dy = Math.round(footY - dh)
+  propShadow(ctx, dx + 2, Math.round(footY) - 2, Math.round(dw) - 4)
+  ctx.drawImage(props, x, y, w, h, dx, dy, dw, dh)
+}
+
+// PNG furniture for a station, standing on the workstation footprint's front
+// edge where the hand-drawn prop sits.
+function drawPropWorkstation(
+  ctx: CanvasRenderingContext2D,
+  props: CanvasImageSource,
+  action: Action,
+  ws: { x: number; y: number; w: number; h: number },
+) {
+  const name = propFor(action)
+  // A few units below the footprint's edge so the plaque above stays clear.
+  const footY = ws.y + ws.h + PROP_DROP
+  drawPropAt(ctx, props, name, ws.x + ws.w / 2, footY)
+  // The break corner: a coffee machine beside the not-ready desk and a water
+  // cooler beside the review desk.
+  if (name === 'idle') drawPropAt(ctx, props, 'coffee', ws.x + ws.w + 20, footY)
+  else if (name === 'inspecting') drawPropAt(ctx, props, 'cooler', ws.x - 16, footY)
+}
+const PROP_DROP = 8
 
 function drawWorkstation(
   ctx: CanvasRenderingContext2D,
