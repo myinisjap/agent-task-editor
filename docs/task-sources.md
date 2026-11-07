@@ -653,6 +653,18 @@ invalid (e.g. the task moved concurrently), this is logged and skipped; a
 human can always still transition the task by hand. Requires `remote_url`,
 same as issue write-back.
 
+If the task's current label sets `pr_feedback_label`, the task moves to that label instead of the failure-path target (same actor and note in history). The workflow must have a `human` or `both` transition from the label to it (enforced on save). Board Reject is unaffected.
+
+```yaml
+labels:
+  - name: review
+    pr_feedback_label: pr-fix
+transitions:
+  - {from: review, to: pr-fix, trigger: human}
+```
+
+See [workflows.md](workflows.md).
+
 Via the API:
 
 ```bash

@@ -8,6 +8,7 @@ import {
   addLabel,
   addTransition,
   deleteLabel,
+  hasHumanTransition,
   isGated,
   kindOf,
   removeTransition,
@@ -158,6 +159,22 @@ function LabelForm({ draft, label, onChange, onSelectLabel, taskCount, locked, p
       {label.verify_mode === 'custom' && (
         <input aria-label="Verify command" placeholder="e.g. npm test" value={label.verify_command}
           onChange={(e) => patch({ verify_command: e.target.value })} className={`${field} w-full`} />
+      )}
+      <div className="flex items-center gap-2 text-sm text-slate-200">
+        <label htmlFor="edit-pr-feedback">Send PR feedback (CI, conflicts) to</label>
+        <select id="edit-pr-feedback" value={label.pr_feedback_label} onChange={(e) => patch({ pr_feedback_label: e.target.value })} className={field}>
+          <option value="">Failure path (default)</option>
+          {draft.labels
+            .filter((x) => x.name !== label.name && !x.is_terminal && !x.agent_ignore)
+            .map((x) => (
+              <option key={x.name} value={x.name}>{labelDisplayName(x)}</option>
+            ))}
+        </select>
+      </div>
+      {label.pr_feedback_label && !hasHumanTransition(draft, label.name, label.pr_feedback_label) && (
+        <p className="text-xs text-amber-300">
+          Add a human transition to {label.pr_feedback_label} or saving will fail.
+        </p>
       )}
       <button
         type="button"

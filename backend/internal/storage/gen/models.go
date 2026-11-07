@@ -642,6 +642,7 @@ type WorkflowLabel struct {
 	AutonomyAskOn       string   `json:"autonomy_ask_on"`
 	AutonomyHoldSeconds int64    `json:"autonomy_hold_seconds"`
 	AutonomyMaxCostUsd  *float64 `json:"autonomy_max_cost_usd"`
+	PrFeedbackLabel     string   `json:"pr_feedback_label"`
 }
 
 type WorkflowTransition struct {

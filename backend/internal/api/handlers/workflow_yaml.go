@@ -34,6 +34,8 @@ type yamlLabel struct {
 	// VerifyMode is inherit (omitted) | custom | disabled; see resolveLabelVerify.
 	VerifyMode    string `yaml:"verify_mode,omitempty"`
 	VerifyCommand string `yaml:"verify_command,omitempty"`
+	// PRFeedbackLabel is where ghsync sends a task on PR feedback (empty = failure path).
+	PRFeedbackLabel string `yaml:"pr_feedback_label,omitempty"`
 	// Autonomy is the optional per-gate autonomy policy (absent = ask).
 	Autonomy *yamlAutonomy `yaml:"autonomy,omitempty"`
 }
@@ -63,6 +65,17 @@ func (wf yamlWorkflow) validate() error {
 		if l.WipLimit != nil && *l.WipLimit <= 0 {
 			return fmt.Errorf("label %q: wip_limit must be a positive integer if set", l.Name)
 		}
+	}
+	var pl []prFeedbackLabel
+	for _, l := range wf.Labels {
+		pl = append(pl, prFeedbackLabel{l.Name, l.PRFeedbackLabel, l.AgentIgnore, l.IsTerminal})
+	}
+	var pt []prFeedbackTransition
+	for _, t := range wf.Transitions {
+		pt = append(pt, prFeedbackTransition{t.From, t.To, t.TriggerType})
+	}
+	if _, err := validateLabelPRFeedback(pl, pt); err != nil {
+		return err
 	}
 	gates := wf.gateSet()
 	for _, l := range wf.Labels {
@@ -108,15 +121,16 @@ func (h *WorkflowsHandler) ExportWorkflowYAML(w http.ResponseWriter, r *http.Req
 			wipLimit = &v
 		}
 		yl := yamlLabel{
-			Name:         l.Name,
-			DisplayName:  l.DisplayName,
-			Color:        l.Color,
-			SortOrder:    int(l.SortOrder),
-			AgentIgnore:  l.AgentIgnore != 0,
-			IsTerminal:   l.IsTerminal != 0,
-			CreatePR:     l.CreatePr != 0,
-			WipLimit:     wipLimit,
-			WipLimitHard: l.WipLimitHard != 0,
+			Name:            l.Name,
+			DisplayName:     l.DisplayName,
+			Color:           l.Color,
+			SortOrder:       int(l.SortOrder),
+			AgentIgnore:     l.AgentIgnore != 0,
+			IsTerminal:      l.IsTerminal != 0,
+			CreatePR:        l.CreatePr != 0,
+			WipLimit:        wipLimit,
+			WipLimitHard:    l.WipLimitHard != 0,
+			PRFeedbackLabel: l.PrFeedbackLabel,
 		}
 		if l.VerifyMode != "" && l.VerifyMode != verifyModeInherit {
 			yl.VerifyMode, yl.VerifyCommand = l.VerifyMode, l.VerifyCommand
@@ -227,19 +241,20 @@ func (h *WorkflowsHandler) UpdateWorkflowYAML(w http.ResponseWriter, r *http.Req
 			return
 		}
 		created, err := tq.CreateWorkflowLabel(ctx, gen.CreateWorkflowLabelParams{
-			ID:            uuid.NewString(),
-			WorkflowID:    wfID,
-			Name:          l.Name,
-			DisplayName:   strings.TrimSpace(l.DisplayName),
-			Color:         l.Color,
-			SortOrder:     int64(l.SortOrder),
-			AgentIgnore:   agentIgnore,
-			IsTerminal:    isTerminal,
-			CreatePr:      createPR,
-			WipLimit:      wipLimit,
-			WipLimitHard:  wipLimitHard,
-			VerifyMode:    verifyMode,
-			VerifyCommand: verifyCmd,
+			ID:              uuid.NewString(),
+			WorkflowID:      wfID,
+			Name:            l.Name,
+			DisplayName:     strings.TrimSpace(l.DisplayName),
+			Color:           l.Color,
+			SortOrder:       int64(l.SortOrder),
+			AgentIgnore:     agentIgnore,
+			IsTerminal:      isTerminal,
+			CreatePr:        createPR,
+			WipLimit:        wipLimit,
+			WipLimitHard:    wipLimitHard,
+			VerifyMode:      verifyMode,
+			VerifyCommand:   verifyCmd,
+			PrFeedbackLabel: strings.TrimSpace(l.PRFeedbackLabel),
 		})
 		if err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
@@ -356,19 +371,20 @@ func (h *WorkflowsHandler) ImportWorkflowYAML(w http.ResponseWriter, r *http.Req
 			return
 		}
 		created, err := h.q.CreateWorkflowLabel(ctx, gen.CreateWorkflowLabelParams{
-			ID:            uuid.NewString(),
-			WorkflowID:    wfID,
-			Name:          l.Name,
-			DisplayName:   strings.TrimSpace(l.DisplayName),
-			Color:         l.Color,
-			SortOrder:     int64(l.SortOrder),
-			AgentIgnore:   agentIgnore,
-			IsTerminal:    isTerminal,
-			CreatePr:      createPR,
-			WipLimit:      wipLimit,
-			WipLimitHard:  wipLimitHard,
-			VerifyMode:    verifyMode,
-			VerifyCommand: verifyCmd,
+			ID:              uuid.NewString(),
+			WorkflowID:      wfID,
+			Name:            l.Name,
+			DisplayName:     strings.TrimSpace(l.DisplayName),
+			Color:           l.Color,
+			SortOrder:       int64(l.SortOrder),
+			AgentIgnore:     agentIgnore,
+			IsTerminal:      isTerminal,
+			CreatePr:        createPR,
+			WipLimit:        wipLimit,
+			WipLimitHard:    wipLimitHard,
+			VerifyMode:      verifyMode,
+			VerifyCommand:   verifyCmd,
+			PrFeedbackLabel: strings.TrimSpace(l.PRFeedbackLabel),
 		})
 		if err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())

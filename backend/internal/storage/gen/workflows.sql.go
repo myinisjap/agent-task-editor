@@ -57,25 +57,26 @@ func (q *Queries) CreateWorkflow(ctx context.Context, arg CreateWorkflowParams) 
 }
 
 const createWorkflowLabel = `-- name: CreateWorkflowLabel :one
-INSERT INTO workflow_labels (id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command, display_name)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command, display_name, autonomy_mode, autonomy_ask_on, autonomy_hold_seconds, autonomy_max_cost_usd
+INSERT INTO workflow_labels (id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command, display_name, pr_feedback_label)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+RETURNING id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command, display_name, autonomy_mode, autonomy_ask_on, autonomy_hold_seconds, autonomy_max_cost_usd, pr_feedback_label
 `
 
 type CreateWorkflowLabelParams struct {
-	ID            string `json:"id"`
-	WorkflowID    string `json:"workflow_id"`
-	Name          string `json:"name"`
-	Color         string `json:"color"`
-	SortOrder     int64  `json:"sort_order"`
-	AgentIgnore   int64  `json:"agent_ignore"`
-	IsTerminal    int64  `json:"is_terminal"`
-	CreatePr      int64  `json:"create_pr"`
-	WipLimit      *int64 `json:"wip_limit"`
-	WipLimitHard  int64  `json:"wip_limit_hard"`
-	VerifyMode    string `json:"verify_mode"`
-	VerifyCommand string `json:"verify_command"`
-	DisplayName   string `json:"display_name"`
+	ID              string `json:"id"`
+	WorkflowID      string `json:"workflow_id"`
+	Name            string `json:"name"`
+	Color           string `json:"color"`
+	SortOrder       int64  `json:"sort_order"`
+	AgentIgnore     int64  `json:"agent_ignore"`
+	IsTerminal      int64  `json:"is_terminal"`
+	CreatePr        int64  `json:"create_pr"`
+	WipLimit        *int64 `json:"wip_limit"`
+	WipLimitHard    int64  `json:"wip_limit_hard"`
+	VerifyMode      string `json:"verify_mode"`
+	VerifyCommand   string `json:"verify_command"`
+	DisplayName     string `json:"display_name"`
+	PrFeedbackLabel string `json:"pr_feedback_label"`
 }
 
 func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLabelParams) (WorkflowLabel, error) {
@@ -93,6 +94,7 @@ func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLab
 		arg.VerifyMode,
 		arg.VerifyCommand,
 		arg.DisplayName,
+		arg.PrFeedbackLabel,
 	)
 	var i WorkflowLabel
 	err := row.Scan(
@@ -113,6 +115,7 @@ func (q *Queries) CreateWorkflowLabel(ctx context.Context, arg CreateWorkflowLab
 		&i.AutonomyAskOn,
 		&i.AutonomyHoldSeconds,
 		&i.AutonomyMaxCostUsd,
+		&i.PrFeedbackLabel,
 	)
 	return i, err
 }
@@ -244,7 +247,7 @@ func (q *Queries) GetWorkflowTransition(ctx context.Context, arg GetWorkflowTran
 }
 
 const listWorkflowLabels = `-- name: ListWorkflowLabels :many
-SELECT id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command, display_name, autonomy_mode, autonomy_ask_on, autonomy_hold_seconds, autonomy_max_cost_usd FROM workflow_labels WHERE workflow_id = ? ORDER BY sort_order ASC
+SELECT id, workflow_id, name, color, sort_order, agent_ignore, is_terminal, create_pr, wip_limit, wip_limit_hard, verify_mode, verify_command, display_name, autonomy_mode, autonomy_ask_on, autonomy_hold_seconds, autonomy_max_cost_usd, pr_feedback_label FROM workflow_labels WHERE workflow_id = ? ORDER BY sort_order ASC
 `
 
 func (q *Queries) ListWorkflowLabels(ctx context.Context, workflowID string) ([]WorkflowLabel, error) {
@@ -274,6 +277,7 @@ func (q *Queries) ListWorkflowLabels(ctx context.Context, workflowID string) ([]
 			&i.AutonomyAskOn,
 			&i.AutonomyHoldSeconds,
 			&i.AutonomyMaxCostUsd,
+			&i.PrFeedbackLabel,
 		); err != nil {
 			return nil, err
 		}

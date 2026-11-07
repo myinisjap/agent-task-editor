@@ -51,6 +51,7 @@ export function WorkflowHelp() {
           <li><code className="bg-surface-sunken rounded px-1 font-mono">is_terminal</code> — marks the task as complete; no further transitions</li>
           <li><code className="bg-surface-sunken rounded px-1 font-mono">create_pr</code> — entering this label pushes the branch and auto-opens a GitHub PR (needs a GitHub remote and gh auth); at most one label per workflow may set this</li>
           <li><code className="bg-surface-sunken rounded px-1 font-mono">verify_mode</code> / <code className="bg-surface-sunken rounded px-1 font-mono">verify_command</code> — per-label override of the repo&apos;s verify command (set on the Repos page), applied when a run on this label reports success. Omit (or <code className="bg-surface-sunken rounded px-1 font-mono">inherit</code>) to use the repo command; <code className="bg-surface-sunken rounded px-1 font-mono">custom</code> (with a <code className="bg-surface-sunken rounded px-1 font-mono">verify_command</code>) replaces it; <code className="bg-surface-sunken rounded px-1 font-mono">disabled</code> skips verification on this label</li>
+          <li><code className="bg-surface-sunken rounded px-1 font-mono">pr_feedback_label</code> — optional label ghsync moves a task to when it ingests PR feedback (CI failure, merge conflict, review comments) instead of the failure path; needs a human transition from this label to it</li>
         </ul>
         <p>
           Tasks created without an explicit label — GitHub Issue imports, scheduled tasks, and API
