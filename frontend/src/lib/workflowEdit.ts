@@ -27,6 +27,7 @@ export type DraftLabel = {
   wip_limit_hard: boolean
   verify_mode: VerifyMode
   verify_command: string
+  pr_feedback_label: string
   /** Per-gate autonomy policy; null = ask. Carried through so graph saves do not drop it. */
   autonomy: LabelAutonomy | null
 }
@@ -81,6 +82,7 @@ export function draftFromWorkflow(wf: Workflow): WorkflowDraft {
       wip_limit_hard: Boolean(l.wip_limit_hard),
       verify_mode: (l.verify_mode ?? 'inherit') as VerifyMode,
       verify_command: l.verify_command ?? '',
+      pr_feedback_label: l.pr_feedback_label ?? '',
       autonomy: l.autonomy ?? null,
     })),
     transitions: (wf.transitions ?? []).map((t) => ({
@@ -116,6 +118,7 @@ export function draftToWorkflow(draft: WorkflowDraft, base: Workflow): Workflow 
       wip_limit_hard: l.wip_limit_hard ? 1 : 0,
       verify_mode: l.verify_mode,
       verify_command: l.verify_command,
+      pr_feedback_label: l.pr_feedback_label,
       autonomy: l.autonomy,
     })),
     transitions: draft.transitions.map((t, i) => ({
@@ -146,6 +149,7 @@ export function newLabel(name: string, color: string = DEFAULT_LABEL_COLOR): Dra
     wip_limit_hard: false,
     verify_mode: 'inherit',
     verify_command: '',
+    pr_feedback_label: '',
     autonomy: null,
   }
 }
@@ -191,7 +195,10 @@ export function renameLabel(
   return {
     draft: {
       ...draft,
-      labels: draft.labels.map((l) => (l.name === from ? { ...l, name: next } : l)),
+      labels: draft.labels.map((l) => {
+        const renamed = l.name === from ? { ...l, name: next } : l
+        return renamed.pr_feedback_label === from ? { ...renamed, pr_feedback_label: next } : renamed
+      }),
       transitions: draft.transitions.map((t) => ({
         ...t,
         from_label: t.from_label === from ? next : t.from_label,
@@ -205,7 +212,9 @@ export function renameLabel(
 export function deleteLabel(draft: WorkflowDraft, name: string): WorkflowDraft {
   return {
     ...draft,
-    labels: draft.labels.filter((l) => l.name !== name),
+    labels: draft.labels
+      .filter((l) => l.name !== name)
+      .map((l) => (l.pr_feedback_label === name ? { ...l, pr_feedback_label: '' } : l)),
     transitions: draft.transitions.filter((t) => t.from_label !== name && t.to_label !== name),
   }
 }
@@ -307,6 +316,13 @@ export function setGate(draft: WorkflowDraft, name: string, gated: boolean): Wor
   }
 }
 
+/** True if a human or both-triggered transition from -> to exists. */
+export function hasHumanTransition(draft: WorkflowDraft, from: string, to: string): boolean {
+  return draft.transitions.some(
+    (t) => t.from_label === from && t.to_label === to && (t.trigger_type === 'human' || t.trigger_type === 'both'),
+  )
+}
+
 /** Client-side mirror of the server's workflow rules (handlers/workflow_yaml.go + repos.go). */
 export function validateDraft(draft: WorkflowDraft): DraftError[] {
   const errors: DraftError[] = []
@@ -330,6 +346,19 @@ export function validateDraft(draft: WorkflowDraft): DraftError[] {
     }
     if (l.verify_mode === 'custom' && !l.verify_command.trim()) {
       errors.push({ label: l.name, message: `Label "${l.name}": custom verify mode needs a command.` })
+    }
+  }
+  for (const l of draft.labels) {
+    const target = l.pr_feedback_label.trim()
+    if (!target) continue
+    const dest = draft.labels.find((x) => x.name === target)
+    const q = `Label "${l.name}": PR feedback target "${target}"`
+    if (!dest) errors.push({ label: l.name, message: `${q} is not a label in this workflow.` })
+    else if (target === l.name) errors.push({ label: l.name, message: `${q} must not be the label itself.` })
+    else if (dest.is_terminal) errors.push({ label: l.name, message: `${q} must not be a terminal label.` })
+    else if (dest.agent_ignore) errors.push({ label: l.name, message: `${q} must not be an agent-ignored label.` })
+    else if (!hasHumanTransition(draft, l.name, target)) {
+      errors.push({ label: l.name, message: `${q} needs a human transition from "${l.name}" to "${target}".` })
     }
   }
   const prLabels = draft.labels.filter((l) => l.create_pr)
@@ -369,6 +398,7 @@ export function serializeDraft(draft: WorkflowDraft, opts?: { keepAgentConfig?: 
       wip_limit_hard: l.wip_limit !== null && l.wip_limit_hard ? true : undefined,
       verify_mode: l.verify_mode === 'inherit' ? undefined : l.verify_mode,
       verify_command: l.verify_mode === 'custom' ? l.verify_command.trim() : undefined,
+      pr_feedback_label: l.pr_feedback_label.trim() || undefined,
       autonomy:
         l.autonomy && l.autonomy.mode !== 'ask'
           ? {

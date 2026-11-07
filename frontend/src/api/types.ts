@@ -8188,6 +8188,8 @@ export interface components {
             verify_mode: "inherit" | "custom" | "disabled";
             /** @description The label's own command; only meaningful (and required) when verify_mode is custom, else empty. */
             verify_command: string;
+            /** @description Label ghsync moves a task to when it ingests PR feedback (failing check, merge conflict, changes-requested review or inline comment) and the repo has pr_review_auto_transition_enabled. Empty = the failure human transition (default). Must be a non-terminal, non-agent_ignore label of the same workflow with a human/both transition from this label; else 400. Set via YAML or the labels array of PUT /workflows/{id}. */
+            pr_feedback_label?: string;
             /** @description Per-gate autonomy policy; null when the mode is ask (the default). Only human-gate labels may have a non-ask mode (every transition out of it human-triggered, at least one, not agent_ignore or terminal). Written via the labels array of PUT /workflows/{id} or the YAML autonomy block (mode, ask_on, hold such as 10m, max_cost_usd). This release only records shadow decisions; nothing is approved automatically. Invalid mode, unknown ask_on code, autonomy on a non-gate label, a missing mode or a negative hold/cost give 400. */
             autonomy?: components["schemas"]["LabelAutonomy"] | null;
         };

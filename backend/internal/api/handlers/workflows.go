@@ -175,8 +175,9 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			WipLimitHard bool   `json:"wip_limit_hard"`
 			// VerifyMode: inherit (default) | custom | disabled; see
 			// resolveLabelVerify.
-			VerifyMode    string `json:"verify_mode"`
-			VerifyCommand string `json:"verify_command"`
+			VerifyMode      string `json:"verify_mode"`
+			VerifyCommand   string `json:"verify_command"`
+			PRFeedbackLabel string `json:"pr_feedback_label"`
 			// Autonomy is the optional per-gate policy; null/absent = ask.
 			Autonomy *struct {
 				Mode        string   `json:"mode"`
@@ -233,6 +234,19 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	verifyCmds := make([]string, len(body.Labels))
 	displayNames := make([]string, len(body.Labels))
 	autonomies := make([]autonomy.Config, len(body.Labels))
+	var pfl []prFeedbackLabel
+	for _, l := range body.Labels {
+		pfl = append(pfl, prFeedbackLabel{l.Name, l.PRFeedbackLabel, l.AgentIgnore, l.IsTerminal})
+	}
+	var pft []prFeedbackTransition
+	for _, t := range body.Transitions {
+		pft = append(pft, prFeedbackTransition{t.FromLabel, t.ToLabel, t.TriggerType})
+	}
+	prFeedback, err := validateLabelPRFeedback(pfl, pft)
+	if err != nil {
+		Err(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	var gl []autoGateLabel
 	for _, l := range body.Labels {
 		gl = append(gl, autoGateLabel{l.Name, l.AgentIgnore, l.IsTerminal})
@@ -320,18 +334,19 @@ func (h *WorkflowsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			wipLimitHard = 1
 		}
 		created, err := tq.CreateWorkflowLabel(r.Context(), gen.CreateWorkflowLabelParams{
-			ID:            uuid.NewString(),
-			WorkflowID:    wfID,
-			Name:          l.Name,
-			DisplayName:   displayNames[i],
-			Color:         l.Color,
-			SortOrder:     l.SortOrder,
-			AgentIgnore:   agentIgnore,
-			IsTerminal:    isTerminal,
-			WipLimit:      l.WipLimit,
-			WipLimitHard:  wipLimitHard,
-			VerifyMode:    verifyModes[i],
-			VerifyCommand: verifyCmds[i],
+			ID:              uuid.NewString(),
+			WorkflowID:      wfID,
+			Name:            l.Name,
+			DisplayName:     displayNames[i],
+			Color:           l.Color,
+			SortOrder:       l.SortOrder,
+			AgentIgnore:     agentIgnore,
+			IsTerminal:      isTerminal,
+			WipLimit:        l.WipLimit,
+			WipLimitHard:    wipLimitHard,
+			VerifyMode:      verifyModes[i],
+			VerifyCommand:   verifyCmds[i],
+			PrFeedbackLabel: prFeedback[i],
 		})
 		if err == nil {
 			err = saveLabelAutonomy(r.Context(), tq, created.ID, autonomies[i])

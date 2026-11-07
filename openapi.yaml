@@ -1285,6 +1285,7 @@ components:
             YAML (verify_mode / verify_command) or the labels array of PUT
             /workflows/{id}.
         verify_command: { type: string, description: "The label's own command; only meaningful (and required) when verify_mode is custom, else empty." }
+        pr_feedback_label: { type: string, description: "Label ghsync moves a task to when it ingests PR feedback (failing check, merge conflict, changes-requested review or inline comment) and the repo has pr_review_auto_transition_enabled. Empty = the failure human transition (default). Must be a non-terminal, non-agent_ignore label of the same workflow with a human/both transition from this label; else 400. Set via YAML or the labels array of PUT /workflows/{id}." }
         autonomy:
           allOf:
             - $ref: "#/components/schemas/LabelAutonomy"

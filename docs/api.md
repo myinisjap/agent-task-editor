@@ -802,7 +802,7 @@ process exited on its own), `output` (tail of combined stdout/stderr, max
 16 KiB), `truncated`, `duration_ms`, `created_at`. See
 [workflows.md § Verify commands](workflows.md#verify-commands). Repos carry
 `verify_command` and `verify_timeout_seconds`; workflow labels carry
-`verify_mode` and `verify_command`; they also carry an optional `display_name` (UI title, max 64 chars).
+`verify_mode` and `verify_command`; they also carry an optional `display_name` (UI title, max 64 chars). Labels may also set `pr_feedback_label` (see [workflows.md](workflows.md)).
 
 ### `GET /tasks/{id}/previews`
 The latest preview screenshot capture, `{"capture": null}` when none.

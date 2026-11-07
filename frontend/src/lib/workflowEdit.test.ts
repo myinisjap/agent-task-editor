@@ -7,6 +7,7 @@ import {
   draftFromWorkflow,
   isDirty,
   isGated,
+  newLabel,
   removeTransition,
   renameLabel,
   serializeDraft,
@@ -14,6 +15,7 @@ import {
   setTransitionKind,
   updateLabel,
   validateDraft,
+  type WorkflowDraft,
 } from './workflowEdit'
 
 const wf = {
@@ -177,5 +179,50 @@ describe('workflowEdit', () => {
     })
     const ask = updateLabel(d, 'work', { autonomy: { mode: 'ask', ask_on: [], hold_seconds: 600, max_cost_usd: null } })
     expect(JSON.parse(serializeDraft(ask)).labels[1]).not.toHaveProperty('autonomy')
+  })
+})
+
+describe('pr_feedback_label', () => {
+  const base = (): WorkflowDraft => ({
+    name: 'w',
+    description: '',
+    labels: ['review', 'pr-fix', 'done', 'hidden'].map((n) => ({
+      ...newLabel(n),
+      is_terminal: n === 'done',
+      agent_ignore: n === 'hidden',
+    })),
+    transitions: [
+      { from_label: 'review', to_label: 'pr-fix', trigger_type: 'human', path: null, agent_config_id: null },
+    ],
+  })
+  const withTarget = (d: WorkflowDraft, target: string): WorkflowDraft => ({
+    ...d,
+    labels: d.labels.map((l) => (l.name === 'review' ? { ...l, pr_feedback_label: target } : l)),
+  })
+
+  it('serializes only when set', () => {
+    expect(serializeDraft(base())).not.toContain('pr_feedback_label')
+    expect(serializeDraft(withTarget(base(), 'pr-fix'))).toContain('"pr_feedback_label":"pr-fix"')
+  })
+
+  it('accepts a valid target', () => {
+    expect(validateDraft(withTarget(base(), 'pr-fix'))).toEqual([])
+  })
+
+  it.each(['nope', 'review', 'done', 'hidden'])('rejects target %s', (t) => {
+    expect(validateDraft(withTarget(base(), t)).length).toBeGreaterThan(0)
+  })
+
+  it('rejects a target without a human transition', () => {
+    const d = withTarget(base(), 'pr-fix')
+    d.transitions[0] = { ...d.transitions[0], trigger_type: 'agent', path: 'success' }
+    expect(validateDraft(d).some((e) => e.message.includes('human transition'))).toBe(true)
+  })
+
+  it('rename rewrites and delete clears the target', () => {
+    const d = withTarget(base(), 'pr-fix')
+    const r = renameLabel(d, 'pr-fix', 'fixer').draft
+    expect(r.labels.find((l) => l.name === 'review')?.pr_feedback_label).toBe('fixer')
+    expect(deleteLabel(d, 'pr-fix').labels.find((l) => l.name === 'review')?.pr_feedback_label).toBe('')
   })
 })

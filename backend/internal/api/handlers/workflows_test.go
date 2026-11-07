@@ -963,3 +963,147 @@ func TestWorkflows_Update_JSON_DisplayName(t *testing.T) {
 		t.Fatalf("labels changed by rejected update: %+v", labels)
 	}
 }
+
+const prFeedbackYAMLBase = `
+name: %s
+labels:
+  - name: review
+    color: "#111"
+    sort_order: 0
+    %s
+  - name: pr-fix
+    color: "#222"
+    sort_order: 1
+    %s
+  - name: done
+    color: "#333"
+    sort_order: 2
+    is_terminal: true
+  - name: hidden
+    color: "#444"
+    sort_order: 3
+    agent_ignore: true
+transitions:
+  - from: review
+    to: pr-fix
+    trigger: %s
+  - from: review
+    to: done
+    trigger: human
+  - from: review
+    to: hidden
+    trigger: human
+`
+
+func TestWorkflows_PRFeedbackLabel_YAMLRoundTrip(t *testing.T) {
+	r, _ := setupWorkflowRouter(t)
+	body := fmt.Sprintf(prFeedbackYAMLBase, "pf-ok", "pr_feedback_label: pr-fix", "", "human")
+	req := httptest.NewRequest(http.MethodPost, "/workflows/import", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/yaml")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("import: %d %s", w.Code, w.Body)
+	}
+	var created struct {
+		gen.Workflow
+		Labels []gen.WorkflowLabel `json:"labels"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range created.Labels {
+		want := ""
+		if l.Name == "review" {
+			want = "pr-fix"
+		}
+		if l.PrFeedbackLabel != want {
+			t.Errorf("label %s pr_feedback_label = %q, want %q", l.Name, l.PrFeedbackLabel, want)
+		}
+	}
+	ew := httptest.NewRecorder()
+	r.ServeHTTP(ew, httptest.NewRequest(http.MethodGet, "/workflows/"+created.ID+"/export.yaml", nil))
+	out := ew.Body.String()
+	if strings.Count(out, "pr_feedback_label: pr-fix") != 1 {
+		t.Errorf("export should contain pr_feedback_label exactly once:\n%s", out)
+	}
+
+	// Re-PUT via YAML endpoint keeps it.
+	body2 := fmt.Sprintf(prFeedbackYAMLBase, "pf-ok", "pr_feedback_label: pr-fix", "", "both")
+	req = httptest.NewRequest(http.MethodPut, "/workflows/"+created.ID+"/yaml", strings.NewReader(body2))
+	req.Header.Set("Content-Type", "application/yaml")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("put yaml (both trigger): %d %s", w.Code, w.Body)
+	}
+}
+
+func TestWorkflows_PRFeedbackLabel_YAMLValidation(t *testing.T) {
+	r, _ := setupWorkflowRouter(t)
+	cases := []struct{ name, target, trigger string }{
+		{"pf-unknown", "nope", "human"},
+		{"pf-self", "review", "human"},
+		{"pf-terminal", "done", "human"},
+		{"pf-ignore", "hidden", "human"},
+		{"pf-agent-only", "pr-fix", "agent"},
+	}
+	for _, c := range cases {
+		body := fmt.Sprintf(prFeedbackYAMLBase, c.name, "pr_feedback_label: "+c.target, "", c.trigger)
+		req := httptest.NewRequest(http.MethodPost, "/workflows/import", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/yaml")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: expected 400, got %d: %s", c.name, w.Code, w.Body)
+		}
+	}
+}
+
+func TestWorkflows_PRFeedbackLabel_PutJSON(t *testing.T) {
+	r, _ := setupWorkflowRouter(t)
+	body := fmt.Sprintf(prFeedbackYAMLBase, "pf-json", "", "", "human")
+	req := httptest.NewRequest(http.MethodPost, "/workflows/import", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/yaml")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("import: %d %s", w.Code, w.Body)
+	}
+	var created gen.Workflow
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatal(err)
+	}
+	put := func(target, trigger string) *httptest.ResponseRecorder {
+		payload := fmt.Sprintf(`{"labels":[
+ {"name":"review","color":"#111","sort_order":0,"pr_feedback_label":%q},
+ {"name":"pr-fix","color":"#222","sort_order":1},
+ {"name":"done","color":"#333","sort_order":2,"is_terminal":true}],
+ "transitions":[{"from_label":"review","to_label":"pr-fix","trigger_type":%q},
+ {"from_label":"review","to_label":"done","trigger_type":"human"}]}`, target, trigger)
+		req := httptest.NewRequest(http.MethodPut, "/workflows/"+created.ID, strings.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+	for _, c := range [][2]string{{"nope", "human"}, {"review", "human"}, {"done", "human"}, {"pr-fix", "agent"}} {
+		if w := put(c[0], c[1]); w.Code != http.StatusBadRequest {
+			t.Errorf("target %q trigger %q: expected 400, got %d: %s", c[0], c[1], w.Code, w.Body)
+		}
+	}
+	// Rejected PUTs must not have changed labels.
+	gw := httptest.NewRecorder()
+	r.ServeHTTP(gw, httptest.NewRequest(http.MethodGet, "/workflows/"+created.ID, nil))
+	if !strings.Contains(gw.Body.String(), "hidden") {
+		t.Errorf("rejected PUT modified the workflow: %s", gw.Body)
+	}
+	if w := put("pr-fix", "human"); w.Code != http.StatusOK {
+		t.Fatalf("valid PUT: %d %s", w.Code, w.Body)
+	}
+	gw = httptest.NewRecorder()
+	r.ServeHTTP(gw, httptest.NewRequest(http.MethodGet, "/workflows/"+created.ID, nil))
+	if !strings.Contains(gw.Body.String(), `"pr_feedback_label":"pr-fix"`) {
+		t.Errorf("GET missing pr_feedback_label: %s", gw.Body)
+	}
+}

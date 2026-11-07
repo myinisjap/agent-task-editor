@@ -540,7 +540,8 @@ func (s *Syncer) appendRunFeedback(ctx context.Context, task gen.Task, newFeedba
 }
 
 // autoTransitionOnFeedback moves the task back along its workflow's "failure"
-// human-triggered path (mirroring the manual Reject action) when new PR
+// human-triggered path (mirroring the manual Reject action), or to the current
+// label's pr_feedback_label when set, when new PR
 // feedback was ingested and the repo has opted into auto-transition. Best
 // effort: any failure (no failure path defined, transition rejected, etc.) is
 // logged and swallowed so it can never break the sweep — a human can always
@@ -549,16 +550,31 @@ func (s *Syncer) autoTransitionOnFeedback(ctx context.Context, task gen.Task, lo
 	if s.engine == nil {
 		return
 	}
-	target, err := s.failurePathTarget(ctx, task)
+	target, viaFeedback, err := s.feedbackTarget(ctx, task)
 	if err != nil {
-		log.Info("ghsync: no auto-transition failure path from current label", "label", task.Label, "err", err)
+		log.Info("ghsync: no auto-transition target from current label", "label", task.Label, "err", err)
 		return
 	}
 	if err := s.engine.Transition(ctx, task.ID, target, workflow.TriggerHuman, workflow.ActorPRFeedbackSync, "GitHub PR review feedback ingested"); err != nil {
-		log.Warn("ghsync: auto-transition on PR feedback failed", "to_label", target, "err", err)
+		log.Warn("ghsync: auto-transition on PR feedback failed", "to_label", target, "pr_feedback_label", viaFeedback, "err", err)
 		return
 	}
-	log.Info("ghsync: auto-transitioned task on PR feedback", "to_label", target)
+	log.Info("ghsync: auto-transitioned task on PR feedback", "to_label", target, "pr_feedback_label", viaFeedback)
+}
+
+// feedbackTarget returns the label ghsync moves the task to on PR feedback:
+// the current label's pr_feedback_label when set, else the failure-path
+// target. viaFeedbackLabel reports which one was used.
+func (s *Syncer) feedbackTarget(ctx context.Context, task gen.Task) (string, bool, error) {
+	if labels, err := s.q.ListWorkflowLabels(ctx, task.WorkflowID); err == nil {
+		for _, l := range labels {
+			if l.Name == task.Label && strings.TrimSpace(l.PrFeedbackLabel) != "" {
+				return strings.TrimSpace(l.PrFeedbackLabel), true, nil
+			}
+		}
+	}
+	target, err := s.failurePathTarget(ctx, task)
+	return target, false, err
 }
 
 // failurePathTarget returns the destination label of the "failure" human
