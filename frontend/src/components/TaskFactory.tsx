@@ -8,8 +8,10 @@
 // into a responsive grid sized to the container, so it stacks on mobile
 // instead of h-scrolling.
 //
-// `zoom` is the integer pixel scale (default 3, max 6) or 'auto' (the largest
-// zoom, up to 6, that fits every station in one row). When a task moves
+// `zoom` is the integer pixel scale (max 6) or 'auto', the default: the largest
+// zoom, up to 6, that fits every station in one row, else 3 (2 on a phone, so
+// it gets two columns instead of one tall strip). Stations stretch to fill the
+// container's width, and rows are balanced. When a task moves
 // between labels its worker walks from the old station to the new one; new /
 // removed tasks fade in / out. Workers at human-gate stations wave. The loop
 // pauses while the tab is hidden; prefers-reduced-motion draws one static frame
@@ -29,7 +31,7 @@ export default function TaskFactory({
   workflow,
   labelCounts,
   robots = false,
-  zoom = 3,
+  zoom = 'auto',
   tasks,
   rateLimitedUntil,
   now,

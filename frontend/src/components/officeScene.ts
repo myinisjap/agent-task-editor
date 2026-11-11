@@ -161,16 +161,19 @@ type Sprite = {
 }
 
 // Zoom. ART_PX is base units per art pixel; DEFAULT_ZOOM is CSS px per art
-// pixel at scale 1. MIN_AUTO_ZOOM is the floor for 'auto' (so phones/laptops
-// never get smaller sprites than the default); MAX_ZOOM caps everything.
+// pixel at scale 1. MIN_AUTO_ZOOM is the floor for 'auto' on anything wider
+// than a phone; NARROW_ZOOM is used instead only when a single column would
+// fit at MIN_AUTO_ZOOM but two or more fit at NARROW_ZOOM (phones), so the
+// scene doesn't become one very tall, narrow strip. MAX_ZOOM caps everything.
 export const DEFAULT_ZOOM = 3
 export const MIN_AUTO_ZOOM = 3
+export const NARROW_ZOOM = 2
 export const MAX_ZOOM = 6
 const ART_PX = 3
 const SPRITE_W = GRID_W * ART_PX // 48
 const SPRITE_H = GRID_H * ART_PX // 72
 const CAP = 6 // max sprites drawn per station
-const STATION_W = 168
+const STATION_W = 168 // minimum station width; layout() stretches stations to fill
 const STATION_GAP = 0 // no gap: adjacent stations abut into one continuous scene
 const PAD = 16
 // Stations sit flush on one shared floor; the label + count live on the
@@ -207,14 +210,26 @@ export function ease(u: number): number {
   return 0.5 - Math.cos(Math.PI * c) / 2
 }
 
-/** Largest integer zoom in [MIN_AUTO_ZOOM, MAX_ZOOM] whose single-row layout fits. */
+/**
+ * Largest integer zoom in [MIN_AUTO_ZOOM, MAX_ZOOM] whose single-row layout
+ * fits; NARROW_ZOOM on a phone-width container where MIN_AUTO_ZOOM would
+ * leave a single column but NARROW_ZOOM fits two or more.
+ */
 export function autoZoom(availWidth: number, stationCount: number): number {
   const n = Math.max(1, stationCount)
   const baseW = PAD * 2 + n * STATION_W
   for (let z = MAX_ZOOM; z > MIN_AUTO_ZOOM; z--) {
     if ((baseW * z) / DEFAULT_ZOOM <= availWidth) return z
   }
+  if (n > 1 && fitColumns(availWidth, MIN_AUTO_ZOOM) < 2 && fitColumns(availWidth, NARROW_ZOOM) >= 2) return NARROW_ZOOM
   return MIN_AUTO_ZOOM
+}
+
+/** How many minimum-width stations fit side by side in `availWidth` CSS px at `zoom`. */
+function fitColumns(availWidth: number, zoom: number): number {
+  const baseAvail = availWidth / (zoom / DEFAULT_ZOOM)
+  const usable = Math.max(STATION_W, baseAvail - PAD * 2)
+  return Math.floor((usable + STATION_GAP) / (STATION_W + STATION_GAP))
 }
 
 /** Resolve the zoom option: 'auto', or a number rounded and clamped to [1, MAX_ZOOM]. */
@@ -224,12 +239,28 @@ export function resolveZoom(zoom: number | 'auto', availWidth: number, stationCo
   return Math.max(1, Math.min(MAX_ZOOM, Math.round(zoom)))
 }
 
-/** Grid columns that fit `availWidth` CSS px at `zoom` (always in [1, n]). */
+/**
+ * Grid columns for `availWidth` CSS px at `zoom` (always in [1, n]). Uses as
+ * few rows as fit, then balances them: 8 stations that fit 6 across become
+ * 4 + 4 rather than 6 + 2, so the last row isn't mostly empty floor.
+ */
 export function columnsFor(availWidth: number, zoom: number, stationCount: number): number {
+  const n = stationCount || 1
+  const fit = Math.max(1, Math.min(n, fitColumns(availWidth, zoom)))
+  const rows = Math.ceil(n / fit)
+  return Math.ceil(n / rows)
+}
+
+/**
+ * Station width (base units) that stretches `cols` stations across
+ * `availWidth` CSS px at `zoom`, never narrower than the minimum STATION_W.
+ * Rounded down to an even number so a workstation centred in it stays on
+ * whole units.
+ */
+export function stationWidthFor(availWidth: number, zoom: number, cols: number): number {
   const baseAvail = availWidth / (zoom / DEFAULT_ZOOM)
-  const usable = Math.max(STATION_W, baseAvail - PAD * 2)
-  const fit = Math.floor((usable + STATION_GAP) / (STATION_W + STATION_GAP))
-  return Math.max(1, Math.min(stationCount || 1, fit))
+  const w = Math.floor((baseAvail - PAD * 2 - (cols - 1) * STATION_GAP) / Math.max(1, cols) / 2) * 2
+  return Math.max(STATION_W, w)
 }
 
 export type Handoffs = { moves: { from: string; to: string; taskId?: string }[]; spawns: string[]; despawns: string[] }
@@ -398,6 +429,7 @@ export class OfficeScene {
   private clock = 0
   private cols = 1
   private layoutW = STATION_W + PAD * 2
+  private stationW = STATION_W // stretched by relayout() to fill the width
   private zoomOpt: number | 'auto' = DEFAULT_ZOOM
   private zoom = DEFAULT_ZOOM
   private scale = 1
@@ -759,16 +791,39 @@ export class OfficeScene {
   // column count changes, station patches move to new grid cells, so any
   // existing sprites must be re-snapped into their (new) patch or they'd be
   // left stranded outside it (invisible).
+  // When only the (stretched) station width changes, sprites are slid
+  // proportionally within their column instead, so a window drag doesn't
+  // reshuffle the crew.
   layout(availWidth: number) {
     this.availW = availWidth
     this.applyZoom()
     const cols = columnsFor(availWidth, this.zoom, this.stations.length)
     const changed = cols !== this.cols
+    const oldW = this.stationW
     this.cols = cols
     this.relayout()
     this.bgDirty = true
     this.lightDirty = true
     if (changed) this.replaceSprites()
+    else if (this.stationW !== oldW) this.stretchSprites(oldW)
+  }
+
+  // Map every sprite x from the old station width to the current one, keeping
+  // its relative spot inside whichever column it is in (over the range a
+  // sprite's left edge can take, so one that fit still fits).
+  private stretchSprites(oldW: number) {
+    const newW = this.stationW
+    const cols = Math.max(1, this.cols)
+    const k = (newW - SPRITE_W) / (oldW - SPRITE_W)
+    const map = (x: number) => {
+      const col = Math.max(0, Math.min(cols - 1, Math.floor((x - PAD) / oldW)))
+      return PAD + col * newW + (x - PAD - col * oldW) * k
+    }
+    for (const s of this.sprites) {
+      s.x = map(s.x)
+      s.fromX = map(s.fromX)
+      s.tx = map(s.tx)
+    }
   }
 
   // Drop every sprite onto a fresh idle spot inside its current patch. Used
@@ -798,14 +853,19 @@ export class OfficeScene {
     }
   }
 
+  // Stretch stations to fill the available width, and make the scene span
+  // all of it: the shared floor runs to the right edge, so the few units the
+  // even-rounded station width leaves over are just more floor.
   private relayout() {
     const cols = Math.max(1, this.cols)
-    this.layoutW = PAD * 2 + cols * STATION_W + (cols - 1) * STATION_GAP
+    this.stationW = stationWidthFor(this.availW, this.zoom, cols)
+    const stationsW = PAD * 2 + cols * this.stationW + (cols - 1) * STATION_GAP
+    this.layoutW = Math.max(stationsW, this.availW / this.scale)
   }
 
-  /** CSS px width of the canvas (base layout × zoom scale). */
+  /** CSS px width of the canvas (base layout × zoom scale); fills the available width. */
   width(): number {
-    return Math.ceil(this.layoutW * this.scale)
+    return Math.floor(this.layoutW * this.scale)
   }
 
   height(): number {
@@ -817,9 +877,9 @@ export class OfficeScene {
     const col = i % this.cols
     const row = Math.floor(i / this.cols)
     return {
-      x: PAD + col * STATION_W,
+      x: PAD + col * this.stationW,
       y: PAD + row * CELL_H + SIGN_H,
-      w: STATION_W,
+      w: this.stationW,
       h: FLOOR_H,
     }
   }
@@ -860,10 +920,10 @@ export class OfficeScene {
   private idleBounds(i: number) {
     const col = i % this.cols
     const row = Math.floor(i / this.cols)
-    const px = PAD + col * STATION_W
+    const px = PAD + col * this.stationW
     const py = PAD + row * CELL_H + SIGN_H
     this.bMinX = px + 4
-    this.bMaxX = px + STATION_W - SPRITE_W - 4
+    this.bMaxX = px + this.stationW - SPRITE_W - 4
     // Lower ~half of the patch, below the workstation, but a generous band so
     // a crew spreads out instead of stacking on one line.
     this.bMinY = py + FLOOR_H * 0.42
@@ -1526,7 +1586,7 @@ export class OfficeScene {
   private wsBox(i: number) {
     const col = i % this.cols
     const row = Math.floor(i / this.cols)
-    this.tmpX = PAD + col * STATION_W + STATION_W / 2 - 42 // ws.x
+    this.tmpX = PAD + col * this.stationW + this.stationW / 2 - 42 // ws.x
     this.tmpY = PAD + row * CELL_H + SIGN_H + 12 // ws.y
   }
 

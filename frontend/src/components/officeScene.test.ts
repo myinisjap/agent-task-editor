@@ -5,6 +5,7 @@ import {
   autoZoom,
   resolveZoom,
   columnsFor,
+  stationWidthFor,
   pairHandoffs,
   ease,
   tooClose,
@@ -36,6 +37,12 @@ describe('autoZoom / resolveZoom', () => {
     expect(autoZoom(375, 8)).toBe(3)
     expect(autoZoom(0, 8)).toBe(3)
   })
+  it('drops to zoom 2 on a phone so the stations get two columns, not one tall strip', () => {
+    expect(autoZoom(332, 8)).toBe(2)
+    expect(columnsFor(332, autoZoom(332, 8), 8)).toBe(2)
+    expect(autoZoom(332, 1)).toBeGreaterThanOrEqual(3) // one station: nothing to gain
+    expect(autoZoom(200, 8)).toBe(3) // too narrow for two columns even at 2
+  })
   it('uses the max zoom for few stations on a wide container', () => {
     expect(autoZoom(2000, 3)).toBe(6)
   })
@@ -57,6 +64,19 @@ describe('columnsFor', () => {
     expect(columnsFor(10, 6, 8)).toBe(1)
     expect(columnsFor(100000, 3, 4)).toBe(4)
     expect(columnsFor(100000, 3, 0)).toBe(1)
+  })
+  it('balances rows instead of leaving a mostly empty last row', () => {
+    expect(columnsFor(1158, 3, 8)).toBe(4) // 6 fit → 4 + 4, not 6 + 2
+    expect(columnsFor(742, 3, 8)).toBe(4) // 4 fit → 4 + 4
+    expect(columnsFor(600, 3, 5)).toBe(3) // 3 fit → 3 + 2
+  })
+})
+
+describe('stationWidthFor', () => {
+  it('stretches stations to fill the width, never below the minimum', () => {
+    expect(stationWidthFor(1158, 3, 4)).toBe(280) // (1158 - 32) / 4 → 281.5 → even 280
+    expect(stationWidthFor(100, 3, 4)).toBe(168)
+    expect(stationWidthFor(1158, 6, 2)).toBe(272) // base 579 → (579 - 32) / 2 = 273.5 → even 272
   })
 })
 
@@ -234,6 +254,29 @@ describe('OfficeScene zoom', () => {
     scene.layout(2000)
     expect(scene.width()).toBeLessThanOrEqual(2000)
     expect(scene.width()).toBeGreaterThan(1000) // zoom 6 → 1072
+  })
+  it('fills the available width at any size', () => {
+    const scene = new OfficeScene()
+    scene.setStations(stations({ a: 1, b: 1, c: 1, d: 1, e: 1, f: 1, g: 1, h: 1 }))
+    scene.setZoom('auto')
+    for (const w of [332, 742, 1158, 1526]) {
+      scene.layout(w)
+      expect(scene.width()).toBe(w)
+    }
+  })
+  it('keeps sprites inside their stretched station when only the width changes', () => {
+    const scene = new OfficeScene()
+    scene.setStations(stations({ a: 2, b: 2, c: 2, d: 2 }))
+    scene.setZoom(3)
+    scene.layout(1400) // 4 columns
+    scene.settle()
+    scene.layout(800) // still 4 columns, narrower stations
+    const stationW = (800 - 32) / 4
+    for (const s of scene.spriteStates()) {
+      const col = 'abcd'.indexOf(s.stationKey)
+      expect(s.x).toBeGreaterThanOrEqual(16 + col * stationW)
+      expect(s.x + 48).toBeLessThanOrEqual(16 + (col + 1) * stationW)
+    }
   })
 })
 
