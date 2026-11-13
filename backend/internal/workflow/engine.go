@@ -70,6 +70,12 @@ func SuccessTarget(transitions []gen.WorkflowTransition, fromLabel string) (targ
 // Must match the literals in config.go, SQL queries, migration 086 and the frontend.
 const ActorPRFeedbackSync = "pr-feedback-sync"
 
+// ActorAutoMerge is the reserved actor_id on the label-history row recorded
+// when ATE merges a task's PR itself (auto-merge policy). Like
+// ActorPRFeedbackSync it is not a human decision and is excluded from gate
+// metrics. Must match config.go, the SQL queries and the frontend.
+const ActorAutoMerge = "auto-merge"
+
 // TransitionTrigger identifies who initiated a label change.
 type TransitionTrigger string
 

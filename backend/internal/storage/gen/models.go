@@ -339,6 +339,8 @@ type Repo struct {
 	PreviewCommand                string    `json:"preview_command"`
 	PreviewRoutes                 string    `json:"preview_routes"`
 	PreviewPathsGlob              string    `json:"preview_paths_glob"`
+	AutoMergeMode                 string    `json:"auto_merge_mode"`
+	AutoMergeMethod               string    `json:"auto_merge_method"`
 }
 
 type RepoLesson struct {
