@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -242,4 +244,50 @@ func (h *TasksHandler) GetRunLogs(w http.ResponseWriter, r *http.Request) {
 		logs[i], logs[j] = logs[j], logs[i]
 	}
 	JSON(w, http.StatusOK, logs)
+}
+
+// RunSteerer interrupts a live run so a follow-up run can carry a human note.
+// Implemented by the agent pool; the handler reaches it through the canceller.
+type RunSteerer interface {
+	Steer(runID string, req agent.SteerRequest) bool
+}
+
+// SteerRun sends a human note to a running run. The run is interrupted
+// gracefully (status "interrupted", not a failure: no retry budget, escalation
+// or pause) and the pool hands the task's dispatch lock to a follow-up run that
+// resumes the session with the note. Returns 400 without a message, 404 if the
+// run isn't the task's, 409 if the run isn't running (waiting_human runs use
+// the reply path) or is no longer active, and 202 once the interrupt is signalled.
+func (h *TasksHandler) SteerRun(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+	runID := chi.URLParam(r, "run_id")
+
+	var body struct {
+		Message string `json:"message"`
+	}
+	if err := decode(r, &body); err != nil || strings.TrimSpace(body.Message) == "" {
+		Err(w, http.StatusBadRequest, "message is required")
+		return
+	}
+	run, err := h.q.GetAgentRun(r.Context(), runID)
+	if err != nil || run.TaskID != taskID {
+		Err(w, http.StatusNotFound, "run not found")
+		return
+	}
+	if run.Status != "running" {
+		Err(w, http.StatusConflict, "run is not running")
+		return
+	}
+	steerer, ok := h.canceller.(RunSteerer)
+	if !ok || steerer == nil {
+		Err(w, http.StatusServiceUnavailable, "steering is not available on this server")
+		return
+	}
+	actor := middleware.ActorFromContext(r.Context())
+	if !steerer.Steer(runID, agent.SteerRequest{Message: strings.TrimSpace(body.Message), Actor: actor}) {
+		Err(w, http.StatusConflict, "run is no longer active")
+		return
+	}
+	slog.Info("run steered", "task_id", taskID, "run_id", runID, "actor", actor)
+	JSON(w, http.StatusAccepted, map[string]string{"status": "steering", "run_id": runID})
 }

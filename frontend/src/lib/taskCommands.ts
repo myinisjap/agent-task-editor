@@ -14,18 +14,22 @@ export interface TaskCommandHandlers {
   openPR: (url: string) => void
   togglePause: () => void | Promise<void>
   toggleArchive: () => void | Promise<void>
+  /** Focus the steer input (only offered while a run is running). */
+  steer?: () => void
 }
 
 export function buildTaskCommands(args: {
   task: Task
   workflow: Workflow | null | undefined
   canRerun: boolean
+  isRunning?: boolean
   handlers: TaskCommandHandlers
 }): TaskCommand[] {
-  const { task, workflow, canRerun, handlers } = args
+  const { task, workflow, canRerun, handlers, isRunning } = args
   const cmds: TaskCommand[] = []
   const add = (id: string, label: string, run: TaskCommand['run'], keywords?: string) =>
     cmds.push({ id, label, group: 'Task', run, keywords })
+  if (isRunning && handlers.steer) add('steer', 'Steer running agent', () => handlers.steer!(), 'note redirect guide message')
 
   if (workflow) {
     const labels = [...(workflow.labels ?? [])].sort((a, b) => a.sort_order - b.sort_order)

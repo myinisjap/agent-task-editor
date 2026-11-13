@@ -845,6 +845,26 @@ Returns `202` with `{ "run_id": "<new run>" }`, `400` for an empty message,
 active `waiting_human` run (or no enabled agent config can serve it), `503` if
 the worker pool is saturated.
 
+### `POST /tasks/{id}/runs/{run_id}/steer`
+Send a steering note to a run that is currently `running`. Body:
+`{ "message": "..." }`. The provider subprocess is interrupted gracefully and a
+**follow-up run** on the same task and label resumes the same provider session
+(all four providers support resume; if the session or config can't resume it
+cold-starts with the normal prompt) with the note under
+`STEERING NOTE FROM HUMAN`. The interrupted run ends `interrupted`, not
+`failed`: no retry-budget or consecutive-failure increment, no escalation, no
+rework count, and the task is not paused. The dispatch lock is handed to the
+follow-up run with a compare-and-swap, so it is never free in between. The note
+is stored in `task_human_decisions` (`kind = 'steer'`, with the named-token
+actor) and shown to later runs under `HUMAN DECISIONS ON THIS TASK`. A
+`waiting_human` run keeps using `/reply`.
+
+Returns `202` with `{ "status": "steering", "run_id": "<interrupted run>" }`,
+`400` for an empty message, `404` if the run doesn't belong to the task, `409`
+if the run isn't `running` or is no longer active, `503` if steering isn't
+available.
+
+
 ### `GET /tasks/{id}/runs/{run_id}/logs`
 Get a page of a run's persisted log entries, in chronological order (oldest
 first). A long verbose run can produce tens of thousands of entries, so the

@@ -22,7 +22,7 @@ type MainTab = 'plan' | 'diff' | 'logs' | 'details'
 // presentational — TaskDetailPage owns all state and handlers.
 export default function ReviewLayout({
   task, repoName, runs, agentConfigs, providerConfigs, selectedRun, onSelectRun,
-  isRunning, canRerun, onStop, onRerun, canApprove, canReject, approveLabel, onApprove,
+  isRunning, canRerun, onStop, onSteer, onRerun, canApprove, canReject, approveLabel, onApprove,
   rejectNote, setRejectNote, onReject, openCommentsCount, actionError, actionPending,
   diffComments, onAddComment, onRemoveComment, onReopenComment, onCreatePR, creatingPR,
   verificationKey, briefKey, mode, onBack, onHelp, details, labelHistory, variant = 'desktop', labels, alwaysAsk, autoApproving, onHold,
@@ -37,6 +37,7 @@ export default function ReviewLayout({
   isRunning: boolean
   canRerun: boolean
   onStop: () => void
+  onSteer?: (message: string) => Promise<void>
   onRerun: () => void
   canApprove: boolean
   canReject: boolean
@@ -109,6 +110,7 @@ export default function ReviewLayout({
       isRunning={isRunning}
       canRerun={canRerun}
       onStop={onStop}
+      onSteer={onSteer}
       onRerun={onRerun}
       actionPending={actionPending}
     />

@@ -90,6 +90,12 @@ type Pool struct {
 	// UploadDir is where preview PNGs are stored (shared with attachments).
 	UploadDir string
 
+	// OnSteer starts the follow-up run for a steered run. It is called after the
+	// interrupted run is recorded, while that run still owns the task's dispatch
+	// lock; it must hand the lock to the new run with a compare-and-swap. The pool
+	// releases the lock (owner-scoped) if it returns an error. Nil disables Steer.
+	OnSteer func(ctx context.Context, job Job, req SteerRequest) error
+
 	// running tracks the cancel func for each in-flight run so a human can stop
 	// a runaway agent (see Cancel). Populated in run(), removed when it returns.
 	mu      sync.Mutex
@@ -128,10 +134,17 @@ const (
 	// failed or cancelled: it consumes no retry budget, leaves the task
 	// unpaused with its lock released, and re-dispatches after restart.
 	CancelReasonShutdown
+	// CancelReasonSteer is a human steering a live run: the run is interrupted
+	// gracefully and ends "interrupted" (no retry budget, no pause, no
+	// escalation), and its dispatch lock is handed straight to a follow-up run
+	// that carries the note (see Pool.Steer / Pool.OnSteer).
+	CancelReasonSteer
 )
 
 func (r CancelReason) note() string {
 	switch r {
+	case CancelReasonSteer:
+		return "Run interrupted to deliver a steering note from a human. Not a failure: a follow-up run continues the work with the note."
 	case CancelReasonShutdown:
 		return "Run interrupted by server shutdown. Not a failure of this task: it will be re-dispatched (resuming the prior session when supported) after restart."
 	case CancelReasonResourceConstraint:
@@ -143,6 +156,8 @@ func (r CancelReason) note() string {
 
 func (r CancelReason) String() string {
 	switch r {
+	case CancelReasonSteer:
+		return "steer"
 	case CancelReasonShutdown:
 		return "shutdown"
 	case CancelReasonResourceConstraint:
@@ -160,6 +175,8 @@ type runControl struct {
 	cancelled atomic.Bool
 	reason    atomic.Int32
 	startedAt time.Time
+	// steer is the pending steering request (set under Pool.mu before cancel).
+	steer *SteerRequest
 }
 
 // NewPool creates a new pool. Call Start to begin accepting jobs.
@@ -465,7 +482,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 	// re-dispatched. Checked before error classification because a cancelled
 	// provider typically returns a context/transient-looking error.
 	if reason, ok := cancelledBy(rc, ctx); ok {
-		if reason == CancelReasonShutdown {
+		if reason == CancelReasonShutdown || reason == CancelReasonSteer {
 			// Keep the provider session so the re-dispatch can resume it.
 			p.persistRunSession(job, result, log)
 		}
@@ -1201,4 +1218,43 @@ func (p *Pool) MemoryPressurePause() (until time.Time, active bool) {
 		return time.Time{}, false
 	}
 	return p.memPressure.pausedUntilTime()
+}
+
+// SteerRequest is a human note to deliver to a live run.
+type SteerRequest struct {
+	Message string
+	Actor   string
+}
+
+// Steer interrupts the in-flight run identified by runID so the follow-up run
+// started by Pool.OnSteer can carry req. Unlike Cancel the run ends
+// "interrupted", the task is not paused and the dispatch lock is never
+// released between the two runs. Returns false when the run is not active here,
+// the server is draining, or no OnSteer hook is wired.
+func (p *Pool) Steer(runID string, req SteerRequest) bool {
+	if p.OnSteer == nil || p.draining.Load() {
+		return false
+	}
+	p.mu.Lock()
+	rc := p.running[runID]
+	if rc == nil || rc.cancelled.Load() {
+		p.mu.Unlock()
+		return false
+	}
+	rc.steer = &req
+	rc.reason.Store(int32(CancelReasonSteer))
+	rc.cancelled.Store(true)
+	p.mu.Unlock()
+	rc.cancel()
+	return true
+}
+
+// steerRequest returns the pending steering request for a run, if any.
+func (p *Pool) steerRequest(runID string) *SteerRequest {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if rc := p.running[runID]; rc != nil {
+		return rc.steer
+	}
+	return nil
 }

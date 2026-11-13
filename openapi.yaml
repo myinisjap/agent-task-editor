@@ -4532,6 +4532,52 @@ paths:
         "404": { description: Run not found or does not belong to the task }
         "409": { description: Run is not the task's active waiting_human run, no enabled agent config can serve the reply, or a concurrent reply/move changed the task first (the dispatch-lock claim lost the race) }
         "503": { description: Worker pool is saturated }
+  /tasks/{id}/runs/{run_id}/steer:
+    post:
+      summary: Send a steering note to a running agent
+      description: >
+        Valid only while the run is `running` (a waiting_human run uses the
+        reply endpoint). The run is interrupted gracefully and ends with status
+        `interrupted` (not a failure: no retry budget, consecutive-failure
+        count, escalation or pause). The task's dispatch lock is handed
+        straight to a follow-up run on the same task and label that resumes
+        the same provider session where supported (otherwise cold-starts) with
+        the note delivered as "STEERING NOTE FROM HUMAN". The note is stored in
+        task_human_decisions (with the named-token actor) so later runs see it.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: run_id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message:
+                  type: string
+                  description: The steering note for the agent.
+      responses:
+        "202":
+          description: Interrupt signalled; a follow-up run will carry the note.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, description: Always "steering". }
+                  run_id: { type: string, description: The run being interrupted. }
+        "400": { description: Missing/empty message }
+        "404": { description: Run not found or does not belong to the task }
+        "409": { description: Run is not running, or is no longer active on this server }
+        "503": { description: Steering is not available on this server }
 
   /tasks/{id}/runs/{run_id}/logs:
     get:

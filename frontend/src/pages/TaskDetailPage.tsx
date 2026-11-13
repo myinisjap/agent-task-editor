@@ -419,6 +419,24 @@ export default function TaskDetailPage() {
     }
   }
 
+  // Steer a running run: interrupts it gracefully and starts a follow-up run
+  // (same task and label, session resumed) that carries the note.
+  const handleSteer = async (message: string) => {
+    if (!id || !selectedRun || !message.trim()) return
+    setActionError('')
+    setActionPending(true)
+    try {
+      await api.tasks.steerRun(id, selectedRun, message.trim())
+      showToast('Steering note sent. The agent restarts with it.')
+      refreshRuns()
+      refreshHumanDecisions()
+    } catch (e: unknown) {
+      setActionError(errMessage(e))
+    } finally {
+      setActionPending(false)
+    }
+  }
+
   const handleHold = async () => {
     if (!id) return
     try {
@@ -592,6 +610,10 @@ export default function TaskDetailPage() {
     openPR: (url) => { window.open(url, '_blank', 'noopener') },
     togglePause: handleTogglePause,
     toggleArchive: handleToggleArchive,
+    steer: () => {
+      const el = document.querySelector<HTMLInputElement>('input[data-steer-input]')
+      if (el) { el.scrollIntoView?.({ block: 'center' }); el.focus() }
+    },
   }
   useEffect(() => {
     if (!id || !task) return
@@ -604,13 +626,14 @@ export default function TaskDetailPage() {
       openPR: (u) => commandHandlersRef.current.openPR(u),
       togglePause: () => commandHandlersRef.current.togglePause(),
       toggleArchive: () => commandHandlersRef.current.toggleArchive(),
+      steer: () => commandHandlersRef.current.steer?.(),
     }
     useCommandPaletteStore.getState().setTaskContext({
       taskId: id,
       title: task.title,
-      commands: buildTaskCommands({ task, workflow, canRerun, handlers: proxy }),
+      commands: buildTaskCommands({ task, workflow, canRerun, handlers: proxy, isRunning: !!isRunning }),
     })
-  }, [id, task, workflow, canRerun])
+  }, [id, task, workflow, canRerun, isRunning])
   useEffect(() => () => useCommandPaletteStore.getState().setTaskContext(null), [id])
 
   if (!task) return <div className="p-6 text-fg-muted">Loading…</div>
@@ -678,6 +701,7 @@ export default function TaskDetailPage() {
               isRunning={!!isRunning}
               canRerun={canRerun}
               onStop={handleStop}
+              onSteer={handleSteer}
               onRerun={handleRerun}
               actionPending={actionPending}
             />
@@ -734,6 +758,7 @@ export default function TaskDetailPage() {
       isRunning={!!isRunning}
       canRerun={canRerun}
       onStop={handleStop}
+      onSteer={handleSteer}
       onRerun={handleRerun}
       labelHistory={labelHistory}
       canApprove={humanActions.canApprove}

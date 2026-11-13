@@ -45,7 +45,7 @@ and `admin` are the remote connector's sets, see the remote connector section be
 | Auth | per-session scoped token (revoked when the session ends), never `API_TOKEN` | `API_TOKEN` in the client's `env` | Google sign-in + built-in OAuth (`MCP_ALLOWED_EMAILS`) |
 | Profile env var | `MCP_BOARD_TOOL_PROFILE` (backend; passed on as `TOOL_PROFILE`) | `TOOL_PROFILE` (in the client's `env`) | `MCP_TOOL_PROFILE` (backend) |
 | Default profile | `full` | `create` | `readonly` |
-| Default tools | `full`: every `readonly` tool plus `create_task` and the task write tools (`reply_to_run`, `approve_task`, `reject_task`, `move_task`, `archive_task`, `cancel_run`, `rerun_task`, `create_pr`) | `list_repos`, `list_workflows`, `create_task` | `readonly`: the read tools only (`list_tasks`, `get_task`, `list_runs`, `get_run_logs`, `get_diff`, `list_needs_me`, `get_costs`, and the board-setup reads such as `get_workflow`, `list_agents`, `get_repo`, `list_templates`, `list_schedules`) |
+| Default tools | `full`: every `readonly` tool plus `create_task` and the task write tools (`reply_to_run`, `steer_run`, `approve_task`, `reject_task`, `move_task`, `archive_task`, `cancel_run`, `rerun_task`, `create_pr`) | `list_repos`, `list_workflows`, `create_task` | `readonly`: the read tools only (`list_tasks`, `get_task`, `list_runs`, `get_run_logs`, `get_diff`, `list_needs_me`, `get_costs`, and the board-setup reads such as `get_workflow`, `list_agents`, `get_repo`, `list_templates`, `list_schedules`) |
 
 The Chat tab defaults to `full` because it is driven by you, but it reads repo
 code that can contain prompt injection; set `MCP_BOARD_TOOL_PROFILE=create` (or
@@ -175,7 +175,7 @@ admits the emails in `MCP_ALLOWED_EMAILS`.
 | Profile | Adds |
 |---|---|
 | `readonly` (default) | `list_repos`, `list_workflows` and the read tools below (`list_tasks` … `list_schedules`) |
-| `full` | `create_task` and the task write tools (`reply_to_run`, `approve_task`, `reject_task`, `move_task`, `archive_task`, `cancel_run`, `rerun_task`, `create_pr`) |
+| `full` | `create_task` and the task write tools (`reply_to_run`, `steer_run`, `approve_task`, `reject_task`, `move_task`, `archive_task`, `cancel_run`, `rerun_task`, `create_pr`) |
 | `admin` | Board configuration: `create_workflow`, `update_workflow`, `add_repo`, `update_repo`, `create_agent`, `update_agent`, and recurring work: `create_template`, `update_template`, `create_schedule`, `update_schedule` |
 
 The full profile has everything the stdio server has, plus (read tools first):
@@ -198,6 +198,7 @@ The full profile has everything the stdio server has, plus (read tools first):
 | `list_templates` | Task templates (name, title, description, type) that schedules instantiate |
 | `list_schedules` | Schedules: template, repo, cron, target label, enabled, last run |
 | `reply_to_run` | Answer an agent waiting on a human (defaults to the task's active run) |
+| `steer_run` | Send a steering note to a run that is currently `running` (defaults to the task's active run); the run is interrupted gracefully and a follow-up run resumes with the note |
 | `approve_task` / `reject_task` | Follow the workflow's `success` / `failure` human transition, with a note |
 | `move_task` | Move a task to another label (must be an allowed transition) |
 | `archive_task` | Archive a task (or unarchive it with `archived: false`); works on any label and removes the task's worktree |
@@ -306,7 +307,7 @@ exposed, in any profile.
   `detect_repo_runtime`, `list_needs_me`, `get_costs`, `list_provider_configs`, `get_agent`, `list_templates`, `list_schedules`) are exposed, because run logs, diffs and task
   bodies contain text an attacker can influence and could steer a model into
   calling write tools. `MCP_TOOL_PROFILE=full` also exposes `create_task`,
-  `reply_to_run`, `approve_task`, `reject_task`, `move_task`, `archive_task`, `cancel_run`, `rerun_task` and `create_pr`; if you enable
+  `reply_to_run`, `steer_run`, `approve_task`, `reject_task`, `move_task`, `archive_task`, `cancel_run`, `rerun_task` and `create_pr`; if you enable
   it, keep claude.ai's per-tool "ask before running" and avoid "always allow"
   on those tools. `MCP_TOOL_PROFILE=admin` further exposes workflow editing, agent configs,
   repo onboarding and recurring work. A repo's `verify_command` runs as a shell command on the

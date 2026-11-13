@@ -420,6 +420,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Get("/tasks/{id}/runs/{run_id}/logs", tasksH.GetRunLogs)
 			r.Post("/tasks/{id}/runs/{run_id}/cancel", tasksH.CancelRun)
 			r.Post("/tasks/{id}/runs/{run_id}/reply", tasksH.ReplyRun)
+			r.Post("/tasks/{id}/runs/{run_id}/steer", tasksH.SteerRun)
 
 			// Workflows
 			r.Get("/workflows", workflowsH.List)

@@ -16,3 +16,8 @@ LEFT JOIN agent_runs ar ON ar.id = d.run_id
 LEFT JOIN agent_configs ac ON ac.id = ar.agent_config_id
 WHERE d.task_id = ?1 AND d.reply IS NOT NULL
 ORDER BY d.replied_at ASC, d.run_id ASC;
+
+-- name: RecordHumanSteer :exec
+INSERT INTO task_human_decisions (run_id, task_id, label, escalation_reason, question, reply, reply_run_id, replied_at, kind, actor)
+VALUES (?1, ?2, ?3, 'steer', ?4, ?5, ?6, CURRENT_TIMESTAMP, 'steer', ?7)
+ON CONFLICT(run_id) DO UPDATE SET reply = excluded.reply, reply_run_id = excluded.reply_run_id, replied_at = CURRENT_TIMESTAMP, kind = 'steer', actor = excluded.actor;

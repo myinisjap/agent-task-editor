@@ -146,7 +146,7 @@ var (
 		{"POST", "tasks"}, {"POST", "tasks/{}/runs/{}/reply"},
 		{"POST", "tasks/{}/approve"}, {"POST", "tasks/{}/reject"},
 		{"PATCH", "tasks/{}/label"}, {"PATCH", "tasks/{}/archive"},
-		{"POST", "tasks/{}/runs/{}/cancel"}, {"POST", "tasks/{}/rerun"}, {"POST", "tasks/{}/pr"},
+		{"POST", "tasks/{}/runs/{}/cancel"}, {"POST", "tasks/{}/runs/{}/steer"}, {"POST", "tasks/{}/rerun"}, {"POST", "tasks/{}/pr"},
 	}
 	adminRoutes = []route{
 		{"POST", "repos"}, {"PATCH", "repos/{}"}, {"POST", "repos/{}/runtime/detect"},

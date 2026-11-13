@@ -378,6 +378,10 @@ export const api = {
     // the task stays on its label. 202 + the new run id on success.
     replyRun: (id: string, runId: string, message: string) =>
       request<{ run_id: string }>(`/tasks/${id}/runs/${runId}/reply`, { method: 'POST', body: JSON.stringify({ message }) }),
+    // steerRun sends a note to a RUNNING run: the run is interrupted gracefully
+    // (status "interrupted", not a failure) and a follow-up run resumes with the note.
+    steerRun: (id: string, runId: string, message: string) =>
+      request<{ status: string; run_id: string }>(`/tasks/${id}/runs/${runId}/steer`, { method: 'POST', body: JSON.stringify({ message }) }),
     // runLogs returns a page of a run's log entries in chronological order
     // (oldest first). Omit `before` for the newest page (the tail); pass a
     // previous page's prevCursor as `before` to load earlier entries. hasMore

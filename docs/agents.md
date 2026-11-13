@@ -800,6 +800,18 @@ starts cold with the reply at the top of the prompt under
 `RESPONSE FROM HUMAN`. The task stays on its label, and the replied-to run
 keeps its `waiting_human` status. See [api.md](api.md) for status codes.
 
+## Steering a running agent
+
+While a run is `running` a human can redirect it without cancelling:
+`POST /tasks/{id}/runs/{run_id}/steer` (the **Steer** box next to Stop run on
+the task detail page, the "Steer running agent" command-palette entry, or the
+board MCP `steer_run` tool). The run is interrupted gracefully and ends
+`interrupted` (not a failure: no retry budget, escalation or pause), and a
+follow-up run on the same task resumes the session with the note as `STEERING
+NOTE FROM HUMAN`, or cold-starts with the note when it cannot resume. The note
+is stored with the task's human decisions. No provider gap: all four providers
+go through the shared runner and resume path. See [api.md](api.md).
+
 ## Prompt Construction
 
 The user prompt sent to the agent is assembled as:

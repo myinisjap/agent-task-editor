@@ -11,6 +11,7 @@ import (
 func buildPrompt(input agent.RunInput) string {
 	var b strings.Builder
 	writeHumanReplySection(&b, input)
+	writeSteeringNoteSection(&b, input)
 	writeHumanDecisionsSection(&b, input)
 	writeRepoLessonsSection(&b, input)
 	writeSubtaskConflictSection(&b, input)
@@ -44,6 +45,7 @@ func buildPrompt(input agent.RunInput) string {
 func buildResumePrompt(input agent.RunInput) string {
 	var b strings.Builder
 	writeHumanReplySection(&b, input)
+	writeSteeringNoteSection(&b, input)
 	writeHumanDecisionsSection(&b, input)
 	writeSubtaskConflictSection(&b, input)
 	writeSubtaskIntegrationSection(&b, input)
@@ -66,6 +68,16 @@ func writeHumanReplySection(b *strings.Builder, input agent.RunInput) {
 	}
 	b.WriteString("RESPONSE FROM HUMAN (answering your request for help):\n")
 	b.WriteString(*input.HumanReply)
+	b.WriteString("\n\n---\n\n")
+}
+
+// writeSteeringNoteSection renders a human's mid-run steering note.
+func writeSteeringNoteSection(b *strings.Builder, input agent.RunInput) {
+	if input.SteeringNote == nil || *input.SteeringNote == "" {
+		return
+	}
+	b.WriteString("STEERING NOTE FROM HUMAN (sent while you were working; your previous run was interrupted to deliver it. Follow it and continue the task):\n")
+	b.WriteString(*input.SteeringNote)
 	b.WriteString("\n\n---\n\n")
 }
 

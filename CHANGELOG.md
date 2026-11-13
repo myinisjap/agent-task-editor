@@ -19,6 +19,9 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+- **Steer a running agent.** `POST /tasks/{id}/runs/{run_id}/steer` (a Steer box on Task Detail, a command-palette entry, and the board MCP `steer_run` tool in the `full` profile) interrupts a `running` run and starts a follow-up run that resumes the session with your note (`STEERING NOTE FROM HUMAN`). The interrupted run ends `interrupted`, not failed: no retry budget, escalation or pause, and the dispatch lock is handed over without a gap. The note and actor are stored with the task's human decisions.
+
 ### Security
 - **Go 1.27.4.** The CI toolchain and the backend Docker builder move from Go 1.27.3 to 1.27.4, which fixes GO-2026-6859 (an HTTP/1 server crash from a `MaxBytesReader` header race in `net/http`). govulncheck was failing on it.
 

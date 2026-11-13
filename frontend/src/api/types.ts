@@ -2841,6 +2841,88 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/runs/{run_id}/steer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a steering note to a running agent
+         * @description Valid only while the run is `running` (a waiting_human run uses the reply endpoint). The run is interrupted gracefully and ends with status `interrupted` (not a failure: no retry budget, consecutive-failure count, escalation or pause). The task's dispatch lock is handed straight to a follow-up run on the same task and label that resumes the same provider session where supported (otherwise cold-starts) with the note delivered as "STEERING NOTE FROM HUMAN". The note is stored in task_human_decisions (with the named-token actor) so later runs see it.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    run_id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        /** @description The steering note for the agent. */
+                        message: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description Interrupt signalled; a follow-up run will carry the note. */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @description Always "steering". */
+                            status?: string;
+                            /** @description The run being interrupted. */
+                            run_id?: string;
+                        };
+                    };
+                };
+                /** @description Missing/empty message */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Run not found or does not belong to the task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Run is not running */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Steering is not available on this server */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/runs/{run_id}/logs": {
         parameters: {
             query?: never;

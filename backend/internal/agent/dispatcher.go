@@ -79,7 +79,7 @@ type Dispatcher struct {
 
 // NewDispatcher creates a Dispatcher with a 5-second sweep interval.
 func NewDispatcher(db *sql.DB, pool *Pool, engine *workflow.Engine, factory func(AgentConfig) Provider) *Dispatcher {
-	return &Dispatcher{
+	d := &Dispatcher{
 		pool:            pool,
 		db:              db,
 		q:               gen.New(db),
@@ -87,6 +87,10 @@ func NewDispatcher(db *sql.DB, pool *Pool, engine *workflow.Engine, factory func
 		interval:        5 * time.Second,
 		ProviderFactory: factory,
 	}
+	if pool != nil {
+		pool.OnSteer = d.steerFollowUp
+	}
+	return d
 }
 
 // SetUploadDir configures the directory where task attachment images are stored.
@@ -823,57 +827,15 @@ func (d *Dispatcher) DispatchReply(ctx context.Context, taskID, message string) 
 		return "", ErrRunNotWaiting
 	}
 
-	// Prefer the config that asked the question; fall back to label matching
-	// if it has since been deleted or disabled.
-	var matched *gen.AgentConfig
-	if run.AgentConfigID != nil {
-		if cfg, cerr := d.q.GetAgentConfig(ctx, *run.AgentConfigID); cerr == nil && cfg.Enabled == 1 {
-			matched = &cfg
-		}
+	matched, opts, err := d.followUpOptions(ctx, t, run)
+	if err != nil {
+		return "", err
 	}
-	if matched == nil {
-		configs, cerr := d.q.ListAgentConfigs(ctx)
-		if cerr != nil {
-			return "", cerr
-		}
-		if matches := matchConfigs(configs, t.Label); len(matches) > 0 {
-			matched = matches[0]
-		}
-	}
-	if matched == nil {
-		return "", ErrNoMatchingConfig
-	}
-
 	// A human reply is a human acting: give the task a fresh failure budget.
 	if err := d.q.ResetTaskFailureCount(ctx, taskID); err != nil {
 		slog.Warn("dispatcher: reset failure count on reply", "component", "dispatcher", "task_id", taskID, "err", err)
 	}
-	// Reply on the provider that asked, so its session can be resumed, as
-	// long as it is still in the agent config's list.
-	opts := runOptions{humanReply: &message}
-	if exp, eerr := d.q.GetRunningAgentExperiment(ctx, matched.ID); eerr == nil {
-		eff, arm := d.resolveExperiment(ctx, t, *matched, &exp)
-		matched = &eff
-		opts.experiment = arm
-	}
-	if run.ProviderConfigID != nil && run.AgentConfigID != nil && *run.AgentConfigID == matched.ID {
-		ladder := ParseLadder(matched.EscalationLadder)
-		pcIDs := agentProviderIDs(matched)
-		if len(ladder) > 0 {
-			rung := 0
-			if run.LadderRung != nil {
-				rung = selectRung(int(*run.LadderRung), len(ladder))
-			}
-			opts.ladderRung = &rung
-			pcIDs = rungProviderIDs(matched, ladder, rung)
-		}
-		for _, id := range pcIDs {
-			if id == *run.ProviderConfigID {
-				opts.providerConfigID = id
-				break
-			}
-		}
-	}
+	opts.humanReply = &message
 	newRunID, err := d.startRun(ctx, t, *matched, opts)
 	if err != nil {
 		return newRunID, err
@@ -906,6 +868,8 @@ func (d *Dispatcher) DispatchReply(ctx context.Context, taskID, message string) 
 // human-reply flow) layers on top of a standard run.
 type runOptions struct {
 	humanReply *string
+	// steerNote is a human note delivered to a live run (STEERING NOTE FROM HUMAN).
+	steerNote *string
 	// providerConfigID is the provider (from the agent config's list) the run
 	// uses; empty means the agent config's primary.
 	providerConfigID string
@@ -980,6 +944,18 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			Seq:        NextLogSeq(),
 		}); err != nil {
 			log.Warn("dispatcher: record human reply log", "err", err)
+			if opts.steerNote != nil && *opts.steerNote != "" {
+				if err := d.q.CreateAgentLog(ctx, gen.CreateAgentLogParams{
+					ID:         uuid.NewString(),
+					AgentRunID: runID,
+					Timestamp:  time.Now(),
+					Type:       "system",
+					Content:    "Steering note from human: " + *opts.steerNote,
+					Seq:        NextLogSeq(),
+				}); err != nil {
+					log.Warn("dispatcher: record steering note log", "err", err)
+				}
+			}
 		}
 	}
 
@@ -1096,6 +1072,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			ResumeSessionID:      resumeSessionID,
 			ResumeSessionCostUSD: resumeSessionCostUSD,
 			HumanReply:           opts.humanReply,
+			SteeringNote:         opts.steerNote,
 			SubtaskConflicts:     subtaskConflicts,
 			SubtaskIntegration:   subtaskIntegration,
 			CostBudgetUSD:        costBudgetUSD,
@@ -1657,4 +1634,96 @@ func costPeriodBounds(now time.Time) (dayStart, dayEnd, monthStart, monthEnd str
 	m := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	return d.Format(layout), d.AddDate(0, 0, 1).Format(layout),
 		m.Format(layout), m.AddDate(0, 1, 0).Format(layout)
+}
+
+// followUpOptions resolves the agent config and run options for a follow-up run
+// that continues run (the task's active run): the same agent config and
+// provider (so the session can be resumed) when they are still available,
+// otherwise label matching. Shared by DispatchReply and the steering hand-over.
+func (d *Dispatcher) followUpOptions(ctx context.Context, t gen.Task, run gen.AgentRun) (*gen.AgentConfig, runOptions, error) {
+	var opts runOptions
+	// Prefer the config that ran last; fall back to label matching if it has
+	// since been deleted or disabled.
+	var matched *gen.AgentConfig
+	if run.AgentConfigID != nil {
+		if cfg, cerr := d.q.GetAgentConfig(ctx, *run.AgentConfigID); cerr == nil && cfg.Enabled == 1 {
+			matched = &cfg
+		}
+	}
+	if matched == nil {
+		configs, cerr := d.q.ListAgentConfigs(ctx)
+		if cerr != nil {
+			return nil, opts, cerr
+		}
+		if matches := matchConfigs(configs, t.Label); len(matches) > 0 {
+			matched = matches[0]
+		}
+	}
+	if matched == nil {
+		return nil, opts, ErrNoMatchingConfig
+	}
+	// Continue on the provider that ran, so its session can be resumed, as
+	// long as it is still in the agent config's list.
+	if exp, eerr := d.q.GetRunningAgentExperiment(ctx, matched.ID); eerr == nil {
+		eff, arm := d.resolveExperiment(ctx, t, *matched, &exp)
+		matched = &eff
+		opts.experiment = arm
+	}
+	if run.ProviderConfigID != nil && run.AgentConfigID != nil && *run.AgentConfigID == matched.ID {
+		ladder := ParseLadder(matched.EscalationLadder)
+		pcIDs := agentProviderIDs(matched)
+		if len(ladder) > 0 {
+			rung := 0
+			if run.LadderRung != nil {
+				rung = selectRung(int(*run.LadderRung), len(ladder))
+			}
+			opts.ladderRung = &rung
+			pcIDs = rungProviderIDs(matched, ladder, rung)
+		}
+		for _, id := range pcIDs {
+			if id == *run.ProviderConfigID {
+				opts.providerConfigID = id
+				break
+			}
+		}
+	}
+	return matched, opts, nil
+}
+
+// steerFollowUp is the Pool.OnSteer hook: the steered run job has just been
+// recorded "interrupted" but still owns the task's dispatch lock, so startRun's
+// compare-and-swap (ClaimTaskActiveRunIfHeldBy) moves the lock straight to the
+// follow-up run — the lock is never free in between, so the sweep cannot start
+// an unrelated run. The note is recorded for later runs regardless of whether
+// the follow-up starts.
+func (d *Dispatcher) steerFollowUp(ctx context.Context, job Job, req SteerRequest) error {
+	taskID := job.Input.Task.ID
+	t, err := d.q.GetTask(ctx, taskID)
+	if err != nil {
+		return err
+	}
+	if t.ActiveAgentRunID == nil || *t.ActiveAgentRunID != job.RunID {
+		return ErrDispatchConflict
+	}
+	run, err := d.q.GetAgentRun(ctx, job.RunID)
+	if err != nil {
+		return err
+	}
+	matched, opts, err := d.followUpOptions(ctx, t, run)
+	if err != nil {
+		return err
+	}
+	opts.steerNote = &req.Message
+	newRunID, err := d.startRun(ctx, t, *matched, opts)
+	// Record after startRun so the follow-up's own prompt carries the note once
+	// (as STEERING NOTE FROM HUMAN) rather than also in HUMAN DECISIONS.
+	rerr := d.q.RecordHumanSteer(ctx, gen.RecordHumanSteerParams{
+		RunID: job.RunID, TaskID: taskID, Label: t.Label,
+		Question: "(steering note sent while the run was in progress)",
+		Reply:    &req.Message, ReplyRunID: &newRunID, Actor: req.Actor,
+	})
+	if rerr != nil {
+		slog.Warn("dispatcher: record steering note", "component", "dispatcher", "task_id", taskID, "err", rerr)
+	}
+	return err
 }

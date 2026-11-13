@@ -11,6 +11,40 @@ function formatTokenCount(n: number): string {
   return `${n}`
 }
 
+function SteerBox({ onSteer, disabled }: { onSteer: (message: string) => Promise<void>; disabled: boolean }) {
+  const [text, setText] = useState('')
+  const send = async () => {
+    const msg = text.trim()
+    if (!msg) return
+    await onSteer(msg)
+    setText('')
+  }
+  return (
+    <form
+      className="flex gap-1"
+      onSubmit={(e) => { e.preventDefault(); void send() }}
+    >
+      <input
+        data-steer-input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        disabled={disabled}
+        placeholder="Steer the agent…"
+        aria-label="Steering note"
+        className="flex-1 min-w-0 px-2 py-1 text-xs rounded bg-surface-2 border border-border text-fg"
+      />
+      <button
+        type="submit"
+        disabled={disabled || !text.trim()}
+        className="px-2 py-1 text-xs font-medium rounded bg-blue-900/60 hover:bg-blue-800 text-blue-200 disabled:opacity-50"
+        title="Interrupt the run and continue it with this note"
+      >
+        Steer
+      </button>
+    </form>
+  )
+}
+
 function NotesPanel({ notes }: { notes: string }) {
   const [open, setOpen] = useState(false)
   return (
@@ -70,6 +104,7 @@ export default function RunHistoryList({
   isRunning,
   canRerun,
   onStop,
+  onSteer,
   onRerun,
   actionPending,
 }: {
@@ -81,6 +116,7 @@ export default function RunHistoryList({
   isRunning: boolean
   canRerun: boolean
   onStop: () => void
+  onSteer?: (message: string) => Promise<void>
   onRerun: () => void
   actionPending: boolean
 }) {
@@ -158,6 +194,8 @@ export default function RunHistoryList({
           </div>
         </div>
       )}
+
+      {isRunning && onSteer && <SteerBox onSteer={onSteer} disabled={actionPending} />}
 
       {isRunning && (
         <button
