@@ -800,3 +800,40 @@ agent-triggerable label. A rule's `apply_target_label` is honored only if it is
 the gate label: webhook events have no author association, so the auto-start
 check always fails closed. Rules may still set priority, cost budget,
 template (type) and workflow.
+
+### Recipe webhooks
+
+The `ci-red-main` and `error-tracker-alert` [automation recipes](task-templates.md#automation-recipes)
+create an intake endpoint, a `match_source: webhook` rule scoped to the repo (it matches the
+rendered title and attaches the recipe's template), and the template itself. Titles,
+descriptions and dedupe keys use the safe `{{path}}` renderer described above.
+
+**CI red on the default branch** — payload fields `repository`, `branch`, `workflow`, `sha`,
+`actor`, `run_url`; dedupe key `ci-red:{{repository}}:{{branch}}`, so while main stays red every
+further failure is appended as an untrusted comment on the open task. Paste-ready GitHub Actions
+step (the install result fills in the URL; add the endpoint secret as the repo secret
+`ATE_INTAKE_SECRET`):
+
+```yaml
+- name: Report CI failure to Agent Task Editor
+  if: failure() && github.ref == 'refs/heads/main'
+  env:
+    ATE_INTAKE_URL: https://ate.example.com/api/v1/intake/<endpoint-id>
+    ATE_INTAKE_SECRET: ${{ secrets.ATE_INTAKE_SECRET }}
+  run: |
+    body=$(jq -nc \
+      --arg repository "$GITHUB_REPOSITORY" --arg branch "$GITHUB_REF_NAME" \
+      --arg workflow "$GITHUB_WORKFLOW" --arg sha "$GITHUB_SHA" --arg actor "$GITHUB_ACTOR" \
+      --arg run_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+      '{repository:$repository,branch:$branch,workflow:$workflow,sha:$sha,actor:$actor,run_url:$run_url}')
+    sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$ATE_INTAKE_SECRET" -hex | sed 's/^.* //')
+    curl -fsS -X POST "$ATE_INTAKE_URL" -H "Content-Type: application/json" \
+      -H "X-ATE-Signature-256: sha256=$sig" --data-binary "$body"
+```
+
+**Error-tracker alert** — expects a Sentry-style body (`data.event.title`, `.culprit`, `.web_url`,
+`.issue_id`, `.exception.values.0…`); dedupe key `sentry:{{data.event.issue_id}}`. Sentry signs
+with its own header, so route deliveries through a small relay that re-signs the raw body with
+the endpoint secret as `X-ATE-Signature-256` (the install result shows the snippet).
+
+Recipe endpoints leave `target_label` empty, so tasks land parked on the human-review label.

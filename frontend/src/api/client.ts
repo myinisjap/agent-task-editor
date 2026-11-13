@@ -27,6 +27,10 @@ export type TaskDependencies = Schemas['TaskDependencies']
 export type TaskTemplate = Schemas['TaskTemplate']
 export type TaskSchedule = Schemas['TaskSchedule']
 export type IntakeRule = Schemas['IntakeRule']
+export type AutomationRecipe = Schemas['AutomationRecipe']
+export type AutomationRecipeParam = Schemas['AutomationRecipeParam']
+export type AutomationRecipeInstallRequest = Schemas['AutomationRecipeInstallRequest']
+export type AutomationRecipeInstallResult = Schemas['AutomationRecipeInstallResult']
 export type IntakeEndpoint = Schemas['IntakeEndpoint']
 export type IntakeEndpointCreated = Schemas['IntakeEndpointCreated']
 export type IntakeEndpointBody = Schemas['IntakeEndpointBody']
@@ -547,6 +551,15 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ repo_id: repoId, rule, limit }),
       }),
+  },
+  automationRecipes: {
+    list: () => request<AutomationRecipe[]>('/automation-recipes'),
+    install: (id: string, body: AutomationRecipeInstallRequest) =>
+      request<AutomationRecipeInstallResult>(`/automation-recipes/${encodeURIComponent(id)}/install`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    remove: (id: string) => request<void>(`/automation-recipes/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },
   intakeEndpoints: {
     list: () => request<IntakeEndpoint[]>('/intake-endpoints'),

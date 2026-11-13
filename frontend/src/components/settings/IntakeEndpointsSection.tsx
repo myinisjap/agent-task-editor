@@ -352,6 +352,7 @@ export default function IntakeEndpointsSection() {
             <li key={ep.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex flex-col gap-1.5">
               <div className="flex items-center gap-3">
                 <span className="text-sm font-medium text-slate-100">{ep.name}</span>
+                {ep.recipe_id && <span className="text-[10px] text-indigo-300 border border-indigo-700 rounded px-1">from recipe</span>}
                 <span className="text-xs text-slate-500">{repoName(ep.repo_id)}</span>
                 <span className="text-xs text-slate-500">→ {ep.target_label || 'gate (human review)'}</span>
                 <label className="ml-auto flex items-center gap-1.5 text-xs text-slate-400">

@@ -265,6 +265,7 @@ type IntakeEndpoint struct {
 	LastReceivedAt      *time.Time `json:"last_received_at"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
+	RecipeID            string     `json:"recipe_id"`
 }
 
 type IntakeRule struct {
@@ -286,6 +287,7 @@ type IntakeRule struct {
 	StopProcessing    bool      `json:"stop_processing"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+	RecipeID          string    `json:"recipe_id"`
 }
 
 type LogRetentionSetting struct {
@@ -565,6 +567,7 @@ type TaskSchedule struct {
 	LastRunAt   *time.Time `json:"last_run_at"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
+	RecipeID    string     `json:"recipe_id"`
 }
 
 type TaskSideEffect struct {
@@ -607,6 +610,7 @@ type TaskTemplate struct {
 	Type        string    `json:"type"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	RecipeID    string    `json:"recipe_id"`
 }
 
 type TaskWriteback struct {

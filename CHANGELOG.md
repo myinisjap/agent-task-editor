@@ -23,6 +23,7 @@ triggers the "Release" workflow the same way.
 - **Go 1.27.4.** The CI toolchain and the backend Docker builder move from Go 1.27.3 to 1.27.4, which fixes GO-2026-6859 (an HTTP/1 server crash from a `MaxBytesReader` header race in `net/http`). govulncheck was failing on it.
 
 ### Added
+- **Automation recipes.** A gallery of one-click presets (CI red on the default branch, error-tracker alert, weekly dependency updates, stale TODO / flaky test sweep, docs drift check) under Settings → Intake rules → Recipes. `GET /automation-recipes` lists them; `POST /automation-recipes/{id}/install` creates the template plus schedule and/or intake endpoint + rule in one transaction (webhook recipes return the URL, secret once, and a paste-ready GitHub Actions / Sentry sender snippet); `DELETE /automation-recipes/{id}` removes only the tagged objects. Tasks land parked unless you explicitly pick a label and confirm the auto-start warning. New `recipe_id` tag column (migration 088) on templates, schedules, endpoints and rules; Board MCP admin profile gains `list_recipes` / `install_recipe`. See docs/task-templates.md.
 - **Route PR feedback to its own label.** New optional per-label `pr_feedback_label` (workflow YAML, `PUT /workflows/{id}`, and the workflow editor's "Send PR feedback (CI, conflicts) to"). When set, ghsync's PR-feedback auto-transition moves the task there instead of the failure path; it needs a human transition to that label. Empty keeps today's behaviour.
 
 ### Changed
