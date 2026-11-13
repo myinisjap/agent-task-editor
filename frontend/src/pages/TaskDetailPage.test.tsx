@@ -32,9 +32,13 @@ vi.mock('../api/client', async () => {
         approve: vi.fn(),
         reject: vi.fn(),
         previews: vi.fn().mockResolvedValue({ capture: null }),
+        intakeCheck: vi.fn().mockRejectedValue(new Error('404')),
       },
       workflows: {
         get: vi.fn(),
+      },
+      intakeAssistant: {
+        get: vi.fn().mockResolvedValue({ enabled: false, auto_check: true, provider_config_id: null }),
       },
       repos: {
         list: vi.fn().mockResolvedValue([]),

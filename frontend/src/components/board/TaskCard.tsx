@@ -500,6 +500,12 @@ function TaskCard({
               {needsMe.escalation_reason ? escalationInfo(needsMe.escalation_reason).short : 'Needs you'}
             </Badge>
           )}
+          {/* Advisory intake-assistant chip; deliberately not part of the needs-you count. */}
+          {task.intake_verdict === 'needs_detail' && (
+            <Badge size="xs" tone="neutral" title="The intake assistant thinks this task needs more detail">
+              needs detail
+            </Badge>
+          )}
           {isRunning && !needsMe && (
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="Agent running" />
           )}

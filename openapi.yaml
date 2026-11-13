@@ -577,6 +577,40 @@ components:
         updated_at:
           type: string
       required: [id, repo_id, provider_config_id, title, provider_session_id, worktree_path, created_at, updated_at]
+    PossibleDuplicate:
+      type: object
+      properties:
+        id:    { type: string }
+        title: { type: string }
+        label: { type: string }
+        score: { type: number }
+      required: [id, title, label, score]
+    IntakeAssistantSettings:
+      type: object
+      properties:
+        enabled:            { type: boolean }
+        auto_check:         { type: boolean, description: Also check tasks created on a parked (agent_ignore) label }
+        provider_config_id: { type: string, nullable: true }
+      required: [enabled, auto_check, provider_config_id]
+    IntakeCheck:
+      type: object
+      properties:
+        task_id:               { type: string }
+        status:                { type: string, enum: [running, done, failed] }
+        trigger:               { type: string, enum: [manual, auto] }
+        verdict:               { type: string, enum: ["", ready, needs_detail] }
+        questions:             { type: array, items: { type: string }, maxItems: 3 }
+        suggested_type:        { type: string }
+        suggested_workflow_id: { type: string }
+        duplicate_ids:         { type: array, items: { type: string } }
+        error:                 { type: string }
+        provider_config_id:    { type: string, nullable: true }
+        cost_usd:              { type: number }
+        input_tokens:          { type: integer }
+        output_tokens:         { type: integer }
+        started_at:            { type: string, format: date-time }
+        finished_at:           { type: string, format: date-time, nullable: true }
+      required: [task_id, status, trigger, verdict, questions, suggested_type, suggested_workflow_id, duplicate_ids, error, cost_usd, input_tokens, output_tokens, started_at]
     Task:
       type: object
       properties:
@@ -820,6 +854,20 @@ components:
             that are waiting, being retried after a failure, or failed for
             good. Populated on GET /tasks and GET /tasks/{id}; always an array,
             empty when nothing is outstanding or on mutation responses.
+        possible_duplicates:
+          type: array
+          items: { $ref: '#/components/schemas/PossibleDuplicate' }
+          description: >
+            Open, non-archived tasks in the same repo with a similar
+            title/description. Deterministic, computed on read (never stored);
+            populated on GET /tasks/{id} and task create, empty elsewhere.
+            Creation is never blocked by it.
+        intake_verdict:
+          type: string
+          enum: ["", ready, needs_detail]
+          description: >
+            Latest finished intake assistant verdict, empty when none. Advisory;
+            not counted in needs-you.
         source_pending_update:
           nullable: true
           allOf:
@@ -3767,6 +3815,79 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/AutonomySettings" }
         "400": { description: Out of range, or unknown proposal_provider_config_id }
+
+  /tasks/similar:
+    get:
+      summary: Find open tasks similar to a title (no model call)
+      description: >
+        Deterministic possible-duplicate lookup for the New Task modal: open,
+        non-archived tasks in the repo whose title overlaps `q` (Jaccard index
+        of normalised tokens >= 0.5, at least 2 shared tokens). Best first, at
+        most 5.
+      parameters:
+        - { name: repo_id, in: query, required: true, schema: { type: string } }
+        - { name: q, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: Matches, possibly empty
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PossibleDuplicate" }
+        "400": { description: repo_id missing }
+
+  /tasks/{id}/intake-check:
+    get:
+      summary: Latest intake assistant check for a task
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeCheck" }
+        "404": { description: No check for this task }
+    post:
+      summary: Run the intake assistant on a task (advisory, background)
+      description: >
+        Starts a model check (clarity verdict, suggested type/workflow, which
+        duplicate candidates are real) in a scratch directory with shell
+        commands denied. It never moves, edits or archives the task. Returns the
+        running check; poll GET for the result. Requires the assistant to be
+        enabled in settings.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "202":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeCheck" }
+        "400": { description: Assistant disabled or no usable provider }
+        "404": { description: Task not found }
+        "409": { description: A check is already running for this task }
+
+  /settings/intake-assistant:
+    get:
+      summary: Get the intake assistant settings (off by default)
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeAssistantSettings" }
+    put:
+      summary: Update the intake assistant settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IntakeAssistantSettings" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeAssistantSettings" }
+        "400": { description: Unknown provider config, or enabled without one }
 
   /tasks/{id}/dependencies:
     get:

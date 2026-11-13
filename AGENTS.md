@@ -48,6 +48,7 @@ agent-task-editor/
 │       ├── ghsync/           # Background poller: refreshes task PR state (incl. merge conflicts) via the repo's `forge.Forge`
 │       ├── health/           # Provider readiness checks (Claude CLI, MCP sidecar, GitHub auth, repo base dir)
 │       ├── intake/           # Intake routing rules: match->apply engine shared by tasksource + schedule + intakehook, plus the safe {{path}} template renderer; leaf package, no deps beyond storage/gen
+│       ├── intakecheck/      # Task intake assistant: deterministic possible-duplicate similarity (computed on read) + optional advisory model check (stored per task)
 │       ├── intakehook/       # Signed inbound webhook events -> tasks (Shape/Receive, dedupe into open tasks)
 │       ├── logretention/     # Periodic pruning of agent_logs for terminal runs; DB-backed settings
 │       ├── metrics/          # Process-wide Prometheus registry and custom collectors (leaf package)

@@ -1315,6 +1315,209 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/similar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Find open tasks similar to a title (no model call)
+         * @description Deterministic possible-duplicate lookup for the New Task modal: open, non-archived tasks in the repo whose title overlaps `q` (Jaccard index of normalised tokens >= 0.5, at least 2 shared tokens). Best first, at most 5.
+         */
+        get: {
+            parameters: {
+                query: {
+                    repo_id: string;
+                    q?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Matches, possibly empty */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["PossibleDuplicate"][];
+                    };
+                };
+                /** @description repo_id missing */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/intake-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Latest intake assistant check for a task */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntakeCheck"];
+                    };
+                };
+                /** @description No check for this task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Run the intake assistant on a task (advisory, background)
+         * @description Starts a model check (clarity verdict, suggested type/workflow, which duplicate candidates are real) in a scratch directory with shell commands denied. It never moves, edits or archives the task. Returns the running check; poll GET for the result. Requires the assistant to be enabled in settings.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntakeCheck"];
+                    };
+                };
+                /** @description Assistant disabled or no usable provider */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description A check is already running for this task */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/intake-assistant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the intake assistant settings (off by default) */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntakeAssistantSettings"];
+                    };
+                };
+            };
+        };
+        /** Update the intake assistant settings */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["IntakeAssistantSettings"];
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["IntakeAssistantSettings"];
+                    };
+                };
+                /** @description Unknown provider config */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/dependencies": {
         parameters: {
             query?: never;
@@ -7708,6 +7911,40 @@ export interface components {
             created_at: string;
             updated_at: string;
         };
+        PossibleDuplicate: {
+            id: string;
+            title: string;
+            label: string;
+            score: number;
+        };
+        IntakeAssistantSettings: {
+            enabled: boolean;
+            /** @description Also check tasks created on a parked (agent_ignore) label */
+            auto_check: boolean;
+            provider_config_id: string | null;
+        };
+        IntakeCheck: {
+            task_id: string;
+            /** @enum {string} */
+            status: "running" | "done" | "failed";
+            /** @enum {string} */
+            trigger: "manual" | "auto";
+            /** @enum {string} */
+            verdict: "" | "ready" | "needs_detail";
+            questions: string[];
+            suggested_type: string;
+            suggested_workflow_id: string;
+            duplicate_ids: string[];
+            error: string;
+            provider_config_id?: string | null;
+            cost_usd: number;
+            input_tokens: number;
+            output_tokens: number;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            finished_at?: string | null;
+        };
         Task: {
             id: string;
             title: string;
@@ -7818,6 +8055,13 @@ export interface components {
             active_run_status?: "pending" | "running" | "waiting_human";
             /** @description Outstanding post-transition side effects (branch push, PR creation, source-issue write-back) from the durable outbox: rows that are waiting, being retried after a failure, or failed for good. Populated on GET /tasks and GET /tasks/{id}; always an array, empty when nothing is outstanding or on mutation responses. */
             side_effects?: components["schemas"]["TaskSideEffect"][];
+            /** @description Open, non-archived tasks in the same repo with a similar title/description. Deterministic, computed on read (never stored); populated on GET /tasks/{id} and task create, empty elsewhere. Creation is never blocked by it. */
+            possible_duplicates?: components["schemas"]["PossibleDuplicate"][];
+            /**
+             * @description Latest finished intake assistant verdict, empty when none. Advisory; not counted in needs-you.
+             * @enum {string}
+             */
+            intake_verdict?: "" | "ready" | "needs_detail";
             /** @description An edit to the source issue that the sync importer held back because a human had already approved the task (it passed a human gate). Null when none is pending. Apply or discard it via /tasks/{id}/source-update. Populated on GET /tasks and GET /tasks/{id} and the source-update responses. */
             source_pending_update?: components["schemas"]["TaskSourcePendingUpdate"] | null;
             /** @description Per-task override: when true the autonomy policy always asks a human at gates (a hard stop). Set via PATCH /tasks/{id}/always-ask. */

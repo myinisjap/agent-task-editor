@@ -3,7 +3,7 @@ import Icon from '../ui/Icon'
 import { useEffect, useRef, useState } from 'react'
 import { errMessage } from '../../lib/errMessage'
 import { api } from '../../api/client'
-import type { Repo, Task, TaskTemplate, Workflow } from '../../api/client'
+import type { PossibleDuplicate, Repo, Task, TaskTemplate, Workflow } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
 import { PRIORITY_LEVELS } from '../../lib/priority'
 import ModalShell from '../shared/ModalShell'
@@ -87,6 +87,7 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
   const [attachmentPreviews, setAttachmentPreviews] = useState<string[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [similar, setSimilar] = useState<PossibleDuplicate[]>([])
   const [templates, setTemplates] = useState<TaskTemplate[]>([])
   // Inline (non-modal) replacements for the browser prompt and confirm dialogs: a nested ModalShell
   // would double-register Escape + focus traps.
@@ -122,6 +123,26 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
     // Initial focus is handled by ModalShell (via titleRef as initialFocusRef).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Deterministic duplicate hint (no model call), debounced; never blocks creating.
+  useEffect(() => {
+    const q = title.trim()
+    if (!repoId || q.length < 3) {
+      setSimilar([])
+      return
+    }
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => {
+      api.tasks
+        .similar(repoId, q, ctrl.signal)
+        .then(setSimilar)
+        .catch(() => {})
+    }, 350)
+    return () => {
+      clearTimeout(timer)
+      ctrl.abort()
+    }
+  }, [title, repoId])
 
   function applyTemplate(id: string) {
     setTemplateId(id)
@@ -309,6 +330,19 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
             required
             className="bg-surface-sunken border border-border rounded-lg px-3 py-2 text-sm text-fg placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-accent"
           />
+          {similar.length > 0 && (
+            <p className="text-xs text-fg-muted" data-testid="similar-tasks">
+              Possibly the same as:{' '}
+              {similar.map((s, i) => (
+                <span key={s.id}>
+                  {i > 0 && ', '}
+                  <a href={`/tasks/${s.id}`} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                    {s.title}
+                  </a>
+                </span>
+              ))}
+            </p>
+          )}
         </div>
 
         <div className="flex flex-col gap-1.5">

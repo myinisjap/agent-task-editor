@@ -14,6 +14,7 @@ import ConfirmDialog from '../components/shared/ConfirmDialog'
 import HelpModal from '../components/shared/HelpModal'
 import { IntakeRulesHelp } from '../components/shared/pageHelp'
 import IntakeEndpointsSection from '../components/settings/IntakeEndpointsSection'
+import IntakeAssistantSection from '../components/settings/IntakeAssistantSection'
 
 export const inputCls =
   'bg-surface-sunken border border-border rounded-lg px-3 py-2 text-sm text-fg placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-accent'
@@ -679,6 +680,7 @@ export default function IntakeRulesPage() {
       )}
 
       <IntakeEndpointsSection />
+      <IntakeAssistantSection />
 
       {ruleToDelete && (
         <ConfirmDialog

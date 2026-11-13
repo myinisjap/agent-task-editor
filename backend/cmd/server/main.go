@@ -24,6 +24,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
 	"github.com/myinisjap/agent-task-editor/backend/internal/health"
+	"github.com/myinisjap/agent-task-editor/backend/internal/intakecheck"
 	"github.com/myinisjap/agent-task-editor/backend/internal/logretention"
 	"github.com/myinisjap/agent-task-editor/backend/internal/memguard"
 	"github.com/myinisjap/agent-task-editor/backend/internal/notify"
@@ -315,6 +316,18 @@ func main() {
 		return propose.ProviderModel{Provider: p, Config: ac}
 	})
 
+	// Task intake assistant: advisory model check of new tasks, same sandbox as
+	// rule proposals. Off until enabled in settings.
+	intake := intakecheck.New(db.SQL(), termQ, func(pc gen.ProviderConfig) intakecheck.Model {
+		ac := propose.AgentConfigFor(pc)
+		ac.ID, ac.Name = "intake-assistant", "Task intake assistant"
+		p := newProvider(ac, false)
+		if p == nil {
+			return nil
+		}
+		return intakeModel{propose.ProviderModel{Provider: p, Config: ac, SystemPrompt: intakecheck.SystemPrompt, AnswerEnd: "ATE_INTAKE>>>", Purpose: "intake-check"}}
+	})
+
 	maxWorkers := cfg.MaxWorkers
 	if maxWorkers <= 0 {
 		maxWorkers = 5
@@ -414,6 +427,7 @@ func main() {
 		EventPublisher:      pub,
 		EscapeRecorder:      escapeRec,
 		Proposals:           proposals,
+		Intake:              intake,
 		DB:                  db,
 		Engine:              engine,
 		Hub:                 hub,
@@ -611,6 +625,7 @@ func main() {
 	go notifier.Run(ctx)
 	go policyRec.Run(ctx)
 	go proposals.Run(ctx)
+	go intake.Run(ctx)
 	if cfg.ChatIdleTimeout > 0 {
 		go terminal.ReapLoop(ctx)
 	}
@@ -717,4 +732,12 @@ func runOutput(name string, args ...string) string {
 		return ""
 	}
 	return string(out)
+}
+
+// intakeModel adapts the sandboxed provider run to the intake assistant.
+type intakeModel struct{ m propose.ProviderModel }
+
+func (a intakeModel) Complete(ctx context.Context, prompt string) (intakecheck.Completion, error) {
+	c, err := a.m.Complete(ctx, prompt)
+	return intakecheck.Completion{Text: c.Text, CostUSD: c.CostUSD, InputTokens: c.InputTokens, OutputTokens: c.OutputTokens}, err
 }
