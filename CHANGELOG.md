@@ -23,6 +23,7 @@ triggers the "Release" workflow the same way.
 - **Go 1.27.4.** The CI toolchain and the backend Docker builder move from Go 1.27.3 to 1.27.4, which fixes GO-2026-6859 (an HTTP/1 server crash from a `MaxBytesReader` header race in `net/http`). govulncheck was failing on it.
 
 ### Added
+- **Model-proposed repo lessons (distiller).** "Suggest lessons" on a repo's Lessons panel (and a daily background run for repos with new evidence) reads the last 30 days of rejection notes, human replies, rework failure feedback, repeated verify failures and "should have asked" notes, and drafts up to 5 lessons as `status=proposed`, `source=distiller` with the cited tasks and quoted notes. Proposals are validated like human lessons, near-duplicates of existing or dismissed lessons are dropped, and nothing is injected into prompts until a person accepts (`PATCH /lessons/{id}` with `status: active`, optionally edited) or dismisses (`POST /lessons/{id}/dismiss`, remembered so it is not offered again). New `POST /repos/{id}/lessons/distill` and `GET /repos/{id}/lessons/distill-runs`; uses the rule-proposal provider config and interval from `PUT /settings/autonomy`. Not counted in Needs you.
 - **Route PR feedback to its own label.** New optional per-label `pr_feedback_label` (workflow YAML, `PUT /workflows/{id}`, and the workflow editor's "Send PR feedback (CI, conflicts) to"). When set, ghsync's PR-feedback auto-transition moves the task there instead of the failure path; it needs a human transition to that label. Empty keeps today's behaviour.
 
 ### Changed

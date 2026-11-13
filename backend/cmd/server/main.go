@@ -24,6 +24,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
 	"github.com/myinisjap/agent-task-editor/backend/internal/health"
+	"github.com/myinisjap/agent-task-editor/backend/internal/lessons/distill"
 	"github.com/myinisjap/agent-task-editor/backend/internal/logretention"
 	"github.com/myinisjap/agent-task-editor/backend/internal/memguard"
 	"github.com/myinisjap/agent-task-editor/backend/internal/notify"
@@ -315,6 +316,18 @@ func main() {
 		return propose.ProviderModel{Provider: p, Config: ac}
 	})
 
+	// Model-proposed repo lessons: same provider config as rule proposals; drafts
+	// stay status=proposed (never injected) until a person accepts them.
+	lessonDistill := distill.New(db.SQL(), termQ, func(pc gen.ProviderConfig, system string) propose.Model {
+		ac := propose.AgentConfigFor(pc)
+		ac.ID, ac.Name = "lesson-distiller", "Lesson distiller"
+		p := newProvider(ac, false)
+		if p == nil {
+			return nil
+		}
+		return propose.ProviderModel{Provider: p, Config: ac, System: system}
+	})
+
 	maxWorkers := cfg.MaxWorkers
 	if maxWorkers <= 0 {
 		maxWorkers = 5
@@ -414,6 +427,7 @@ func main() {
 		EventPublisher:      pub,
 		EscapeRecorder:      escapeRec,
 		Proposals:           proposals,
+		LessonDistill:       lessonDistill,
 		DB:                  db,
 		Engine:              engine,
 		Hub:                 hub,
@@ -611,6 +625,7 @@ func main() {
 	go notifier.Run(ctx)
 	go policyRec.Run(ctx)
 	go proposals.Run(ctx)
+	go lessonDistill.Run(ctx)
 	if cfg.ChatIdleTimeout > 0 {
 		go terminal.ReapLoop(ctx)
 	}
