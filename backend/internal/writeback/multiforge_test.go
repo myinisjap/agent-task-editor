@@ -171,6 +171,7 @@ func TestEligible_KnownSources(t *testing.T) {
 func TestGiteaSourcedTask_RoutesThroughRepoForge(t *testing.T) {
 	fake := &fakeOtherForge{}
 	forge.Register(fake)
+	t.Cleanup(func() { forge.Unregister(fake) })
 
 	q := openTestDB(t)
 	repo := seedRepoWithRemote(t, q, true, "https://forge.test/acme/widgets")
@@ -204,6 +205,7 @@ func TestGiteaSourcedTask_RoutesThroughRepoForge(t *testing.T) {
 func TestGitHubSourcedTask_AlwaysUsesDefaultFunctions(t *testing.T) {
 	fake := &fakeOtherForge{}
 	forge.Register(fake)
+	t.Cleanup(func() { forge.Unregister(fake) })
 
 	q := openTestDB(t)
 	// Deliberately NOT forge.test — a real github.com remote, so this also
