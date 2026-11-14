@@ -172,7 +172,7 @@ func init() {
 	})
 	register(Tool{
 		Name:        "create_task",
-		Description: "Create a ticket on the board. By default the ticket lands on the \"work\" column so an agent starts on it immediately; pass a different label to stage it elsewhere (e.g. \"not_ready\"). If workflow_id is omitted, the board's default workflow is used (the one named \"Default\", else the alphabetically-first workflow).",
+		Description: "Create a ticket on the board. By default the ticket lands on the \"work\" column so an agent starts on it immediately; pass a different label to stage it elsewhere (e.g. \"not_ready\"). If workflow_id is omitted, the board's default workflow is used (the one named \"Default\", else the alphabetically-first workflow other than the seeded \"PR review\" workflow).",
 		InputSchema: obj(map[string]any{
 			"title":       str("Short title of the ticket"),
 			"description": str("What the ticket should accomplish (markdown supported)"),
@@ -343,9 +343,10 @@ func (c *Client) listRepos() (string, bool) {
 
 func (c *Client) listWorkflows() (string, bool) {
 	var wfs []struct {
-		ID     string `json:"id"`
-		Name   string `json:"name"`
-		Labels []struct {
+		ID        string `json:"id"`
+		IsDefault bool   `json:"is_default"`
+		Name      string `json:"name"`
+		Labels    []struct {
 			Name string `json:"name"`
 		} `json:"labels"`
 	}
@@ -359,9 +360,10 @@ func (c *Client) listWorkflows() (string, bool) {
 			names = append(names, l.Name)
 		}
 		out = append(out, map[string]any{
-			"id":     wf.ID,
-			"name":   wf.Name,
-			"labels": names,
+			"id":         wf.ID,
+			"is_default": wf.IsDefault,
+			"name":       wf.Name,
+			"labels":     names,
 		})
 	}
 	return marshal(out)

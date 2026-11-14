@@ -43,8 +43,8 @@ export default async function globalSetup() {
     )
   }
 
-  const workflows = await json<Array<{ id: string }>>(await fetch(`${API_BASE}/workflows`))
-  const workflowId = workflows[0]?.id
+  const workflows = await json<Array<{ id: string; is_default?: boolean }>>(await fetch(`${API_BASE}/workflows`))
+  const workflowId = (workflows.find((w) => w.is_default) ?? workflows[0])?.id
   if (!workflowId) {
     throw new Error('No workflow found — backend should auto-seed a default workflow on first boot')
   }

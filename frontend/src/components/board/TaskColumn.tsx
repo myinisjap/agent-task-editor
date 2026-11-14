@@ -2,6 +2,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react'
 import Icon from '../ui/Icon'
 import { shortcutHint } from '../../lib/shortcuts'
 import { labelDisplayName } from '../../lib/labelDisplay'
+import { defaultWorkflow } from '../../lib/defaultWorkflow'
 import { useCallback, useMemo, useState } from 'react'
 import { useDroppable } from '@dnd-kit/core'
 import type { Task, WorkflowLabel } from '../../api/client'
@@ -56,7 +57,7 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
   const selectedWorkflowId = useWorkflowStore((s) => s.selectedId)
   const unstaffed = useMemo(() => {
     if (!agentsLoaded) return false
-    const wf = workflows.find((w) => w.id === (label.workflow_id || selectedWorkflowId)) ?? workflows[0]
+    const wf = workflows.find((w) => w.id === (label.workflow_id || selectedWorkflowId)) ?? defaultWorkflow(workflows)
     return unstaffedLabelNames(wf, agents).has(label.name)
   }, [agentsLoaded, workflows, selectedWorkflowId, agents, label.workflow_id, label.name])
 

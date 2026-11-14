@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { api, type Workflow } from '../api/client'
+import { defaultWorkflow, resolveSelectedWorkflow } from '../lib/defaultWorkflow'
 
 const SELECTED_ID_KEY = 'workflow.selectedId'
 
@@ -26,11 +27,11 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
       const list = workflows ?? []
       // Validate stored selectedId still exists in the fetched list
       const storedId = get().selectedId
-      const validId = storedId && list.some((w) => w.id === storedId)
-        ? storedId
-        : (list[0]?.id ?? null)
+      const storedValid = !!storedId && list.some((w) => w.id === storedId)
+      const validId = storedValid ? storedId : (defaultWorkflow(list)?.id ?? null)
       set({ workflows: list, loading: false, selectedId: validId })
-      try { if (validId) localStorage.setItem(SELECTED_ID_KEY, validId) } catch { /* ignore */ }
+      // Only explicit selections (setSelectedId) are persisted; drop a stale one.
+      if (!storedValid) { try { localStorage.removeItem(SELECTED_ID_KEY) } catch { /* ignore */ } }
     } catch {
       set({ loading: false })
     }
@@ -43,6 +44,6 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
 
   active: () => {
     const { workflows, selectedId } = get()
-    return workflows.find((w) => w.id === selectedId) ?? workflows[0]
+    return resolveSelectedWorkflow(workflows, selectedId)
   },
 }))

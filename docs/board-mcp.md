@@ -76,7 +76,7 @@ Creates a ticket on the board.
 | `repo_id` | ✅ | Repo the ticket belongs to (from `list_repos`) |
 | `description` | — | What the ticket should accomplish (markdown) |
 | `type` | — | `feature` (default) \| `bug` \| `chore` \| `spike` |
-| `workflow_id` | — | Workflow the task is created under (from `list_workflows`). Defaults to the board's default workflow (the one named "Default", else the alphabetically-first workflow) when omitted — it is **not** derived from the repo. |
+| `workflow_id` | — | Workflow the task is created under (from `list_workflows`). Defaults to the board's default workflow (the one named "Default", else the alphabetically-first workflow other than the seeded "PR review" one) when omitted — it is **not** derived from the repo. |
 | `label` | — | Column the ticket starts on. **Defaults to `work`** so an agent picks it up immediately; pass e.g. `not_ready` to stage it for manual review first |
 
 Landing a ticket directly on a column is *initial placement*, not a workflow
