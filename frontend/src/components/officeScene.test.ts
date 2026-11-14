@@ -753,6 +753,13 @@ describe('task-mode scene', () => {
 
 describe('spriteAt', () => {
   it('hits near the foot point and returns the front-most sprite', () => {
+    // Seeded PRNG: random placement can overlap the two sprites, which made
+    // the first assertion (a's own foot hits a) flaky.
+    let seed = 12345
+    vi.spyOn(Math, 'random').mockImplementation(() => {
+      seed = (seed * 1664525 + 1013904223) % 4294967296
+      return seed / 4294967296
+    })
     const scene = new OfficeScene()
     scene.setStations(tstations({ A: [tk('t1'), tk('t2')] }))
     scene.settle()
