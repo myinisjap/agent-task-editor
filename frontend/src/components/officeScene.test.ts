@@ -754,6 +754,10 @@ describe('task-mode scene', () => {
 })
 
 describe('spriteAt', () => {
+  // Sprite placement is random; pin it so the geometry assertions are stable.
+  beforeEach(() => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+  })
   it('hits near the foot point and returns the front-most sprite', () => {
     const scene = new OfficeScene()
     scene.setStations(tstations({ A: [tk('t1'), tk('t2')] }))
