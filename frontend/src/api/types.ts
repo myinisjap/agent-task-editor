@@ -3332,6 +3332,176 @@ export interface paths {
         };
         trace?: never;
     };
+    "/repos/{id}/lessons/distill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Draft lessons for a repo from recent task history (distiller)
+         * @description Reads the repo's last 30 days of evidence (human rejection notes, human replies, rework failure feedback, repeated verify failures, "should have asked" notes), asks the provider config chosen for rule proposals for candidate lessons, validates them like human-created lessons, drops near-duplicates of existing or dismissed lessons and ones citing no real task, and stores at most 5 as `status=proposed`, `source=distiller`. Proposed lessons are never injected until accepted (PATCH the lesson to `status=active`). Runs in the background; poll distill-runs.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LessonDistillRun"];
+                    };
+                };
+                /** @description No usable provider config set for proposals */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description A run is already in progress for this repo */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{id}/lessons/distill-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A repo's recent lesson distiller runs
+         * @description Newest first, with cost.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LessonDistillRun"][];
+                    };
+                };
+                /** @description Invalid limit */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lessons/{id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss a proposed distiller lesson
+         * @description Deletes the proposal and remembers its text so it is not offered again.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Dismissed */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Lesson not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Lesson is not a proposed distiller lesson */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/skills": {
         parameters: {
             query?: never;
@@ -5453,7 +5623,7 @@ export interface paths {
         put?: never;
         /**
          * Register a repo
-         * @description The body also accepts verify_command (string) and verify_timeout_seconds (integer, 1-3600); see the Repo schema. It also accepts preview_command, preview_routes and preview_paths_glob (strings). It also accepts the pr_review_* policy fields (see the Repo schema).
+         * @description The body also accepts verify_command (string) and verify_timeout_seconds (integer, 1-3600); see the Repo schema. It also accepts preview_command, preview_routes and preview_paths_glob (strings). It also accepts the pr_review_* policy fields (see the Repo schema). It also accepts auto_merge_mode (off|when_green) and auto_merge_method (squash|merge|rebase).
          */
         post: {
             parameters: {
@@ -5588,6 +5758,16 @@ export interface paths {
                         preview_routes?: string;
                         /** @description Replaces the newline-separated UI path globs (empty = defaults). Omit to leave unchanged. */
                         preview_paths_glob?: string;
+                        /**
+                         * @description Auto-merge policy. Omit to leave unchanged.
+                         * @enum {string}
+                         */
+                        auto_merge_mode?: "off" | "when_green";
+                        /**
+                         * @description Auto-merge method. Omit to leave unchanged.
+                         * @enum {string}
+                         */
+                        auto_merge_method?: "squash" | "merge" | "rebase";
                     };
                 };
             };
@@ -5946,6 +6126,161 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/automation-recipes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List automation recipes
+         * @description Bundled one-click presets (see docs/task-templates.md#automation-recipes) with their install parameters and installed state.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Recipes */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutomationRecipe"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/automation-recipes/{id}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Install an automation recipe
+         * @description Creates the recipe's template, schedule and/or intake endpoint + rule in one transaction, tagged with the recipe id. An empty `target_label` parks created tasks on the workflow's human-review label. A non-gate label is rejected with code `auto_start_confirmation_required` unless `confirm_auto_start` is true. For webhook recipes the response carries the endpoint URL and HMAC secret (shown once) and a paste-ready sender snippet.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AutomationRecipeInstallRequest"];
+                };
+            };
+            responses: {
+                /** @description Installed */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutomationRecipeInstallResult"];
+                    };
+                };
+                /** @description Validation error (or auto_start_confirmation_required) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Recipe not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Already installed */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/automation-recipes/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove an installed automation recipe
+         * @description Deletes only the objects tagged with this recipe id. Tasks already created are kept.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Removed */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Recipe unknown or not installed */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -7574,6 +7909,28 @@ export interface components {
             /** Format: date-time */
             finished_at: string | null;
         };
+        LessonDistillRun: {
+            id: string;
+            repo_id: string;
+            /** @enum {string} */
+            trigger: "schedule" | "manual";
+            actor: string;
+            /** @enum {string} */
+            status: "running" | "succeeded" | "failed" | "skipped";
+            provider_config_id: string | null;
+            evidence_count: number;
+            /** @description Proposed lessons stored by this run. */
+            proposal_count: number;
+            /** @description Why the run failed or was skipped. */
+            error: string;
+            cost_usd: number;
+            input_tokens: number;
+            output_tokens: number;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            finished_at: string | null;
+        };
         ShouldHaveAskedRequest: {
             rule?: components["schemas"]["AskRuleInput"];
             /** @description Limit the rule and lesson to the task's repo. */
@@ -7851,6 +8208,18 @@ export interface components {
             active_run_status?: "pending" | "running" | "waiting_human";
             /** @description Outstanding post-transition side effects (branch push, PR creation, source-issue write-back) from the durable outbox: rows that are waiting, being retried after a failure, or failed for good. Populated on GET /tasks and GET /tasks/{id}; always an array, empty when nothing is outstanding or on mutation responses. */
             side_effects?: components["schemas"]["TaskSideEffect"][];
+            /** @description Latest auto-merge evaluation of the task's open PR when the repo's auto_merge_mode is when_green. null when it does not apply. */
+            auto_merge?: {
+                /**
+                 * @description waiting = blocked (see reason/message); merging = merge queued
+                 * @enum {string}
+                 */
+                state: "waiting" | "merging";
+                /** @description Blocking code, e.g. checks_pending, checks_failed, conflict, changes_requested, draft, always_ask, paused, active_run, no_checks, merge_refused; empty when merging */
+                reason: string;
+                /** @description Human-readable explanation of reason */
+                message: string;
+            } | null;
             /** @description An edit to the source issue that the sync importer held back because a human had already approved the task (it passed a human gate). Null when none is pending. Apply or discard it via /tasks/{id}/source-update. Populated on GET /tasks and GET /tasks/{id} and the source-update responses. */
             source_pending_update?: components["schemas"]["TaskSourcePendingUpdate"] | null;
             /** @description Per-task override: when true the autonomy policy always asks a human at gates (a hard stop). Set via PATCH /tasks/{id}/always-ask. */
@@ -7874,10 +8243,10 @@ export interface components {
         /** @description One outstanding row of the side-effect outbox. A label transition records the work it owes (pushing the branch, opening a PR, updating the source issue) in the same transaction as the move; a background worker runs it with exponential backoff. Rows are deleted on success, so only unfinished work is listed. A pending row with attempts > 0 and a last_error is "failed, retrying"; status failed means the attempt budget is exhausted and it needs a manual retry. */
         TaskSideEffect: {
             /**
-             * @description terminal = push the branch and tear down the worktree (or merge a subtask back); create_pr = push and open a pull request; leave_not_ready = apply the in-progress signal to the source issue; pr_review_post = post the agent's review on the source pull request (review-only PR tasks; idempotent via a hidden marker in the body).
+             * @description auto_merge = merge the task's PR through the forge (repo auto-merge policy; a forge refusal fails it at once, no retries); terminal = push the branch and tear down the worktree (or merge a subtask back); create_pr = push and open a pull request; leave_not_ready = apply the in-progress signal to the source issue; pr_review_post = post the agent's review on the source pull request (review-only PR tasks; idempotent via a hidden marker in the body).
              * @enum {string}
              */
-            kind: "terminal" | "create_pr" | "leave_not_ready" | "pr_review_post";
+            kind: "terminal" | "create_pr" | "leave_not_ready" | "auto_merge" | "pr_review_post";
             /** @enum {string} */
             status: "pending" | "running" | "failed";
             /** @description Failed attempts so far */
@@ -7965,6 +8334,8 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+            /** @description Automation recipe id this object was created by; empty = not from a recipe. */
+            recipe_id?: string;
         };
         /** @description Short curated lesson injected into agent prompts (REPO LESSONS section). repo_id null means the lesson applies to every repo. Only status=active lessons are injected, filtered by stages (empty = all agents) and path_globs (empty = always; otherwise matched against the files the task branch changed vs base). */
         RepoLesson: {
@@ -8039,6 +8410,8 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+            /** @description Automation recipe id this object was created by; empty = not from a recipe. */
+            recipe_id?: string;
         };
         /** @description A match->apply intake routing rule, evaluated first-match-wins (by sort_order) at task-creation time for the 'issue' (issue import) and 'schedule' sources (see internal/intake and docs/task-sources.md). Subsumes the deprecated per-repo issue_sync_label filter, which narrowed only the fetch; rules shape the resulting task (template, priority, target label, workflow, cost budget) after fetch/creation. Every match_* field left empty/absent matches "any"; every apply_* field left empty/absent means "leave the caller's default". Landing a task on a non-agent_ignore apply_target_label bypasses the human-review gate that protects against untrusted imported issue content, so it is only permitted when match_author_assoc is restricted to OWNER/MEMBER/COLLABORATOR — the API rejects a rule that doesn't satisfy this with 400 Bad Request. */
         IntakeRule: {
@@ -8077,10 +8450,69 @@ export interface components {
             apply_max_cost_usd?: number | null;
             /** @description Reserved; first-match-wins is the only evaluation mode in v1. */
             stop_processing: boolean;
+            /** @description Automation recipe id this rule was created by; empty = not from a recipe. */
+            recipe_id?: string;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        AutomationRecipeParam: {
+            key: string;
+            label: string;
+            /** @enum {string} */
+            kind: "repo" | "workflow" | "label" | "cron" | "string";
+            required: boolean;
+            default: string;
+            help: string;
+        };
+        AutomationRecipe: {
+            id: string;
+            version: number;
+            name: string;
+            description: string;
+            /** @enum {string} */
+            kind: "webhook" | "schedule";
+            default_cron?: string;
+            params: components["schemas"]["AutomationRecipeParam"][];
+            template: {
+                name: string;
+                title: string;
+                description: string;
+                type: string;
+            };
+            installed: boolean;
+            objects: {
+                template_id: string | null;
+                schedule_id: string | null;
+                endpoint_id: string | null;
+                rule_id: string | null;
+                repo_id: string | null;
+            };
+        };
+        AutomationRecipeInstallRequest: {
+            /** @description Keyed by the recipe's param keys (repo_id, workflow_id, target_label, cron_expr, branch). */
+            params: {
+                [key: string]: string;
+            };
+            /** @description Required when target_label is a non-human-gate label (tasks start agents without review). */
+            confirm_auto_start?: boolean;
+        };
+        AutomationRecipeInstallResult: {
+            recipe: string;
+            template: components["schemas"]["TaskTemplate"];
+            schedule?: components["schemas"]["TaskSchedule"];
+            endpoint?: components["schemas"]["IntakeEndpoint"];
+            rule?: components["schemas"]["IntakeRule"];
+            /** @description Full intake URL (webhook recipes). */
+            url?: string;
+            /** @description HMAC secret, shown once (webhook recipes). */
+            secret?: string;
+            /** @description Paste-ready sender snippet (webhook recipes). Never contains the secret. */
+            snippet?: string;
+            /** @description Label created tasks start on ('' for webhook recipes = the workflow's human-gate label). */
+            target_label: string;
+            warnings: string[];
         };
         /** @description A signed inbound webhook endpoint that creates tasks (see docs/task-sources.md). The HMAC secret is never included here; it is returned only by create and rotate-secret. */
         IntakeEndpoint: {
@@ -8106,6 +8538,8 @@ export interface components {
             secret_set: boolean;
             /** @example /api/v1/intake/<id> */
             url_path: string;
+            /** @description Automation recipe id this object was created by; empty = not from a recipe. */
+            recipe_id?: string;
         };
         IntakeEndpointCreated: components["schemas"]["IntakeEndpoint"] & {
             /** @description HMAC secret. Shown only once. */
@@ -8515,6 +8949,16 @@ export interface components {
             preview_routes?: string;
             /** @description Newline-separated globs deciding when a diff counts as a UI change. Empty = frontend/**, web/**, src/**\/*.{tsx,jsx,vue,svelte,css}. */
             preview_paths_glob?: string;
+            /**
+             * @description Opt-in auto-merge policy (default off). when_green: ATE merges a task's PR once all checks pass, it is not a draft or conflicting, has no unresolved changes-requested review and the task has no live run, is not paused and not always_ask. See docs/workflows.md.
+             * @enum {string}
+             */
+            auto_merge_mode?: "off" | "when_green";
+            /**
+             * @description Merge method used by auto-merge (default squash).
+             * @enum {string}
+             */
+            auto_merge_method?: "squash" | "merge" | "rebase";
             /** Format: date-time */
             created_at: string;
         };

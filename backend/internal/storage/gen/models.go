@@ -265,6 +265,7 @@ type IntakeEndpoint struct {
 	LastReceivedAt      *time.Time `json:"last_received_at"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
+	RecipeID            string     `json:"recipe_id"`
 }
 
 type IntakeRule struct {
@@ -286,6 +287,32 @@ type IntakeRule struct {
 	StopProcessing    bool      `json:"stop_processing"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+	RecipeID          string    `json:"recipe_id"`
+}
+
+type LessonDismissal struct {
+	ID          string    `json:"id"`
+	RepoID      string    `json:"repo_id"`
+	Body        string    `json:"body"`
+	DismissedBy string    `json:"dismissed_by"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type LessonDistillRun struct {
+	ID               string     `json:"id"`
+	RepoID           string     `json:"repo_id"`
+	Trigger          string     `json:"trigger"`
+	Actor            string     `json:"actor"`
+	Status           string     `json:"status"`
+	ProviderConfigID *string    `json:"provider_config_id"`
+	EvidenceCount    int64      `json:"evidence_count"`
+	ProposalCount    int64      `json:"proposal_count"`
+	Error            string     `json:"error"`
+	CostUsd          float64    `json:"cost_usd"`
+	InputTokens      int64      `json:"input_tokens"`
+	OutputTokens     int64      `json:"output_tokens"`
+	StartedAt        time.Time  `json:"started_at"`
+	FinishedAt       *time.Time `json:"finished_at"`
 }
 
 type LogRetentionSetting struct {
@@ -339,6 +366,8 @@ type Repo struct {
 	PreviewCommand                string    `json:"preview_command"`
 	PreviewRoutes                 string    `json:"preview_routes"`
 	PreviewPathsGlob              string    `json:"preview_paths_glob"`
+	AutoMergeMode                 string    `json:"auto_merge_mode"`
+	AutoMergeMethod               string    `json:"auto_merge_method"`
 	PrReviewEnabled               int64     `json:"pr_review_enabled"`
 	PrReviewAuthorAssocs          string    `json:"pr_review_author_assocs"`
 	PrReviewLabel                 string    `json:"pr_review_label"`
@@ -435,6 +464,15 @@ type Task struct {
 	MatchedRuleID           *string    `json:"matched_rule_id"`
 	ConsecutiveFailureCount int64      `json:"consecutive_failure_count"`
 	AlwaysAsk               int64      `json:"always_ask"`
+}
+
+type TaskAutoMerge struct {
+	TaskID    string    `json:"task_id"`
+	State     string    `json:"state"`
+	Reason    string    `json:"reason"`
+	Message   string    `json:"message"`
+	HeadSha   string    `json:"head_sha"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type TaskBase struct {
@@ -610,6 +648,7 @@ type TaskSchedule struct {
 	LastRunAt   *time.Time `json:"last_run_at"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
+	RecipeID    string     `json:"recipe_id"`
 }
 
 type TaskSideEffect struct {
@@ -652,6 +691,7 @@ type TaskTemplate struct {
 	Type        string    `json:"type"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	RecipeID    string    `json:"recipe_id"`
 }
 
 type TaskWriteback struct {

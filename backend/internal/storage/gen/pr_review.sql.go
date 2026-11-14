@@ -100,7 +100,7 @@ func (q *Queries) HasSeedMarker(ctx context.Context, name string) (int64, error)
 }
 
 const listPRReviewRepos = `-- name: ListPRReviewRepos :many
-SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label, runtime_languages, verify_command, verify_timeout_seconds, preview_command, preview_routes, preview_paths_glob, pr_review_enabled, pr_review_author_assocs, pr_review_label, pr_review_skip_drafts, pr_review_workflow_id, pr_review_target_label FROM repos WHERE pr_review_enabled != 0 AND remote_url IS NOT NULL AND remote_url != '' ORDER BY created_at DESC
+SELECT id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label, runtime_languages, verify_command, verify_timeout_seconds, preview_command, preview_routes, preview_paths_glob, auto_merge_mode, auto_merge_method, pr_review_enabled, pr_review_author_assocs, pr_review_label, pr_review_skip_drafts, pr_review_workflow_id, pr_review_target_label FROM repos WHERE pr_review_enabled != 0 AND remote_url IS NOT NULL AND remote_url != '' ORDER BY created_at DESC
 `
 
 func (q *Queries) ListPRReviewRepos(ctx context.Context) ([]Repo, error) {
@@ -137,6 +137,8 @@ func (q *Queries) ListPRReviewRepos(ctx context.Context) ([]Repo, error) {
 			&i.PreviewCommand,
 			&i.PreviewRoutes,
 			&i.PreviewPathsGlob,
+			&i.AutoMergeMode,
+			&i.AutoMergeMethod,
 			&i.PrReviewEnabled,
 			&i.PrReviewAuthorAssocs,
 			&i.PrReviewLabel,
@@ -324,7 +326,7 @@ const setRepoPRReview = `-- name: SetRepoPRReview :one
 UPDATE repos
 SET pr_review_enabled = ?, pr_review_author_assocs = ?, pr_review_label = ?, pr_review_skip_drafts = ?, pr_review_workflow_id = ?, pr_review_target_label = ?
 WHERE id = ?
-RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label, runtime_languages, verify_command, verify_timeout_seconds, preview_command, preview_routes, preview_paths_glob, pr_review_enabled, pr_review_author_assocs, pr_review_label, pr_review_skip_drafts, pr_review_workflow_id, pr_review_target_label
+RETURNING id, name, path, remote_url, workflow_id, created_at, issue_sync_enabled, issue_sync_label, clone_status, clone_error, issue_writeback_enabled, pr_review_auto_transition_enabled, issue_sync_update_policy, issue_sync_gone_action, issue_sync_gone_label, issue_comment_sync_enabled, max_concurrent_runs, issue_writeback_label, runtime_languages, verify_command, verify_timeout_seconds, preview_command, preview_routes, preview_paths_glob, auto_merge_mode, auto_merge_method, pr_review_enabled, pr_review_author_assocs, pr_review_label, pr_review_skip_drafts, pr_review_workflow_id, pr_review_target_label
 `
 
 type SetRepoPRReviewParams struct {
@@ -373,6 +375,8 @@ func (q *Queries) SetRepoPRReview(ctx context.Context, arg SetRepoPRReviewParams
 		&i.PreviewCommand,
 		&i.PreviewRoutes,
 		&i.PreviewPathsGlob,
+		&i.AutoMergeMode,
+		&i.AutoMergeMethod,
 		&i.PrReviewEnabled,
 		&i.PrReviewAuthorAssocs,
 		&i.PrReviewLabel,

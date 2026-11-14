@@ -54,7 +54,7 @@ CREATE TABLE seed_markers (
 CREATE TABLE task_side_effects_new (
     id            TEXT PRIMARY KEY,
     task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    kind          TEXT NOT NULL CHECK (kind IN ('terminal', 'create_pr', 'leave_not_ready', 'pr_review_post')),
+    kind          TEXT NOT NULL CHECK (kind IN ('terminal', 'create_pr', 'leave_not_ready', 'auto_merge', 'pr_review_post')),
     status        TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'failed')),
     attempts      INTEGER NOT NULL DEFAULT 0,
     next_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

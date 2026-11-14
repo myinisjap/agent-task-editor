@@ -96,14 +96,21 @@ func TestMergeability_Constants(t *testing.T) {
 	}
 }
 
-func ( fakeForge) GetPR(ctx context.Context, repoName string, number int) (forge.PullRequest, error) {
+func (fakeForge) GetPR(ctx context.Context, repoName string, number int) (forge.PullRequest, error) {
 	return forge.PullRequest{}, nil
 }
 
-func ( fakeForge) ListOpenPRs(ctx context.Context, repoName string) ([]forge.PullRequest, error) {
+func (fakeForge) ListOpenPRs(ctx context.Context, repoName string) ([]forge.PullRequest, error) {
 	return nil, nil
 }
 
-func ( fakeForge) PostCommentReview(ctx context.Context, repoName string, number int, r forge.ReviewSubmission) (string, error) {
+func (fakeForge) PostCommentReview(ctx context.Context, repoName string, number int, r forge.ReviewSubmission) (string, error) {
 	return "", nil
+}
+
+func (fakeForge) PRChecks(ctx context.Context, repoName string, prNumber int) ([]forge.Check, error) {
+	return nil, nil
+}
+func (fakeForge) MergePullRequest(ctx context.Context, repoName string, prNumber int, method forge.MergeMethod, expectedHeadSHA string) error {
+	return nil
 }

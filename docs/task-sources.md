@@ -665,6 +665,23 @@ The feedback is deduped on `"<head sha>|<base ref>"`, so:
 
 The move is recorded in label history with trigger `human`, actor `pr-feedback-sync` and note `GitHub PR review feedback ingested`. Gate backtests, autonomy rule proposals and escape detection do not count it as a human rejection.
 
+### Auto-merge when green (opt-in)
+
+By default the pipeline ends at "PR open" and you merge yourself. A repo can opt in to letting ATE merge the PR:
+
+| Repo field | Meaning |
+|---|---|
+| `auto_merge_mode` | `off` (default) or `when_green` |
+| `auto_merge_method` | `squash` (default), `merge` or `rebase` |
+
+Auto-merge is per repo (there is no per-label switch). It is re-evaluated whenever the task's PR state is refreshed (GitHub webhook, or the polling fallback), never in its own loop. A PR is merged only when **all** of these hold: the PR was opened for the task's branch and is open; it is not a draft and the forge reports it mergeable (no conflicts); every check on the head commit has passed (none pending or failed); no reviewer's latest decisive review is "changes requested"; the task has no live agent run and is not paused, archived or marked `always_ask`. A repo that reports no checks at all is treated as having no CI after a ~3 minute grace period.
+
+The merge goes through the side-effect outbox and is pinned to the evaluated head SHA, so a push between the check and the merge fails safely and is simply re-evaluated. If the forge refuses (branch protection, a required review) the failure is not retried: it shows in **Needs you** with the forge's message and Retry/Dismiss. CI failures and conflicts keep flowing through the PR-feedback path above. After the merge, the normal merged-PR sync moves the task to its terminal label and cleans up. The merge is recorded in label history with trigger `human` and reserved actor `auto-merge` (also reserved in `API_TOKENS`); like `pr-feedback-sync` it is not counted as a human decision.
+
+Task Detail and the board card show "Auto-merge when green" with the blocking reason while the PR is not yet eligible.
+
+> **Warning:** with no `verify_command`, or with a gate upstream on Auto, a PR can be opened and merged with no human involved. The repo edit form warns about both.
+
 By default, newly-ingested PR feedback is surfaced in the prompt but the task
 stays wherever a human put it — someone still has to click Reject (or
 whatever the workflow's manual transition is) to send it back to an agent.
@@ -826,3 +843,40 @@ agent-triggerable label. A rule's `apply_target_label` is honored only if it is
 the gate label: webhook events have no author association, so the auto-start
 check always fails closed. Rules may still set priority, cost budget,
 template (type) and workflow.
+
+### Recipe webhooks
+
+The `ci-red-main` and `error-tracker-alert` [automation recipes](task-templates.md#automation-recipes)
+create an intake endpoint, a `match_source: webhook` rule scoped to the repo (it matches the
+rendered title and attaches the recipe's template), and the template itself. Titles,
+descriptions and dedupe keys use the safe `{{path}}` renderer described above.
+
+**CI red on the default branch** — payload fields `repository`, `branch`, `workflow`, `sha`,
+`actor`, `run_url`; dedupe key `ci-red:{{repository}}:{{branch}}`, so while main stays red every
+further failure is appended as an untrusted comment on the open task. Paste-ready GitHub Actions
+step (the install result fills in the URL; add the endpoint secret as the repo secret
+`ATE_INTAKE_SECRET`):
+
+```yaml
+- name: Report CI failure to Agent Task Editor
+  if: failure() && github.ref == 'refs/heads/main'
+  env:
+    ATE_INTAKE_URL: https://ate.example.com/api/v1/intake/<endpoint-id>
+    ATE_INTAKE_SECRET: ${{ secrets.ATE_INTAKE_SECRET }}
+  run: |
+    body=$(jq -nc \
+      --arg repository "$GITHUB_REPOSITORY" --arg branch "$GITHUB_REF_NAME" \
+      --arg workflow "$GITHUB_WORKFLOW" --arg sha "$GITHUB_SHA" --arg actor "$GITHUB_ACTOR" \
+      --arg run_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+      '{repository:$repository,branch:$branch,workflow:$workflow,sha:$sha,actor:$actor,run_url:$run_url}')
+    sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$ATE_INTAKE_SECRET" -hex | sed 's/^.* //')
+    curl -fsS -X POST "$ATE_INTAKE_URL" -H "Content-Type: application/json" \
+      -H "X-ATE-Signature-256: sha256=$sig" --data-binary "$body"
+```
+
+**Error-tracker alert** — expects a Sentry-style body (`data.event.title`, `.culprit`, `.web_url`,
+`.issue_id`, `.exception.values.0…`); dedupe key `sentry:{{data.event.issue_id}}`. Sentry signs
+with its own header, so route deliveries through a small relay that re-signs the raw body with
+the endpoint secret as `X-ATE-Signature-256` (the install result shows the snippet).
+
+Recipe endpoints leave `target_label` empty, so tasks land parked on the human-review label.

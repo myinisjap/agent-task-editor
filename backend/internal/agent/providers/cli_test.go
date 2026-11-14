@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -705,6 +706,41 @@ func TestIsNodeScript_NativeBinaryIsNotDetected(t *testing.T) {
 	}
 	if got {
 		t.Error("expected a native binary (no shebang) to not be detected as a node script")
+	}
+}
+
+// TestIsNodeScript_BinaryWithNoNewlineInFirst4K: a real native binary such as
+// /usr/bin/sh can have no newline in its first 4 KiB. That must answer "not a
+// node script", not fail (it used to return bufio's "token too long", which
+// broke every verify command on a node-pinned repo).
+func TestIsNodeScript_BinaryWithNoNewlineInFirst4K(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sh")
+	data := append([]byte("\x7fELF"), bytes.Repeat([]byte{0x01}, 16384)...)
+	if err := os.WriteFile(path, data, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := isNodeScript(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got {
+		t.Error("expected a binary with no newline to not be detected as a node script")
+	}
+}
+
+func TestIsNodeScript_ShebangWithoutTrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "claude")
+	if err := os.WriteFile(path, []byte("#!/usr/bin/env node"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := isNodeScript(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
+		t.Error("expected a shebang-only file to be detected as a node script")
 	}
 }
 

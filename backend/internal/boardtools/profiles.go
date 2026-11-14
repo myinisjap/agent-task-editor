@@ -20,6 +20,7 @@ const AdminInstructions = "To set the board up, create_workflow/update_workflow 
 	"A label only gets agent runs if an enabled agent lists it: list_agents/get_agent show them, list_provider_configs gives the provider ids, and create_agent/update_agent wire agents to labels. " +
 	"For recurring work, create_template/update_template define the task and create_schedule/update_schedule run it " +
 	"on a 5-field cron (update_schedule with enabled=false pauses). " +
+	"list_recipes/install_recipe set up a whole preset (CI-failure webhook, weekly dependency updates, ...) in one step. " +
 	"A schedule creates tasks unattended: leave target_label empty so a human promotes them, unless an agent should start straight away. "
 
 // WriteInstructions is added for the full and admin profiles.

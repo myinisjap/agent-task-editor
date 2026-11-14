@@ -18,13 +18,16 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
+	"github.com/myinisjap/agent-task-editor/backend/internal/automerge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/escape"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/policy"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/propose"
 	"github.com/myinisjap/agent-task-editor/backend/internal/backup"
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
 	"github.com/myinisjap/agent-task-editor/backend/internal/health"
+	"github.com/myinisjap/agent-task-editor/backend/internal/lessons/distill"
 	"github.com/myinisjap/agent-task-editor/backend/internal/logretention"
 	"github.com/myinisjap/agent-task-editor/backend/internal/memguard"
 	"github.com/myinisjap/agent-task-editor/backend/internal/notify"
@@ -273,6 +276,26 @@ func main() {
 		return prPoster.Post(ctx, task, repo)
 	}
 
+	// On the auto_merge outbox effect (enqueued by ghsync when a repo's opt-in
+	// auto-merge policy finds a PR safe): re-evaluate against live forge state
+	// and merge, pinned to the head SHA. A forge refusal (branch protection,
+	// required review) is a permanent failure surfaced in Needs you. See
+	// internal/automerge.
+	engine.OnAutoMerge = func(ctx context.Context, task gen.Task) error {
+		repo, err := termQ.GetRepo(ctx, task.RepoID)
+		if err != nil {
+			return fmt.Errorf("get repo: %w", err)
+		}
+		if repo.RemoteUrl == nil || *repo.RemoteUrl == "" {
+			return nil
+		}
+		f, name, ok := forge.ForRemote(*repo.RemoteUrl)
+		if !ok {
+			return nil
+		}
+		return automerge.Merge(ctx, termQ, pub, f, name, task, repo)
+	}
+
 	// Backend base URL the create_subtask MCP sidecar posts to (same container).
 	backendURL := "http://localhost:" + cfg.Port
 
@@ -331,6 +354,18 @@ func main() {
 			return nil
 		}
 		return propose.ProviderModel{Provider: p, Config: ac}
+	})
+
+	// Model-proposed repo lessons: same provider config as rule proposals; drafts
+	// stay status=proposed (never injected) until a person accepts them.
+	lessonDistill := distill.New(db.SQL(), termQ, func(pc gen.ProviderConfig, system string) propose.Model {
+		ac := propose.AgentConfigFor(pc)
+		ac.ID, ac.Name = "lesson-distiller", "Lesson distiller"
+		p := newProvider(ac, false)
+		if p == nil {
+			return nil
+		}
+		return propose.ProviderModel{Provider: p, Config: ac, System: system}
 	})
 
 	maxWorkers := cfg.MaxWorkers
@@ -432,6 +467,7 @@ func main() {
 		EventPublisher:      pub,
 		EscapeRecorder:      escapeRec,
 		Proposals:           proposals,
+		LessonDistill:       lessonDistill,
 		DB:                  db,
 		Engine:              engine,
 		Hub:                 hub,
@@ -631,6 +667,7 @@ func main() {
 	go notifier.Run(ctx)
 	go policyRec.Run(ctx)
 	go proposals.Run(ctx)
+	go lessonDistill.Run(ctx)
 	if cfg.ChatIdleTimeout > 0 {
 		go terminal.ReapLoop(ctx)
 	}

@@ -353,6 +353,24 @@ components:
         output_tokens: { type: integer }
         started_at: { type: string, format: date-time }
         finished_at: { type: string, format: date-time, nullable: true }
+    LessonDistillRun:
+      type: object
+      required: [id, repo_id, trigger, actor, status, provider_config_id, evidence_count, proposal_count, error, cost_usd, input_tokens, output_tokens, started_at, finished_at]
+      properties:
+        id: { type: string }
+        repo_id: { type: string }
+        trigger: { type: string, enum: [schedule, manual] }
+        actor: { type: string }
+        status: { type: string, enum: [running, succeeded, failed, skipped] }
+        provider_config_id: { type: string, nullable: true }
+        evidence_count: { type: integer }
+        proposal_count: { type: integer, description: Proposed lessons stored by this run. }
+        error: { type: string, description: Why the run failed or was skipped. }
+        cost_usd: { type: number }
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time, nullable: true }
     ShouldHaveAskedRequest:
       type: object
       properties:
@@ -838,6 +856,17 @@ components:
             that are waiting, being retried after a failure, or failed for
             good. Populated on GET /tasks and GET /tasks/{id}; always an array,
             empty when nothing is outstanding or on mutation responses.
+        auto_merge:
+          nullable: true
+          type: object
+          description: >
+            Latest auto-merge evaluation of the task's open PR when the repo's
+            auto_merge_mode is when_green. null when it does not apply.
+          properties:
+            state: { type: string, enum: [waiting, merging], description: "waiting = blocked (see reason/message); merging = merge queued" }
+            reason: { type: string, description: "Blocking code, e.g. checks_pending, checks_failed, conflict, changes_requested, draft, always_ask, paused, active_run, no_checks, merge_refused; empty when merging" }
+            message: { type: string, description: Human-readable explanation of reason }
+          required: [state, reason, message]
         source_pending_update:
           nullable: true
           allOf:
@@ -878,9 +907,10 @@ components:
       properties:
         kind:
           type: string
-          enum: [terminal, create_pr, leave_not_ready, pr_review_post]
+          enum: [terminal, create_pr, leave_not_ready, auto_merge, pr_review_post]
           description: >
-            terminal = push the branch and tear down the worktree (or merge a
+            auto_merge = merge the task's PR through the forge (repo auto-merge
+            policy; a forge refusal fails it at once, no retries); terminal = push the branch and tear down the worktree (or merge a
             subtask back); create_pr = push and open a pull request;
             leave_not_ready = apply the in-progress signal to the source issue;
             pr_review_post = post the agent's review on the source pull request
@@ -1023,6 +1053,7 @@ components:
         type:        { type: string, enum: [feature, bug, chore, spike] }
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
+        recipe_id:     { type: string, description: "Automation recipe id this object was created by; empty = not from a recipe." }
       required: [id, name, title, description, type, created_at, updated_at]
 
     RepoLesson:
@@ -1098,6 +1129,7 @@ components:
         last_run_at:   { type: string, format: date-time, nullable: true }
         created_at:    { type: string, format: date-time }
         updated_at:    { type: string, format: date-time }
+        recipe_id:     { type: string, description: "Automation recipe id this object was created by; empty = not from a recipe." }
       required: [id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at]
 
     IntakeRule:
@@ -1133,9 +1165,78 @@ components:
         apply_workflow_id:   { type: string, nullable: true, description: "Overrides the repo's default workflow for this task. Null = use the repo's own workflow." }
         apply_max_cost_usd:  { type: number, format: double, nullable: true, description: "Null = leave default (no per-task override)." }
         stop_processing:     { type: boolean, description: "Reserved; first-match-wins is the only evaluation mode in v1." }
+        recipe_id:           { type: string, description: "Automation recipe id this rule was created by; empty = not from a recipe." }
         created_at:          { type: string, format: date-time }
         updated_at:          { type: string, format: date-time }
       required: [id, name, enabled, sort_order, match_source, match_labels, match_title_pattern, match_body_pattern, match_author_assoc, apply_target_label, stop_processing, created_at, updated_at]
+
+    AutomationRecipeParam:
+      type: object
+      properties:
+        key:      { type: string }
+        label:    { type: string }
+        kind:     { type: string, enum: [repo, workflow, label, cron, string] }
+        required: { type: boolean }
+        default:  { type: string }
+        help:     { type: string }
+      required: [key, label, kind, required, default, help]
+
+    AutomationRecipe:
+      type: object
+      properties:
+        id:          { type: string }
+        version:     { type: integer }
+        name:        { type: string }
+        description: { type: string }
+        kind:        { type: string, enum: [webhook, schedule] }
+        default_cron: { type: string }
+        params:      { type: array, items: { $ref: "#/components/schemas/AutomationRecipeParam" } }
+        template:
+          type: object
+          properties:
+            name:        { type: string }
+            title:       { type: string }
+            description: { type: string }
+            type:        { type: string }
+          required: [name, title, description, type]
+        installed:   { type: boolean }
+        objects:
+          type: object
+          properties:
+            template_id: { type: string, nullable: true }
+            schedule_id: { type: string, nullable: true }
+            endpoint_id: { type: string, nullable: true }
+            rule_id:     { type: string, nullable: true }
+            repo_id:     { type: string, nullable: true }
+          required: [template_id, schedule_id, endpoint_id, rule_id, repo_id]
+      required: [id, version, name, description, kind, params, template, installed, objects]
+
+    AutomationRecipeInstallRequest:
+      type: object
+      properties:
+        params:
+          type: object
+          additionalProperties: { type: string }
+          description: "Keyed by the recipe's param keys (repo_id, workflow_id, target_label, cron_expr, branch)."
+        confirm_auto_start:
+          type: boolean
+          description: "Required when target_label is a non-human-gate label (tasks start agents without review)."
+      required: [params]
+
+    AutomationRecipeInstallResult:
+      type: object
+      properties:
+        recipe:       { type: string }
+        template:     { $ref: "#/components/schemas/TaskTemplate" }
+        schedule:     { $ref: "#/components/schemas/TaskSchedule" }
+        endpoint:     { $ref: "#/components/schemas/IntakeEndpoint" }
+        rule:         { $ref: "#/components/schemas/IntakeRule" }
+        url:          { type: string, description: "Full intake URL (webhook recipes)." }
+        secret:       { type: string, description: "HMAC secret, shown once (webhook recipes)." }
+        snippet:      { type: string, description: "Paste-ready sender snippet (webhook recipes). Never contains the secret." }
+        target_label: { type: string, description: "Label created tasks start on ('' for webhook recipes = the workflow's human-gate label)." }
+        warnings:     { type: array, items: { type: string } }
+      required: [recipe, template, target_label, warnings]
 
     IntakeEndpoint:
       type: object
@@ -1158,6 +1259,7 @@ components:
         updated_at:           { type: string, format: date-time }
         secret_set:           { type: boolean }
         url_path:             { type: string, example: "/api/v1/intake/<id>" }
+        recipe_id:     { type: string, description: "Automation recipe id this object was created by; empty = not from a recipe." }
       required: [id, name, repo_id, workflow_id, target_label, enabled, title_template, description_template, dedupe_key_template, last_received_at, created_at, updated_at, secret_set, url_path]
 
     IntakeEndpointCreated:
@@ -1878,6 +1980,18 @@ components:
           description: >
             Newline-separated globs deciding when a diff counts as a UI change.
             Empty = frontend/**, web/**, src/**/*.{tsx,jsx,vue,svelte,css}.
+        auto_merge_mode:
+          type: string
+          enum: [off, when_green]
+          description: >
+            Opt-in auto-merge policy (default off). when_green: ATE merges a
+            task's PR once all checks pass, it is not a draft or conflicting,
+            has no unresolved changes-requested review and the task has no
+            live run, is not paused and not always_ask. See docs/workflows.md.
+        auto_merge_method:
+          type: string
+          enum: [squash, merge, rebase]
+          description: Merge method used by auto-merge (default squash).
         created_at:  { type: string, format: date-time }
       required: [id, name, path, created_at]
 
@@ -4788,6 +4902,55 @@ paths:
         "204": { description: Deleted }
         "404": { description: Lesson not found }
 
+  /repos/{id}/lessons/distill:
+    post:
+      summary: Draft lessons for a repo from recent task history (distiller)
+      description: >-
+        Reads the repo's last 30 days of evidence (human rejection notes, human
+        replies, rework failure feedback, repeated verify failures, "should have
+        asked" notes), asks the provider config chosen for rule proposals for
+        candidate lessons, validates them like human-created lessons, drops
+        near-duplicates of existing or dismissed lessons and ones citing no real
+        task, and stores at most 5 as `status=proposed`, `source=distiller`.
+        Proposed lessons are never injected until accepted (PATCH the lesson to
+        `status=active`). Runs in the background; poll distill-runs.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "202":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LessonDistillRun" }
+        "400": { description: No usable provider config set for proposals }
+        "404": { description: Repo not found }
+        "409": { description: A run is already in progress for this repo }
+
+  /repos/{id}/lessons/distill-runs:
+    get:
+      summary: A repo's recent lesson distiller runs
+      description: Newest first, with cost.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/LessonDistillRun" } }
+        "400": { description: Invalid limit }
+        "404": { description: Repo not found }
+
+  /lessons/{id}/dismiss:
+    post:
+      summary: Dismiss a proposed distiller lesson
+      description: Deletes the proposal and remembers its text so it is not offered again.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Dismissed }
+        "404": { description: Lesson not found }
+        "409": { description: Lesson is not a proposed distiller lesson }
+
   /skills:
     get:
       summary: List skills
@@ -5693,6 +5856,7 @@ paths:
         verify_timeout_seconds (integer, 1-3600); see the Repo schema.
         It also accepts preview_command, preview_routes and preview_paths_glob (strings).
         It also accepts the pr_review_* policy fields (see the Repo schema).
+        It also accepts auto_merge_mode (off|when_green) and auto_merge_method (squash|merge|rebase).
       responses:
         "201":
           content:
@@ -5774,6 +5938,14 @@ paths:
                 preview_paths_glob:
                   type: string
                   description: Replaces the newline-separated UI path globs (empty = defaults). Omit to leave unchanged.
+                auto_merge_mode:
+                  type: string
+                  enum: [off, when_green]
+                  description: Auto-merge policy. Omit to leave unchanged.
+                auto_merge_method:
+                  type: string
+                  enum: [squash, merge, rebase]
+                  description: Auto-merge method. Omit to leave unchanged.
       responses:
         "200":
           content:
@@ -5969,6 +6141,63 @@ paths:
                 properties:
                   authed: { type: boolean }
                   note:   { type: string }
+
+  /automation-recipes:
+    get:
+      summary: List automation recipes
+      description: >
+        Bundled one-click presets (see docs/task-templates.md#automation-recipes)
+        with their install parameters and installed state.
+      responses:
+        "200":
+          description: Recipes
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AutomationRecipe" } }
+
+  /automation-recipes/{id}/install:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      summary: Install an automation recipe
+      description: >
+        Creates the recipe's template, schedule and/or intake endpoint + rule in
+        one transaction, tagged with the recipe id. An empty `target_label`
+        parks created tasks on the workflow's human-review label. A non-gate
+        label is rejected with code `auto_start_confirmation_required` unless
+        `confirm_auto_start` is true. For webhook recipes the response carries
+        the endpoint URL and HMAC secret (shown once) and a paste-ready sender
+        snippet.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AutomationRecipeInstallRequest" }
+      responses:
+        "201":
+          description: Installed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutomationRecipeInstallResult" }
+        "400": { description: "Validation error (or auto_start_confirmation_required)" }
+        "404": { description: Recipe not found }
+        "409": { description: Already installed, or the template name is taken }
+
+  /automation-recipes/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      summary: Remove an installed automation recipe
+      description: Deletes only the objects tagged with this recipe id. Tasks already created are kept.
+      responses:
+        "204": { description: Removed }
+        "404": { description: Recipe unknown or not installed }
 
   /intake-endpoints:
     get:

@@ -247,3 +247,10 @@ func (f *fakeSecondForge) ListOpenPRs(ctx context.Context, repoName string) ([]f
 func (f *fakeSecondForge) PostCommentReview(ctx context.Context, repoName string, number int, r forge.ReviewSubmission) (string, error) {
 	return "", nil
 }
+
+func (f *fakeSecondForge) PRChecks(ctx context.Context, repoName string, prNumber int) ([]forge.Check, error) {
+	return nil, nil
+}
+func (f *fakeSecondForge) MergePullRequest(ctx context.Context, repoName string, prNumber int, method forge.MergeMethod, expectedHeadSHA string) error {
+	return nil
+}

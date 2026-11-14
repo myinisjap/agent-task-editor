@@ -235,3 +235,10 @@ func TestEligible_ReviewSourcesNeverWriteBack(t *testing.T) {
 		}
 	}
 }
+
+func (f *fakeOtherForge) PRChecks(ctx context.Context, repoName string, prNumber int) ([]forge.Check, error) {
+	return nil, nil
+}
+func (f *fakeOtherForge) MergePullRequest(ctx context.Context, repoName string, prNumber int, method forge.MergeMethod, expectedHeadSHA string) error {
+	return nil
+}

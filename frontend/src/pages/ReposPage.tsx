@@ -82,6 +82,8 @@ type EditForm = {
   pr_review_skip_drafts: boolean
   pr_review_workflow_id: string
   pr_review_target_label: string
+  auto_merge_mode: 'off' | 'when_green'
+  auto_merge_method: 'squash' | 'merge' | 'rebase'
 }
 
 const BLANK_FORM: EditForm = {
@@ -111,6 +113,8 @@ const BLANK_FORM: EditForm = {
   pr_review_skip_drafts: true,
   pr_review_workflow_id: '',
   pr_review_target_label: '',
+  auto_merge_mode: 'off',
+  auto_merge_method: 'squash',
 }
 
 export default function ReposPage() {
@@ -213,6 +217,8 @@ export default function ReposPage() {
         preview_command: form.preview_command.trim() || undefined,
         preview_routes: form.preview_routes.trim() || undefined,
         preview_paths_glob: form.preview_paths_glob.trim() || undefined,
+        auto_merge_mode: form.auto_merge_mode,
+        auto_merge_method: form.auto_merge_method,
       })
       setRepos((r) => [...r, repo])
       setShowForm(false)
@@ -253,6 +259,8 @@ export default function ReposPage() {
       pr_review_skip_drafts: repo.pr_review_skip_drafts ?? true,
       pr_review_workflow_id: repo.pr_review_workflow_id ?? '',
       pr_review_target_label: repo.pr_review_target_label ?? '',
+      auto_merge_mode: repo.auto_merge_mode === 'when_green' ? 'when_green' : 'off',
+      auto_merge_method: repo.auto_merge_method === 'merge' || repo.auto_merge_method === 'rebase' ? repo.auto_merge_method : 'squash',
     })
     setEditError('')
     setEditDetectNote('')
@@ -312,6 +320,8 @@ export default function ReposPage() {
         pr_review_skip_drafts: editForm.pr_review_skip_drafts,
         pr_review_workflow_id: editForm.pr_review_workflow_id,
         pr_review_target_label: editForm.pr_review_target_label,
+        auto_merge_mode: editForm.auto_merge_mode,
+        auto_merge_method: editForm.auto_merge_method,
       })
       setRepos((r) => r.map((x) => (x.id === editingId ? updated : x)))
       if (editSkillsLoaded) {
@@ -506,6 +516,58 @@ export default function ReposPage() {
           </>
         )}
       </fieldset>
+    )
+  }
+
+  // Renders the "Auto-merge" section shared by the create and edit forms.
+  function renderAutoMergeSection(opts: {
+    form: EditForm
+    setter: React.Dispatch<React.SetStateAction<EditForm>>
+  }) {
+    const { form: f, setter } = opts
+    const wf = workflows.find((w) => w.id === f.workflow_id)
+    const autoGate = (wf?.labels ?? []).some((l) => l.autonomy?.mode === 'auto')
+    return (
+      <div className="flex flex-col gap-2 sm:col-span-2 border-t border-border pt-4">
+        <label className="text-xs font-medium text-fg-muted">Auto-merge</label>
+        <div className="flex gap-2 flex-wrap">
+          <select
+            value={f.auto_merge_mode}
+            onChange={(e) => setter((x) => ({ ...x, auto_merge_mode: e.target.value as EditForm['auto_merge_mode'] }))}
+            aria-label="Auto-merge mode"
+            className={inputCls}
+          >
+            <option value="off">Off (merge PRs yourself)</option>
+            <option value="when_green">Merge when green</option>
+          </select>
+          <select
+            value={f.auto_merge_method}
+            onChange={(e) => setter((x) => ({ ...x, auto_merge_method: e.target.value as EditForm['auto_merge_method'] }))}
+            aria-label="Auto-merge method"
+            disabled={f.auto_merge_mode === 'off'}
+            className={inputCls}
+          >
+            <option value="squash">Squash</option>
+            <option value="merge">Merge commit</option>
+            <option value="rebase">Rebase</option>
+          </select>
+        </div>
+        <span className="text-xs text-fg-subtle">
+          When on, ATE merges a task&apos;s PR itself once every check has passed, it has no conflicts or requested
+          changes, and the task is idle (not paused, not marked always-ask). Branch protection still applies; a
+          refusal shows up in Needs you.
+        </span>
+        {f.auto_merge_mode === 'when_green' && !f.verify_command.trim() && (
+          <span role="alert" className="text-xs text-amber-400">
+            Warning: this repo has no verify command, so nothing but CI vets the change before it merges.
+          </span>
+        )}
+        {f.auto_merge_mode === 'when_green' && autoGate && (
+          <span role="alert" className="text-xs text-amber-400">
+            Warning: a gate in this workflow is set to Auto, so a PR can open and merge with no human involved.
+          </span>
+        )}
+      </div>
     )
   }
 
@@ -905,6 +967,7 @@ export default function ReposPage() {
 
             {renderVerifySection({ command: form.verify_command, timeout: form.verify_timeout_seconds, setter: setForm })}
             {renderPreviewSection({ command: form.preview_command, routes: form.preview_routes, globs: form.preview_paths_glob, setter: setForm })}
+            {renderAutoMergeSection({ form, setter: setForm })}
           </div>
 
           {error && <p className="text-xs text-danger">{error}</p>}
@@ -1211,6 +1274,7 @@ export default function ReposPage() {
 
                     {renderVerifySection({ command: editForm.verify_command, timeout: editForm.verify_timeout_seconds, setter: setEditForm })}
                     {renderPreviewSection({ command: editForm.preview_command, routes: editForm.preview_routes, globs: editForm.preview_paths_glob, setter: setEditForm })}
+                    {renderAutoMergeSection({ form: editForm, setter: setEditForm })}
 
                     <div className="sm:col-span-2">
                       <p className="text-xs font-medium text-fg-muted mb-1">Skills</p>

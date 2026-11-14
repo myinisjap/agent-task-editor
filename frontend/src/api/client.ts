@@ -27,6 +27,10 @@ export type TaskDependencies = Schemas['TaskDependencies']
 export type TaskTemplate = Schemas['TaskTemplate']
 export type TaskSchedule = Schemas['TaskSchedule']
 export type IntakeRule = Schemas['IntakeRule']
+export type AutomationRecipe = Schemas['AutomationRecipe']
+export type AutomationRecipeParam = Schemas['AutomationRecipeParam']
+export type AutomationRecipeInstallRequest = Schemas['AutomationRecipeInstallRequest']
+export type AutomationRecipeInstallResult = Schemas['AutomationRecipeInstallResult']
 export type IntakeEndpoint = Schemas['IntakeEndpoint']
 export type IntakeEndpointCreated = Schemas['IntakeEndpointCreated']
 export type IntakeEndpointBody = Schemas['IntakeEndpointBody']
@@ -74,6 +78,7 @@ export type AutonomyEscape = Schemas['AutonomyEscape']
 export type AutonomySettings = Schemas['AutonomySettings']
 export type RuleProposal = Schemas['RuleProposal']
 export type RuleProposalRun = Schemas['RuleProposalRun']
+export type LessonDistillRun = Schemas['LessonDistillRun']
 // Named *Entry historically; the schema is TaskLabelHistory.
 export type TaskLabelHistoryEntry = Schemas['TaskLabelHistory']
 export type AgentLog = Schemas['AgentLog']
@@ -477,17 +482,20 @@ export const api = {
   repos: {
     list: () => listAllPages<Repo>('/repos'),
     get: (id: string) => request<Repo>(`/repos/${id}`),
-    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; pr_review_enabled?: boolean; pr_review_author_assocs?: string[]; pr_review_label?: string; pr_review_skip_drafts?: boolean; pr_review_workflow_id?: string | null; pr_review_target_label?: string; max_concurrent_runs?: number; runtime_languages?: RuntimeLanguagePin[]; verify_command?: string; verify_timeout_seconds?: number; preview_command?: string; preview_routes?: string; preview_paths_glob?: string }) =>
+    create: (body: { name?: string; path?: string; remote_url?: string; workflow_id?: string; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; pr_review_enabled?: boolean; pr_review_author_assocs?: string[]; pr_review_label?: string; pr_review_skip_drafts?: boolean; pr_review_workflow_id?: string | null; pr_review_target_label?: string; max_concurrent_runs?: number; runtime_languages?: RuntimeLanguagePin[]; verify_command?: string; verify_timeout_seconds?: number; preview_command?: string; preview_routes?: string; preview_paths_glob?: string; auto_merge_mode?: 'off' | 'when_green'; auto_merge_method?: 'squash' | 'merge' | 'rebase' }) =>
       request<Repo>('/repos', { method: 'POST', body: JSON.stringify(body) }),
     // max_concurrent_runs: omit the key to leave it unchanged, or pass null to
     // clear it back to "use the global default" — the backend distinguishes
     // an omitted field from an explicit null (see ReposHandler.Update).
-    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; pr_review_enabled?: boolean; pr_review_author_assocs?: string[]; pr_review_label?: string; pr_review_skip_drafts?: boolean; pr_review_workflow_id?: string | null; pr_review_target_label?: string; max_concurrent_runs?: number | null; runtime_languages?: RuntimeLanguagePin[]; verify_command?: string; verify_timeout_seconds?: number; preview_command?: string; preview_routes?: string; preview_paths_glob?: string }) =>
+    update: (id: string, body: { name?: string; path?: string; remote_url?: string | null; workflow_id?: string | null; issue_sync_enabled?: boolean; issue_sync_label?: string; issue_writeback_enabled?: boolean; issue_writeback_label?: string; pr_review_auto_transition_enabled?: boolean; issue_sync_update_policy?: 'gate' | 'always' | 'never'; issue_sync_gone_action?: 'flag' | 'archive' | 'move'; issue_sync_gone_label?: string; issue_comment_sync_enabled?: boolean; pr_review_enabled?: boolean; pr_review_author_assocs?: string[]; pr_review_label?: string; pr_review_skip_drafts?: boolean; pr_review_workflow_id?: string | null; pr_review_target_label?: string; max_concurrent_runs?: number | null; runtime_languages?: RuntimeLanguagePin[]; verify_command?: string; verify_timeout_seconds?: number; preview_command?: string; preview_routes?: string; preview_paths_glob?: string; auto_merge_mode?: 'off' | 'when_green'; auto_merge_method?: 'squash' | 'merge' | 'rebase' }) =>
 
       request<Repo>(`/repos/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/repos/${id}`, { method: 'DELETE' }),
     lessons: (id: string, status?: LessonStatus) =>
       request<RepoLesson[]>(`/repos/${id}/lessons${status ? `?status=${status}` : ''}`),
+    distillLessons: (id: string) => request<LessonDistillRun>(`/repos/${id}/lessons/distill`, { method: 'POST' }),
+    lessonDistillRuns: (id: string, limit = 1) =>
+      request<LessonDistillRun[]>(`/repos/${id}/lessons/distill-runs?limit=${limit}`),
     skills: (id: string) => request<Skill[]>(`/repos/${id}/skills`),
     setSkills: (id: string, skill_ids: string[]) =>
       request<Skill[]>(`/repos/${id}/skills`, { method: 'PUT', body: JSON.stringify({ skill_ids }) }),
@@ -516,6 +524,7 @@ export const api = {
     createGlobal: (body: RepoLessonCreate) => request<RepoLesson>('/lessons', { method: 'POST', body: JSON.stringify(body) }),
     update: (id: string, body: RepoLessonUpdate) => request<RepoLesson>(`/lessons/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/lessons/${id}`, { method: 'DELETE' }),
+    dismiss: (id: string) => request<void>(`/lessons/${id}/dismiss`, { method: 'POST' }),
   },
   templates: {
     list: () => request<TaskTemplate[]>('/templates'),
@@ -547,6 +556,15 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ repo_id: repoId, rule, limit }),
       }),
+  },
+  automationRecipes: {
+    list: () => request<AutomationRecipe[]>('/automation-recipes'),
+    install: (id: string, body: AutomationRecipeInstallRequest) =>
+      request<AutomationRecipeInstallResult>(`/automation-recipes/${encodeURIComponent(id)}/install`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    remove: (id: string) => request<void>(`/automation-recipes/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },
   intakeEndpoints: {
     list: () => request<IntakeEndpoint[]>('/intake-endpoints'),

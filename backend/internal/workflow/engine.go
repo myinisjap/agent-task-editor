@@ -76,6 +76,12 @@ const ActorPRFeedbackSync = "pr-feedback-sync"
 // ActorPRFeedbackSync. Must match config.go and the SQL literals.
 const ActorPRReviewSync = "pr-review-sync"
 
+// ActorAutoMerge is the reserved actor_id on the label-history row recorded
+// when ATE merges a task's PR itself (auto-merge policy). Like
+// ActorPRFeedbackSync it is not a human decision and is excluded from gate
+// metrics. Must match config.go, the SQL queries and the frontend.
+const ActorAutoMerge = "auto-merge"
+
 // TransitionTrigger identifies who initiated a label change.
 type TransitionTrigger string
 
@@ -151,6 +157,11 @@ type Engine struct {
 	// (forge.IsReviewSource) into a terminal label enqueue a "pr_review_post"
 	// side effect that posts the agent's review on the PR.
 	OnPRReviewPost func(ctx context.Context, task gen.Task) error
+
+	// OnAutoMerge runs the "auto_merge" side effect enqueued by
+	// EnqueueAutoMerge: merge the task's PR through the forge. Wrap errors in
+	// Permanent when a retry cannot help (e.g. branch protection refused).
+	OnAutoMerge func(ctx context.Context, task gen.Task) error
 
 	// SideEffectBackoff returns the delay before the next attempt after the given
 	// number of failed attempts (1-based). Nil uses DefaultSideEffectBackoff.

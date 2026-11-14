@@ -8,8 +8,8 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
-func TestMigration088_SideEffectKindAndRepoDefaults(t *testing.T) {
-	db, err := Open(t.TempDir() + "/m088.db")
+func TestMigration091_SideEffectKindAndRepoDefaults(t *testing.T) {
+	db, err := Open(t.TempDir() + "/m091.db")
 	if err != nil {
 		t.Fatal(err)
 	}

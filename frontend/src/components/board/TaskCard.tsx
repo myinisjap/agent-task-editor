@@ -13,6 +13,7 @@ import { Badge, Icon } from '../ui'
 import GitStateBadge from './GitStateBadge'
 import { prReviewBadge } from '../../lib/prReview'
 import SideEffectBadge from '../shared/SideEffectBadge'
+import AutoMergeBadge from '../shared/AutoMergeBadge'
 import { PRIORITY_LEVELS, priorityLabel, toPriority, type PriorityValue } from '../../lib/priority'
 import { useNeedsMeStore } from '../../stores/needsMe'
 import { needsMeReasonLabel } from '../../lib/needsMe'
@@ -544,6 +545,7 @@ function TaskCard({
             </Badge>
           )}
           <SideEffectBadge effects={task.side_effects} />
+          <AutoMergeBadge autoMerge={task.auto_merge} />
           {costWarned && (
             <Badge size="xs"
               tone="warning"

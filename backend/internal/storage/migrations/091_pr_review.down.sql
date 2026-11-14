@@ -2,7 +2,7 @@ DELETE FROM task_side_effects WHERE kind = 'pr_review_post';
 CREATE TABLE task_side_effects_old (
     id            TEXT PRIMARY KEY,
     task_id       TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    kind          TEXT NOT NULL CHECK (kind IN ('terminal', 'create_pr', 'leave_not_ready')),
+    kind          TEXT NOT NULL CHECK (kind IN ('terminal', 'create_pr', 'leave_not_ready', 'auto_merge')),
     status        TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'failed')),
     attempts      INTEGER NOT NULL DEFAULT 0,
     next_at       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
