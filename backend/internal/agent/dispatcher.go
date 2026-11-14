@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"io"
 	"log/slog"
 	"os"
@@ -46,6 +47,9 @@ type Dispatcher struct {
 	// subtask branching model). Used here to branch a child off its parent's
 	// branch and to inject merge-conflict context into a parent's run.
 	Subtasks *SubtaskCoordinator
+	// RepoMap supplies the generated REPO MAP prompt section (optional - nil
+	// disables it). See repomap.Service.PromptSection and docs/repo-map.md.
+	RepoMap RepoMapSource
 	// Publisher broadcasts WS events (optional — no-op when nil). Used by the
 	// cost-budget guard (see checkCostBudget) to publish task.needs_human
 	// when a sweep-dispatch is skipped for budget-exhaustion, mirroring how
@@ -962,8 +966,20 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 	}
 
 	attachmentRels, attachmentAbsPaths := d.resolveAttachments(t, workDir, log)
+	var prReview *PRReviewInput
+	if forge.IsReviewSource(t.Source) {
+		in, perr := loadPRReviewInput(ctx, d.q, t.ID)
+		if perr != nil {
+			log.Warn("dispatcher: load PR review input", "err", perr)
+		} else {
+			prReview = in
+		}
+	}
 	var setup func(context.Context) (WorktreeResult, error)
-	if !haveWorktree {
+	if prReview != nil {
+		// Always (re)provision: a re-review must reset to the new PR head.
+		setup = d.prWorktreeSetup(t, repo, prReview, agentCfg.Provider, matched.ID, log)
+	} else if !haveWorktree {
 		setup = d.worktreeSetup(t, repo, attachmentAbsPaths, agentCfg.Provider, matched.ID, log)
 	} else {
 		d.materializeSkills(ctx, workDir, agentCfg.Provider, matched.ID, repo.ID, log)
@@ -1060,7 +1076,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		SelectLessons: d.lessonSelector(t, log),
 		Input: RunInput{
 			RunID:                runID,
-			Task:                 Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Branch: t.Branch, ParentID: derefStr(t.ParentTaskID), FileScope: fileScope, RepoPath: repo.Path, Attachments: attachmentRels},
+			Task:                 Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Branch: t.Branch, ParentID: derefStr(t.ParentTaskID), FileScope: fileScope, RepoPath: repo.Path, Attachments: attachmentRels, Source: t.Source},
 			AgentConfig:          agentCfg,
 			RepoPath:             workDir,
 			RepoRemoteURL:        derefStr(repo.RemoteUrl),
@@ -1081,6 +1097,8 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			CostSpentUSD:         costSpentUSD,
 			CostWarnRatio:        d.resolveCostWarnRatio(ctx),
 			Runtime:              runtimeSpec,
+			RepoMap:              d.repoMapSection(ctx, t, matched.ID),
+			PRReview:             prReview,
 		},
 	})
 	if !enqueued {
@@ -1728,4 +1746,30 @@ func (d *Dispatcher) steerFollowUp(ctx context.Context, job Job, req SteerReques
 		slog.Warn("dispatcher: record steering note", "component", "dispatcher", "task_id", taskID, "err", rerr)
 	}
 	return err
+}
+
+// prWorktreeSetup is worktreeSetup for review-only PR tasks: it checks out the
+// PR head (fetched via refs/pull/N/head) on a local, never-pushed branch and
+// records it as the task's branch so the diff views work unchanged.
+func (d *Dispatcher) prWorktreeSetup(t gen.Task, repo gen.Repo, in *PRReviewInput, provider, agentID string, log *slog.Logger) func(context.Context) (WorktreeResult, error) {
+	return func(ctx context.Context) (WorktreeResult, error) {
+		src, err := d.q.GetTaskPRSource(ctx, t.ID)
+		if err != nil {
+			return WorktreeResult{}, fmt.Errorf("get pr source: %w", err)
+		}
+		lock := RepoGitLock(repo.Path)
+		lock.Lock()
+		defer lock.Unlock()
+		wtPath, branch, base, head, perr := provisionPRWorktree(ctx, repo.Path, t.ID, int(src.PrNumber), src.BaseRef)
+		if perr != nil {
+			return WorktreeResult{}, fmt.Errorf("provision PR worktree: %w", perr)
+		}
+		if err := d.q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{
+			Branch: branch, WorktreePath: wtPath, BaseRef: base, ID: t.ID,
+		}); err != nil {
+			return WorktreeResult{}, fmt.Errorf("persist worktree: %w", err)
+		}
+		d.materializeSkills(ctx, wtPath, provider, agentID, repo.ID, log)
+		return WorktreeResult{Path: wtPath, Branch: branch, BaseRef: base, HeadSHA: head}, nil
+	}
 }

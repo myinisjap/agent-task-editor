@@ -19,6 +19,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/escape"
+	"github.com/myinisjap/agent-task-editor/backend/internal/intakecheck"
 	"github.com/myinisjap/agent-task-editor/backend/internal/reviewbrief"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -105,6 +106,10 @@ type TasksHandler struct {
 	db    *sql.DB
 	rec   *escape.Recorder
 	brief *reviewbrief.Cache
+
+	// intake backs possible_duplicates and the intake verdict (SetIntake); nil
+	// leaves both empty.
+	intake *intakecheck.Service
 }
 
 func NewTasksHandler(q *gen.Queries, engine *workflow.Engine, uploadDir string, canceller RunCanceller, dispatcher ReplyDispatcher, blockReasons BlockReasonResolver) *TasksHandler {
@@ -172,12 +177,18 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		blockReasons := h.blockReasonMap(r.Context(), children)
 		runStatuses := h.activeRunStatusMap(r.Context(), ids)
 		effects := h.sideEffectMap(r.Context(), ids)
+		autoMerges := h.autoMergeMap(r.Context(), ids)
 		pendings := h.sourcePendingMap(r.Context(), ids)
+		verdicts := h.intakeVerdicts(r.Context(), ids)
+		prSources := h.prReviewMap(r.Context(), ids)
 		fanouts := h.fanoutMap(r.Context(), ids)
 		resp := toTaskResponses(children)
 		for i := range resp {
+			resp[i] = h.withVerdict(resp[i], verdicts)
 			resp[i] = applySideEffects(resp[i], effects)
+			resp[i] = applyAutoMerge(resp[i], autoMerges)
 			resp[i] = applySourcePending(resp[i], pendings)
+			resp[i] = applyPRReview(resp[i], prSources)
 			resp[i] = applyFanout(resp[i], fanouts)
 			resp[i] = applyActiveRunStatus(applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons), runStatuses)
 		}
@@ -212,12 +223,18 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	blockReasons := h.blockReasonMap(r.Context(), tasks)
 	runStatuses := h.activeRunStatusMap(r.Context(), ids)
 	effects := h.sideEffectMap(r.Context(), ids)
+	autoMerges := h.autoMergeMap(r.Context(), ids)
 	fanouts := h.fanoutMap(r.Context(), ids)
 	pendings := h.sourcePendingMap(r.Context(), ids)
+	verdicts := h.intakeVerdicts(r.Context(), ids)
+	prSources := h.prReviewMap(r.Context(), ids)
 	resp := toTaskResponses(tasks)
 	for i := range resp {
+		resp[i] = h.withVerdict(resp[i], verdicts)
 		resp[i] = applySideEffects(resp[i], effects)
+		resp[i] = applyAutoMerge(resp[i], autoMerges)
 		resp[i] = applySourcePending(resp[i], pendings)
+		resp[i] = applyPRReview(resp[i], prSources)
 		resp[i] = applyFanout(resp[i], fanouts)
 		resp[i] = applyActiveRunStatus(applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons), runStatuses)
 	}
@@ -317,7 +334,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			Err(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		JSON(w, http.StatusCreated, toTaskResponse(task))
+		JSON(w, http.StatusCreated, h.withIntake(r.Context(), toTaskResponse(task), task))
 		return
 	}
 
@@ -375,7 +392,7 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	JSON(w, http.StatusCreated, toTaskResponse(task))
+	JSON(w, http.StatusCreated, h.withIntake(r.Context(), toTaskResponse(task), task))
 }
 
 // resolveDefaultWorkflowID picks the workflow a task lands on when the
@@ -447,7 +464,10 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	resp = applyBlockReason(resp, h.blockReasonMap(r.Context(), []gen.Task{task}))
 	resp = applyActiveRunStatus(resp, h.activeRunStatusMap(r.Context(), ids))
 	resp = applySideEffects(resp, h.sideEffectMap(r.Context(), ids))
+	resp = h.withIntake(r.Context(), resp, task)
+	resp = applyAutoMerge(resp, h.autoMergeMap(r.Context(), ids))
 	resp = applySourcePending(resp, h.sourcePendingMap(r.Context(), ids))
+	resp = applyPRReview(resp, h.prReviewMap(r.Context(), ids))
 	if cost, cerr := h.q.SumTaskCost(r.Context(), task.ID); cerr == nil {
 		resp.CumulativeCostUsd = cost
 	}
@@ -968,6 +988,7 @@ func (h *TasksHandler) respondTask(w http.ResponseWriter, r *http.Request, taskI
 	ids := []string{taskID}
 	resp := applySideEffects(toTaskResponse(task), h.sideEffectMap(r.Context(), ids))
 	resp = applySourcePending(resp, h.sourcePendingMap(r.Context(), ids))
+	resp = applyPRReview(resp, h.prReviewMap(r.Context(), ids))
 	JSON(w, http.StatusOK, resp)
 }
 

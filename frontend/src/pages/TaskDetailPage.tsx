@@ -29,6 +29,7 @@ import ShouldHaveAskedDialog from '../components/shared/ShouldHaveAskedDialog'
 import { lastGateExitByPolicy } from '../lib/shouldHaveAsked'
 import LabelHistoryList from '../components/task-detail/LabelHistoryList'
 import SourceUpdateNotice from '../components/task-detail/SourceUpdateNotice'
+import IntakeCard from '../components/task-detail/IntakeCard'
 import SourceCommentsList from '../components/task-detail/SourceCommentsList'
 import RunLogPane from '../components/task-detail/RunLogPane'
 import DiffReviewPane from '../components/task-detail/DiffReviewPane'
@@ -40,6 +41,7 @@ import HelpButton from '../components/shared/HelpButton'
 import { TaskDetailHelp } from '../components/shared/pageHelp'
 import { useCommandPaletteStore } from '../stores/commandPalette'
 import { buildTaskCommands, type TaskCommandHandlers } from '../lib/taskCommands'
+import { isReviewSource } from '../lib/prReview'
 
 type Tab = 'overview' | 'logs' | 'diff'
 
@@ -714,6 +716,8 @@ export default function TaskDetailPage() {
 
             <SourceUpdateNotice task={task} onChanged={setTask} />
 
+            <IntakeCard task={task} workflow={workflow} onChanged={setTask} />
+
             <HumanDecisionsList decisions={humanDecisions} onRemember={canRemember ? setRememberText : undefined} />
 
             <DetailsDisclosure>
@@ -857,7 +861,8 @@ export default function TaskDetailPage() {
         {activeTab === 'diff' && (
           <DiffReviewPane
             taskId={task?.id}
-            prUrl={task?.pr_url}
+            prUrl={isReviewSource(task?.source) ? task?.pr_review?.pr_url : task?.pr_url}
+            reviewOnly={isReviewSource(task?.source)}
             onCreatePR={handleCreatePR}
             creatingPR={creatingPR}
             diffComments={diffComments}

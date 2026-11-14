@@ -523,6 +523,32 @@ running is left where it is, the same as a manual move would be refused.
 Nothing moves if the task is already on a terminal label or the workflow has
 none.
 
+## Review any PR (review-only)
+
+An opt-in, per-repo path that gets an agent review posted on pull requests ATE
+did not write. Off by default (`pr_review_enabled`); set on the repo edit form.
+
+- **Filters.** Author association allowlist (default OWNER, MEMBER,
+  COLLABORATOR; empty or unknown is rejected), optional forge label, skip
+  drafts (default on). Bot authors and `ate-` head branches are always skipped.
+- **Trigger.** GitHub `pull_request` webhook (subscribe to *Pull requests*)
+  plus a polling sweep fallback. Gitea is polling only; draft comes from the
+  `draft` field or a `WIP:`/`Draft:` title prefix, association from
+  collaborator/owner checks.
+- **Dedupe and re-review.** One task per PR (`source=github_pr`/`gitea_pr`,
+  `source_ref=owner/repo#N`). A new head commit moves the finished task back to
+  `pr-review` and posts a new review listing resolved earlier findings.
+- **Workflow.** Seeded "PR review": `pr-review` (agent) -> `done`, plus
+  `needs-attention`. Create an agent config for label `pr-review` (not
+  `review`, which is the Default workflow's human gate).
+- **Comment-only, no push.** Reviews are COMMENT-type only. Review tasks never
+  push or create PRs, and ghsync and write-back skip them.
+- **Idempotent posting.** Via the outbox (`pr_review_post`) with a hidden
+  `<!-- ate-pr-review:ID -->` marker checked before posting. Inline anchor
+  failure falls back to a body-only review, then a single comment.
+- **Untrusted content.** Title, body and diff are fenced (ADR 0014). The agent
+  reports through the `submit_pr_review` MCP tool; otherwise run notes are used.
+
 ## PR review / GitHub Actions feedback ingestion
 
 This is the reverse direction of the loop above: instead of writing task
@@ -639,6 +665,23 @@ The feedback is deduped on `"<head sha>|<base ref>"`, so:
 
 The move is recorded in label history with trigger `human`, actor `pr-feedback-sync` and note `GitHub PR review feedback ingested`. Gate backtests, autonomy rule proposals and escape detection do not count it as a human rejection.
 
+### Auto-merge when green (opt-in)
+
+By default the pipeline ends at "PR open" and you merge yourself. A repo can opt in to letting ATE merge the PR:
+
+| Repo field | Meaning |
+|---|---|
+| `auto_merge_mode` | `off` (default) or `when_green` |
+| `auto_merge_method` | `squash` (default), `merge` or `rebase` |
+
+Auto-merge is per repo (there is no per-label switch). It is re-evaluated whenever the task's PR state is refreshed (GitHub webhook, or the polling fallback), never in its own loop. A PR is merged only when **all** of these hold: the PR was opened for the task's branch and is open; it is not a draft and the forge reports it mergeable (no conflicts); every check on the head commit has passed (none pending or failed); no reviewer's latest decisive review is "changes requested"; the task has no live agent run and is not paused, archived or marked `always_ask`. A repo that reports no checks at all is treated as having no CI after a ~3 minute grace period.
+
+The merge goes through the side-effect outbox and is pinned to the evaluated head SHA, so a push between the check and the merge fails safely and is simply re-evaluated. If the forge refuses (branch protection, a required review) the failure is not retried: it shows in **Needs you** with the forge's message and Retry/Dismiss. CI failures and conflicts keep flowing through the PR-feedback path above. After the merge, the normal merged-PR sync moves the task to its terminal label and cleans up. The merge is recorded in label history with trigger `human` and reserved actor `auto-merge` (also reserved in `API_TOKENS`); like `pr-feedback-sync` it is not counted as a human decision.
+
+Task Detail and the board card show "Auto-merge when green" with the blocking reason while the PR is not yet eligible.
+
+> **Warning:** with no `verify_command`, or with a gate upstream on Auto, a PR can be opened and merged with no human involved. The repo edit form warns about both.
+
 By default, newly-ingested PR feedback is surfaced in the prompt but the task
 stays wherever a human put it — someone still has to click Reject (or
 whatever the workflow's manual transition is) to send it back to an agent.
@@ -673,13 +716,38 @@ curl -X PATCH http://localhost:8080/api/v1/repos/<id> \
   -d '{"pr_review_auto_transition_enabled": true}'
 ```
 
-### v2 (not yet implemented)
+### Replying on review threads
 
-Resolve/reply write-back — after the agent addresses an ingested GitHub
-review comment (e.g. via the `resolve_comment` MCP tool), replying on the
-originating GitHub review thread — is intentionally out of scope for v1. The
-`external_id`/`source` columns on `task_review_comments` are structured to
-make that a natural follow-up without a schema change.
+Opt-in per repo, next to the other write-back settings (repo edit form, or
+`review_reply_enabled` / `review_reply_resolve_enabled` on `PATCH /repos/{id}`;
+both default off):
+
+```sh
+curl -X PATCH http://localhost:8080/api/v1/repos/<id> \
+  -H 'Content-Type: application/json' \
+  -d '{"review_reply_enabled": true, "review_reply_resolve_enabled": false}'
+```
+
+When an agent resolves an ingested review comment (the `resolve_comment` MCP
+tool), ATE replies on the originating review thread with the agent's
+resolution note, prefixed `**Agent (agent-task-editor):**`, capped at 1000
+characters, plus the short SHA of the pushed head. Details:
+
+- Only comments with a forge `source`/`external_id` that an **agent** resolved
+  get a reply; comments made in ATE's diff viewer and human-resolved comments
+  are untouched.
+- The reply is posted through the side-effect outbox (`review_reply`) only once
+  the task's branch head is on the PR; until then the effect retries with
+  backoff (a failed effect shows on the task and can be retried), so a reply
+  never points at code that is not on the PR.
+- Each comment gets exactly one reply in its lifetime
+  (`task_review_comments.reply_posted_at`), so retries never double-post.
+- With `review_reply_resolve_enabled`, the thread is also marked resolved
+  (GitHub, via GraphQL). This is best-effort: a failure is logged, not retried.
+- Gitea has no reply-in-thread API, so the reply is a PR conversation comment
+  referencing the review comment id, and threads are never resolved.
+- ATE's replies are recognised (recorded reply id, or a hidden marker in the
+  body) and never re-ingested as review feedback.
 
 ## GitHub webhook (optional)
 
@@ -800,3 +868,48 @@ agent-triggerable label. A rule's `apply_target_label` is honored only if it is
 the gate label: webhook events have no author association, so the auto-start
 check always fails closed. Rules may still set priority, cost budget,
 template (type) and workflow.
+
+## Task intake assistant
+
+Whatever the source (UI, API, board MCP, issue import, intake webhook or schedule), new tasks get two layers of triage before an agent spends a planning run on them. Neither blocks creation, moves a task, edits it or archives it.
+
+**1. Possible duplicates (deterministic, no model call).** `possible_duplicates` on `GET /tasks/{id}` and on the create response lists open, non-archived tasks in the same repo with a similar title/description. The measure is the Jaccard index of normalised token sets (lower-cased, filler words dropped, light plural/`-ing`/`-ed` stemming; a title alone or title plus the first 400 characters of the description): a match needs a score of at least 0.5 and at least 2 shared tokens. It is computed on read and never stored. The New Task modal shows "Possibly the same as: ..." links via the debounced `GET /tasks/similar?repo_id=&q=`; the board MCP `create_task` result lists them too.
+
+**2. Assistant check (optional, off by default).** Choose a provider config under Settings > Intake rules > Task intake assistant (`PUT /settings/intake-assistant`) and enable it. Run it from the Intake card on a parked task ("Check task") or `POST /tasks/{id}/intake-check`; with "auto check" on, tasks that sit on a parked (`agent_ignore`) label such as `not_ready` are checked automatically within about a minute of creation. The model reads the task (fenced as untrusted data, ADR 0014) plus the repo's active lessons in a scratch directory with shell commands denied, like rule proposals, and returns a verdict (`ready` or `needs_detail`), up to 3 questions, a suggested type, a suggested workflow (only when several exist) and which duplicate candidates really are duplicates. The latest result and its cost are stored per task (`GET /tasks/{id}/intake-check`). The Intake card offers an inline answer box per question (appends to the description), one-click Apply for the suggested type and "Archive as duplicate"; the board card shows a "needs detail" chip, which is not part of the needs-you count.
+
+### Recipe webhooks
+
+The `ci-red-main` and `error-tracker-alert` [automation recipes](task-templates.md#automation-recipes)
+create an intake endpoint, a `match_source: webhook` rule scoped to the repo (it matches the
+rendered title and attaches the recipe's template), and the template itself. Titles,
+descriptions and dedupe keys use the safe `{{path}}` renderer described above.
+
+**CI red on the default branch** — payload fields `repository`, `branch`, `workflow`, `sha`,
+`actor`, `run_url`; dedupe key `ci-red:{{repository}}:{{branch}}`, so while main stays red every
+further failure is appended as an untrusted comment on the open task. Paste-ready GitHub Actions
+step (the install result fills in the URL; add the endpoint secret as the repo secret
+`ATE_INTAKE_SECRET`):
+
+```yaml
+- name: Report CI failure to Agent Task Editor
+  if: failure() && github.ref == 'refs/heads/main'
+  env:
+    ATE_INTAKE_URL: https://ate.example.com/api/v1/intake/<endpoint-id>
+    ATE_INTAKE_SECRET: ${{ secrets.ATE_INTAKE_SECRET }}
+  run: |
+    body=$(jq -nc \
+      --arg repository "$GITHUB_REPOSITORY" --arg branch "$GITHUB_REF_NAME" \
+      --arg workflow "$GITHUB_WORKFLOW" --arg sha "$GITHUB_SHA" --arg actor "$GITHUB_ACTOR" \
+      --arg run_url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+      '{repository:$repository,branch:$branch,workflow:$workflow,sha:$sha,actor:$actor,run_url:$run_url}')
+    sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$ATE_INTAKE_SECRET" -hex | sed 's/^.* //')
+    curl -fsS -X POST "$ATE_INTAKE_URL" -H "Content-Type: application/json" \
+      -H "X-ATE-Signature-256: sha256=$sig" --data-binary "$body"
+```
+
+**Error-tracker alert** — expects a Sentry-style body (`data.event.title`, `.culprit`, `.web_url`,
+`.issue_id`, `.exception.values.0…`); dedupe key `sentry:{{data.event.issue_id}}`. Sentry signs
+with its own header, so route deliveries through a small relay that re-signs the raw body with
+the endpoint secret as `X-ATE-Signature-256` (the install result shows the snippet).
+
+Recipe endpoints leave `target_label` empty, so tasks land parked on the human-review label.

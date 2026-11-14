@@ -12,7 +12,7 @@ import (
 const createTaskTemplate = `-- name: CreateTaskTemplate :one
 INSERT INTO task_templates (id, name, title, description, type)
 VALUES (?, ?, ?, ?, ?)
-RETURNING id, name, title, description, type, created_at, updated_at
+RETURNING id, name, title, description, type, created_at, updated_at, recipe_id
 `
 
 type CreateTaskTemplateParams struct {
@@ -40,6 +40,7 @@ func (q *Queries) CreateTaskTemplate(ctx context.Context, arg CreateTaskTemplate
 		&i.Type,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RecipeID,
 	)
 	return i, err
 }
@@ -54,7 +55,7 @@ func (q *Queries) DeleteTaskTemplate(ctx context.Context, id string) error {
 }
 
 const getTaskTemplate = `-- name: GetTaskTemplate :one
-SELECT id, name, title, description, type, created_at, updated_at FROM task_templates WHERE id = ?
+SELECT id, name, title, description, type, created_at, updated_at, recipe_id FROM task_templates WHERE id = ?
 `
 
 func (q *Queries) GetTaskTemplate(ctx context.Context, id string) (TaskTemplate, error) {
@@ -68,12 +69,13 @@ func (q *Queries) GetTaskTemplate(ctx context.Context, id string) (TaskTemplate,
 		&i.Type,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RecipeID,
 	)
 	return i, err
 }
 
 const listTaskTemplates = `-- name: ListTaskTemplates :many
-SELECT id, name, title, description, type, created_at, updated_at FROM task_templates ORDER BY name
+SELECT id, name, title, description, type, created_at, updated_at, recipe_id FROM task_templates ORDER BY name
 `
 
 func (q *Queries) ListTaskTemplates(ctx context.Context) ([]TaskTemplate, error) {
@@ -93,6 +95,7 @@ func (q *Queries) ListTaskTemplates(ctx context.Context) ([]TaskTemplate, error)
 			&i.Type,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RecipeID,
 		); err != nil {
 			return nil, err
 		}
@@ -111,7 +114,7 @@ const updateTaskTemplate = `-- name: UpdateTaskTemplate :one
 UPDATE task_templates
 SET name = ?, title = ?, description = ?, type = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, name, title, description, type, created_at, updated_at
+RETURNING id, name, title, description, type, created_at, updated_at, recipe_id
 `
 
 type UpdateTaskTemplateParams struct {
@@ -139,6 +142,7 @@ func (q *Queries) UpdateTaskTemplate(ctx context.Context, arg UpdateTaskTemplate
 		&i.Type,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RecipeID,
 	)
 	return i, err
 }

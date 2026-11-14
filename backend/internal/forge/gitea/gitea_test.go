@@ -1,7 +1,9 @@
 package gitea
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -645,5 +647,84 @@ func TestNew_BaseURLOverride(t *testing.T) {
 	}
 	if g.baseURL != "http://internal-gitea:3000" {
 		t.Errorf("baseURL = %q, want trailing slash trimmed", g.baseURL)
+	}
+}
+
+func TestReplyToReviewComment_FallsBackToPRConversationComment(t *testing.T) {
+	g, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/repos/owner/repo/issues/7/comments") {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if !strings.Contains(body["body"], "#99") || !strings.Contains(body["body"], "fixed it") {
+			t.Errorf("body = %q", body["body"])
+		}
+		writeJSON(t, w, 201, map[string]any{"id": 1234})
+	})
+	id, err := g.ReplyToReviewComment(t.Context(), "owner/repo", 7, "99", "fixed it")
+	if err != nil || id != "1234" {
+		t.Fatalf("got %q, %v", id, err)
+	}
+	if err := g.ResolveReviewThread(t.Context(), "owner/repo", 7, "99"); !errors.Is(err, forge.ErrThreadResolveUnsupported) {
+		t.Errorf("ResolveReviewThread err = %v, want ErrThreadResolveUnsupported", err)
+	}
+}
+
+func TestPRChecks_LatestPerContext(t *testing.T) {
+	g, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/pulls/4"):
+			writeJSON(t, w, 200, map[string]any{"number": 4, "head": map[string]any{"sha": "abc"}})
+		case strings.HasSuffix(r.URL.Path, "/statuses"):
+			// newest first: ci/a is currently green (older failure ignored), ci/b still running.
+			writeJSON(t, w, 200, []map[string]any{
+				{"context": "ci/a", "status": "success"},
+				{"context": "ci/b", "status": "pending"},
+				{"context": "ci/a", "status": "failure"},
+			})
+		default:
+			t.Errorf("unexpected %s", r.URL.Path)
+		}
+	})
+	checks, err := g.PRChecks(context.Background(), "o/r", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(checks) != 2 || checks[0].Bucket != "pass" || checks[1].Bucket != "pending" {
+		t.Fatalf("checks = %+v", checks)
+	}
+}
+
+func TestMergePullRequest(t *testing.T) {
+	cases := []struct {
+		status int
+		want   error
+	}{{200, nil}, {409, forge.ErrHeadMoved}, {405, forge.ErrMergeRefused}}
+	for _, tc := range cases {
+		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
+			var gotBody map[string]string
+			g, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/api/v1/repos/o/r/pulls/4/merge" {
+					t.Errorf("request %s %s", r.Method, r.URL.Path)
+				}
+				_ = json.NewDecoder(r.Body).Decode(&gotBody)
+				if tc.status == 200 {
+					w.WriteHeader(200)
+					return
+				}
+				writeJSON(t, w, tc.status, map[string]string{"message": "nope"})
+			})
+			err := g.MergePullRequest(context.Background(), "o/r", 4, forge.MergeRebase, "sha1")
+			if tc.want == nil && err != nil {
+				t.Fatal(err)
+			}
+			if tc.want != nil && !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+			if gotBody["Do"] != "rebase" || gotBody["head_commit_id"] != "sha1" {
+				t.Errorf("body = %v", gotBody)
+			}
+		})
 	}
 }

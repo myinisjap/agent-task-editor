@@ -176,3 +176,18 @@ func (d *Dispatcher) lessonSelector(t gen.Task, log *slog.Logger) func(ctx conte
 		return out
 	}
 }
+
+// RepoMapSource renders the REPO MAP prompt section for a run (implemented by
+// repomap.Service). It returns "" when nothing should be injected.
+type RepoMapSource interface {
+	PromptSection(ctx context.Context, repoID, label, agentConfigID string) string
+}
+
+// repoMapSection returns the REPO MAP section for task t run by agent config
+// agentConfigID, or "" (no source, repo not opted in, label not flagged...).
+func (d *Dispatcher) repoMapSection(ctx context.Context, t gen.Task, agentConfigID string) string {
+	if d.RepoMap == nil {
+		return ""
+	}
+	return d.RepoMap.PromptSection(ctx, t.RepoID, t.Label, agentConfigID)
+}

@@ -19,6 +19,7 @@ Agent Task Editor is a self-hosted Kanban board where AI agents automatically wo
 | [skills.md](skills.md) | Skills library: Agent Skills storage, API and per-provider materialization |
 
 | [lessons.md](lessons.md) | Repo lessons: curated cross-task knowledge injected into agent prompts |
+| [repo-map.md](repo-map.md) | Repo map: a generated, refreshed codebase guide shown in the UI and offered to planning agents |
 | [api.md](api.md) | REST API reference |
 | [websocket.md](websocket.md) | WebSocket protocol and event types |
 | [backup.md](backup.md) | Backup, restore, and continuous replication |

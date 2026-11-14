@@ -14,6 +14,8 @@ import ConfirmDialog from '../components/shared/ConfirmDialog'
 import HelpModal from '../components/shared/HelpModal'
 import { IntakeRulesHelp } from '../components/shared/pageHelp'
 import IntakeEndpointsSection from '../components/settings/IntakeEndpointsSection'
+import IntakeAssistantSection from '../components/settings/IntakeAssistantSection'
+import RecipesSection from '../components/settings/RecipesSection'
 
 export const inputCls =
   'bg-surface-sunken border border-border rounded-lg px-3 py-2 text-sm text-fg placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-accent'
@@ -535,6 +537,7 @@ export default function IntakeRulesPage() {
       help={{ onClick: () => setShowHelp(true), title: 'About intake rules' }}
       actions={<Button variant="primary" onClick={() => setShowForm((v) => !v)}>{showForm ? 'Cancel' : '+ Add Rule'}</Button>}
     >
+      <RecipesSection />
 
       {showHelp && (
         <HelpModal title="About Intake Routing Rules" onClose={() => setShowHelp(false)}>
@@ -609,6 +612,7 @@ export default function IntakeRulesPage() {
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-fg flex items-center gap-2">
                     {rule.name}
+                    {rule.recipe_id && <span className="text-[10px] text-accent-fg border border-border rounded px-1">from recipe</span>}
                     {!rule.enabled && (
                       <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-surface-sunken text-fg-subtle border border-border">
                         disabled
@@ -679,6 +683,7 @@ export default function IntakeRulesPage() {
       )}
 
       <IntakeEndpointsSection />
+      <IntakeAssistantSection />
 
       {ruleToDelete && (
         <ConfirmDialog

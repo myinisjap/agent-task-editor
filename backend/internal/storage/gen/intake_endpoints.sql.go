@@ -13,7 +13,7 @@ import (
 const createIntakeEndpoint = `-- name: CreateIntakeEndpoint :one
 INSERT INTO intake_endpoints (id, name, repo_id, workflow_id, target_label, secret, enabled, title_template, description_template, dedupe_key_template)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, name, repo_id, workflow_id, target_label, secret, enabled, title_template, description_template, dedupe_key_template, last_received_at, created_at, updated_at
+RETURNING id, name, repo_id, workflow_id, target_label, secret, enabled, title_template, description_template, dedupe_key_template, last_received_at, created_at, updated_at, recipe_id
 `
 
 type CreateIntakeEndpointParams struct {
@@ -57,6 +57,7 @@ func (q *Queries) CreateIntakeEndpoint(ctx context.Context, arg CreateIntakeEndp
 		&i.LastReceivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RecipeID,
 	)
 	return i, err
 }
@@ -71,7 +72,7 @@ func (q *Queries) DeleteIntakeEndpoint(ctx context.Context, id string) error {
 }
 
 const getIntakeEndpoint = `-- name: GetIntakeEndpoint :one
-SELECT id, name, repo_id, workflow_id, target_label, secret, enabled, title_template, description_template, dedupe_key_template, last_received_at, created_at, updated_at FROM intake_endpoints WHERE id = ?
+SELECT id, name, repo_id, workflow_id, target_label, secret, enabled, title_template, description_template, dedupe_key_template, last_received_at, created_at, updated_at, recipe_id FROM intake_endpoints WHERE id = ?
 `
 
 func (q *Queries) GetIntakeEndpoint(ctx context.Context, id string) (IntakeEndpoint, error) {
@@ -91,6 +92,7 @@ func (q *Queries) GetIntakeEndpoint(ctx context.Context, id string) (IntakeEndpo
 		&i.LastReceivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RecipeID,
 	)
 	return i, err
 }
@@ -120,7 +122,7 @@ func (q *Queries) GetOpenIntakeTaskIDByRefPrefix(ctx context.Context, prefix *st
 
 const listIntakeEndpoints = `-- name: ListIntakeEndpoints :many
 
-SELECT id, name, repo_id, workflow_id, target_label, secret, enabled, title_template, description_template, dedupe_key_template, last_received_at, created_at, updated_at FROM intake_endpoints ORDER BY created_at DESC, id ASC
+SELECT id, name, repo_id, workflow_id, target_label, secret, enabled, title_template, description_template, dedupe_key_template, last_received_at, created_at, updated_at, recipe_id FROM intake_endpoints ORDER BY created_at DESC, id ASC
 `
 
 // Intake endpoints: signed inbound webhooks (see internal/intakehook).
@@ -150,6 +152,7 @@ func (q *Queries) ListIntakeEndpoints(ctx context.Context) ([]IntakeEndpoint, er
 			&i.LastReceivedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RecipeID,
 		); err != nil {
 			return nil, err
 		}
@@ -184,7 +187,7 @@ SET name = ?, repo_id = ?, workflow_id = ?, target_label = ?, enabled = ?,
     title_template = ?, description_template = ?, dedupe_key_template = ?,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, name, repo_id, workflow_id, target_label, secret, enabled, title_template, description_template, dedupe_key_template, last_received_at, created_at, updated_at
+RETURNING id, name, repo_id, workflow_id, target_label, secret, enabled, title_template, description_template, dedupe_key_template, last_received_at, created_at, updated_at, recipe_id
 `
 
 type UpdateIntakeEndpointParams struct {
@@ -226,6 +229,7 @@ func (q *Queries) UpdateIntakeEndpoint(ctx context.Context, arg UpdateIntakeEndp
 		&i.LastReceivedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RecipeID,
 	)
 	return i, err
 }

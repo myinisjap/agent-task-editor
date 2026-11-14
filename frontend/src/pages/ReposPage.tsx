@@ -3,6 +3,7 @@ import { Button, PageFrame, controlClasses } from '../components/ui'
 import { api, type Repo, type Skill, type RuntimeLanguagePin, type Workflow } from '../api/client'
 import SkillPicker from '../components/skills/SkillPicker'
 import LessonsPanel from '../components/lessons/LessonsPanel'
+import RepoMapPanel from '../components/repomap/RepoMapPanel'
 import ConfirmDialog from '../components/shared/ConfirmDialog'
 import HelpModal from '../components/shared/HelpModal'
 import { ReposHelp } from '../components/shared/pageHelp'
@@ -47,6 +48,9 @@ function validateRuntimeRows(rows: RuntimeRow[]): string | null {
   return null
 }
 
+export const PR_ASSOCS = ['OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'NONE'] as const
+const DEFAULT_PR_ASSOCS = ['OWNER', 'MEMBER', 'COLLABORATOR']
+
 type EditForm = {
   name: string
   path: string
@@ -57,6 +61,8 @@ type EditForm = {
   issue_writeback_enabled: boolean
   issue_writeback_label: string
   pr_review_auto_transition_enabled: boolean
+  review_reply_enabled: boolean
+  review_reply_resolve_enabled: boolean
   issue_sync_update_policy: IssueSyncUpdatePolicy
   issue_sync_gone_action: IssueSyncGoneAction
   issue_sync_gone_label: string
@@ -72,6 +78,15 @@ type EditForm = {
   preview_command: string
   preview_routes: string
   preview_paths_glob: string
+  // Review-only PR path (opt-in).
+  pr_review_enabled: boolean
+  pr_review_author_assocs: string[]
+  pr_review_label: string
+  pr_review_skip_drafts: boolean
+  pr_review_workflow_id: string
+  pr_review_target_label: string
+  auto_merge_mode: 'off' | 'when_green'
+  auto_merge_method: 'squash' | 'merge' | 'rebase'
 }
 
 const BLANK_FORM: EditForm = {
@@ -84,6 +99,8 @@ const BLANK_FORM: EditForm = {
   issue_writeback_enabled: false,
   issue_writeback_label: '',
   pr_review_auto_transition_enabled: false,
+  review_reply_enabled: false,
+  review_reply_resolve_enabled: false,
   issue_sync_update_policy: 'gate',
   issue_sync_gone_action: 'flag',
   issue_sync_gone_label: '',
@@ -95,6 +112,14 @@ const BLANK_FORM: EditForm = {
   preview_command: '',
   preview_routes: '',
   preview_paths_glob: '',
+  pr_review_enabled: false,
+  pr_review_author_assocs: [...DEFAULT_PR_ASSOCS],
+  pr_review_label: '',
+  pr_review_skip_drafts: true,
+  pr_review_workflow_id: '',
+  pr_review_target_label: '',
+  auto_merge_mode: 'off',
+  auto_merge_method: 'squash',
 }
 
 export default function ReposPage() {
@@ -107,6 +132,7 @@ export default function ReposPage() {
   const [error, setError] = useState('')
   const [showHelp, setShowHelp] = useState(false)
   const [repoToRemove, setRepoToRemove] = useState<Repo | null>(null)
+  const [mapOpenId, setMapOpenId] = useState<string | null>(null)
 
   // Inline edit state
   const [lessonsOpenId, setLessonsOpenId] = useState<string | null>(null)
@@ -186,6 +212,8 @@ export default function ReposPage() {
         issue_writeback_enabled: form.issue_writeback_enabled,
         issue_writeback_label: form.issue_writeback_label.trim(),
         pr_review_auto_transition_enabled: form.pr_review_auto_transition_enabled,
+        review_reply_enabled: form.review_reply_enabled,
+        review_reply_resolve_enabled: form.review_reply_resolve_enabled,
         issue_sync_update_policy: form.issue_sync_update_policy,
         issue_sync_gone_action: form.issue_sync_gone_action,
         issue_sync_gone_label: form.issue_sync_gone_label.trim(),
@@ -197,6 +225,8 @@ export default function ReposPage() {
         preview_command: form.preview_command.trim() || undefined,
         preview_routes: form.preview_routes.trim() || undefined,
         preview_paths_glob: form.preview_paths_glob.trim() || undefined,
+        auto_merge_mode: form.auto_merge_mode,
+        auto_merge_method: form.auto_merge_method,
       })
       setRepos((r) => [...r, repo])
       setShowForm(false)
@@ -220,6 +250,8 @@ export default function ReposPage() {
       issue_writeback_enabled: !!repo.issue_writeback_enabled,
       issue_writeback_label: repo.issue_writeback_label ?? '',
       pr_review_auto_transition_enabled: !!repo.pr_review_auto_transition_enabled,
+      review_reply_enabled: !!repo.review_reply_enabled,
+      review_reply_resolve_enabled: !!repo.review_reply_resolve_enabled,
       issue_sync_update_policy: repo.issue_sync_update_policy ?? 'gate',
       issue_sync_gone_action: repo.issue_sync_gone_action ?? 'flag',
       issue_sync_gone_label: repo.issue_sync_gone_label ?? '',
@@ -231,6 +263,14 @@ export default function ReposPage() {
       preview_command: repo.preview_command ?? '',
       preview_routes: repo.preview_routes ?? '',
       preview_paths_glob: repo.preview_paths_glob ?? '',
+      pr_review_enabled: !!repo.pr_review_enabled,
+      pr_review_author_assocs: repo.pr_review_author_assocs?.length ? [...repo.pr_review_author_assocs] : [...DEFAULT_PR_ASSOCS],
+      pr_review_label: repo.pr_review_label ?? '',
+      pr_review_skip_drafts: repo.pr_review_skip_drafts ?? true,
+      pr_review_workflow_id: repo.pr_review_workflow_id ?? '',
+      pr_review_target_label: repo.pr_review_target_label ?? '',
+      auto_merge_mode: repo.auto_merge_mode === 'when_green' ? 'when_green' : 'off',
+      auto_merge_method: repo.auto_merge_method === 'merge' || repo.auto_merge_method === 'rebase' ? repo.auto_merge_method : 'squash',
     })
     setEditError('')
     setEditDetectNote('')
@@ -273,6 +313,8 @@ export default function ReposPage() {
         issue_writeback_enabled: editForm.issue_writeback_enabled,
         issue_writeback_label: editForm.issue_writeback_label.trim(),
         pr_review_auto_transition_enabled: editForm.pr_review_auto_transition_enabled,
+        review_reply_enabled: editForm.review_reply_enabled,
+        review_reply_resolve_enabled: editForm.review_reply_resolve_enabled,
         issue_sync_update_policy: editForm.issue_sync_update_policy,
         issue_sync_gone_action: editForm.issue_sync_gone_action,
         issue_sync_gone_label: editForm.issue_sync_gone_label.trim(),
@@ -284,6 +326,14 @@ export default function ReposPage() {
         preview_command: editForm.preview_command.trim(),
         preview_routes: editForm.preview_routes,
         preview_paths_glob: editForm.preview_paths_glob,
+        pr_review_enabled: editForm.pr_review_enabled,
+        pr_review_author_assocs: editForm.pr_review_author_assocs,
+        pr_review_label: editForm.pr_review_label.trim(),
+        pr_review_skip_drafts: editForm.pr_review_skip_drafts,
+        pr_review_workflow_id: editForm.pr_review_workflow_id,
+        pr_review_target_label: editForm.pr_review_target_label,
+        auto_merge_mode: editForm.auto_merge_mode,
+        auto_merge_method: editForm.auto_merge_method,
       })
       setRepos((r) => r.map((x) => (x.id === editingId ? updated : x)))
       if (editSkillsLoaded) {
@@ -366,6 +416,172 @@ export default function ReposPage() {
   }
 
   const inputCls = controlClasses
+
+  // Review-only PR path: opt-in plus the filters, workflow and target label.
+  function renderPRReviewSection() {
+    const f = editForm
+    const wf = workflows.find((w) => w.id === f.pr_review_workflow_id)
+    const targets = (wf?.labels ?? []).filter((l) => !l.is_terminal && !l.agent_ignore)
+    const toggleAssoc = (a: string) =>
+      setEditForm((cur) => ({
+        ...cur,
+        pr_review_author_assocs: cur.pr_review_author_assocs.includes(a)
+          ? cur.pr_review_author_assocs.filter((x) => x !== a)
+          : [...cur.pr_review_author_assocs, a],
+      }))
+    return (
+      <fieldset className="sm:col-span-2 flex flex-col gap-2 rounded border border-line p-3" data-testid="pr-review-section">
+        <legend className="px-1 text-xs font-semibold text-fg-muted">PR review (review-only)</legend>
+        <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
+          <input
+            type="checkbox"
+            checked={f.pr_review_enabled}
+            onChange={(e) => setEditForm((cur) => ({ ...cur, pr_review_enabled: e.target.checked }))}
+            className="accent-indigo-500"
+          />
+          Review pull requests opened by others
+          <span className="text-fg-subtle">
+            (an agent posts a comment-only review on the PR; it never approves, requests changes, or pushes; requires remote URL)
+          </span>
+        </label>
+        {f.pr_review_enabled && (
+          <>
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-fg-muted">Author association allowlist</span>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {PR_ASSOCS.map((a) => (
+                  <label key={a} className="flex items-center gap-1.5 text-xs text-fg-muted cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={f.pr_review_author_assocs.includes(a)}
+                      onChange={() => toggleAssoc(a)}
+                      className="accent-indigo-500"
+                    />
+                    {a}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-fg-muted" htmlFor="pr-review-label">
+                Label filter <span className="text-fg-subtle">(blank = review every eligible PR)</span>
+              </label>
+              <input
+                id="pr-review-label"
+                value={f.pr_review_label}
+                onChange={(e) => setEditForm((cur) => ({ ...cur, pr_review_label: e.target.value }))}
+                placeholder="agent-review"
+                className={inputCls}
+              />
+            </div>
+            <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
+              <input
+                type="checkbox"
+                checked={f.pr_review_skip_drafts}
+                onChange={(e) => setEditForm((cur) => ({ ...cur, pr_review_skip_drafts: e.target.checked }))}
+                className="accent-indigo-500"
+              />
+              Skip draft PRs
+            </label>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-fg-muted" htmlFor="pr-review-workflow">
+                Review workflow
+              </label>
+              <select
+                id="pr-review-workflow"
+                value={f.pr_review_workflow_id}
+                onChange={(e) => setEditForm((cur) => ({ ...cur, pr_review_workflow_id: e.target.value, pr_review_target_label: '' }))}
+                className={inputCls}
+              >
+                <option value="">Default ("PR review")</option>
+                {workflows.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {wf && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-fg-muted" htmlFor="pr-review-target">
+                  Starting label
+                </label>
+                <select
+                  id="pr-review-target"
+                  value={f.pr_review_target_label}
+                  onChange={(e) => setEditForm((cur) => ({ ...cur, pr_review_target_label: e.target.value }))}
+                  className={inputCls}
+                >
+                  <option value="">First agent label</option>
+                  {targets.map((l) => (
+                    <option key={l.name} value={l.name}>
+                      {l.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <span className="text-xs text-fg-subtle">
+              Review tasks only run once an enabled agent config lists the starting label (create an agent for
+              label <code className="font-mono">{f.pr_review_target_label || 'pr-review'}</code>).
+            </span>
+          </>
+        )}
+      </fieldset>
+    )
+  }
+
+  // Renders the "Auto-merge" section shared by the create and edit forms.
+  function renderAutoMergeSection(opts: {
+    form: EditForm
+    setter: React.Dispatch<React.SetStateAction<EditForm>>
+  }) {
+    const { form: f, setter } = opts
+    const wf = workflows.find((w) => w.id === f.workflow_id)
+    const autoGate = (wf?.labels ?? []).some((l) => l.autonomy?.mode === 'auto')
+    return (
+      <div className="flex flex-col gap-2 sm:col-span-2 border-t border-border pt-4">
+        <label className="text-xs font-medium text-fg-muted">Auto-merge</label>
+        <div className="flex gap-2 flex-wrap">
+          <select
+            value={f.auto_merge_mode}
+            onChange={(e) => setter((x) => ({ ...x, auto_merge_mode: e.target.value as EditForm['auto_merge_mode'] }))}
+            aria-label="Auto-merge mode"
+            className={inputCls}
+          >
+            <option value="off">Off (merge PRs yourself)</option>
+            <option value="when_green">Merge when green</option>
+          </select>
+          <select
+            value={f.auto_merge_method}
+            onChange={(e) => setter((x) => ({ ...x, auto_merge_method: e.target.value as EditForm['auto_merge_method'] }))}
+            aria-label="Auto-merge method"
+            disabled={f.auto_merge_mode === 'off'}
+            className={inputCls}
+          >
+            <option value="squash">Squash</option>
+            <option value="merge">Merge commit</option>
+            <option value="rebase">Rebase</option>
+          </select>
+        </div>
+        <span className="text-xs text-fg-subtle">
+          When on, ATE merges a task&apos;s PR itself once every check has passed, it has no conflicts or requested
+          changes, and the task is idle (not paused, not marked always-ask). Branch protection still applies; a
+          refusal shows up in Needs you.
+        </span>
+        {f.auto_merge_mode === 'when_green' && !f.verify_command.trim() && (
+          <span role="alert" className="text-xs text-amber-400">
+            Warning: this repo has no verify command, so nothing but CI vets the change before it merges.
+          </span>
+        )}
+        {f.auto_merge_mode === 'when_green' && autoGate && (
+          <span role="alert" className="text-xs text-amber-400">
+            Warning: a gate in this workflow is set to Auto, so a PR can open and merge with no human involved.
+          </span>
+        )}
+      </div>
+    )
+  }
 
   // Renders the "Verification" section shared by the create and edit forms.
   function renderVerifySection(opts: {
@@ -742,6 +958,29 @@ export default function ReposPage() {
               </span>
             </label>
 
+            <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.review_reply_enabled}
+                onChange={(e) => setForm((f) => ({ ...f, review_reply_enabled: e.target.checked }))}
+                className="accent-indigo-500"
+              />
+              Reply on PR review threads when the agent resolves a comment
+              <span className="text-fg-subtle">(posted after the branch is pushed, with the resolution note and short SHA)</span>
+            </label>
+
+            <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.review_reply_resolve_enabled}
+                disabled={!form.review_reply_enabled}
+                onChange={(e) => setForm((f) => ({ ...f, review_reply_resolve_enabled: e.target.checked }))}
+                className="accent-indigo-500"
+              />
+              Also resolve the thread
+              <span className="text-fg-subtle">(GitHub only; Gitea just gets the reply)</span>
+            </label>
+
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-fg-muted">
                 Max concurrent agent runs <span className="text-fg-subtle">(blank = use the global default)</span>
@@ -763,6 +1002,7 @@ export default function ReposPage() {
 
             {renderVerifySection({ command: form.verify_command, timeout: form.verify_timeout_seconds, setter: setForm })}
             {renderPreviewSection({ command: form.preview_command, routes: form.preview_routes, globs: form.preview_paths_glob, setter: setForm })}
+            {renderAutoMergeSection({ form, setter: setForm })}
           </div>
 
           {error && <p className="text-xs text-danger">{error}</p>}
@@ -838,6 +1078,13 @@ export default function ReposPage() {
                     {editingId === repo.id ? 'Cancel' : 'Edit'}
                   </button>
                   <button
+                    onClick={() => setMapOpenId(mapOpenId === repo.id ? null : repo.id)}
+                    aria-expanded={mapOpenId === repo.id}
+                    className="text-xs text-fg-subtle hover:text-accent-fg transition-colors shrink-0"
+                  >
+                    {mapOpenId === repo.id ? 'Hide map' : 'Map'}
+                  </button>
+                  <button
                     onClick={() => setLessonsOpenId(lessonsOpenId === repo.id ? null : repo.id)}
                     aria-expanded={lessonsOpenId === repo.id}
                     className="text-xs text-fg-subtle hover:text-accent-fg transition-colors shrink-0"
@@ -852,6 +1099,12 @@ export default function ReposPage() {
                   </button>
                 </div>
               </div>
+
+              {mapOpenId === repo.id && (
+                <div className="border-t border-border px-4 py-4 sm:px-5">
+                  <RepoMapPanel repoId={repo.id} />
+                </div>
+              )}
 
               {lessonsOpenId === repo.id && (
                 <div className="border-t border-border px-4 py-4 sm:px-5">
@@ -1043,6 +1296,29 @@ export default function ReposPage() {
                       </span>
                     </label>
 
+                    <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editForm.review_reply_enabled}
+                        onChange={(e) => setEditForm((f) => ({ ...f, review_reply_enabled: e.target.checked }))}
+                        className="accent-indigo-500"
+                      />
+                      Reply on PR review threads when the agent resolves a comment
+                      <span className="text-fg-subtle">(posted after the branch is pushed, with the resolution note and short SHA)</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editForm.review_reply_resolve_enabled}
+                        disabled={!editForm.review_reply_enabled}
+                        onChange={(e) => setEditForm((f) => ({ ...f, review_reply_resolve_enabled: e.target.checked }))}
+                        className="accent-indigo-500"
+                      />
+                      Also resolve the thread
+                      <span className="text-fg-subtle">(GitHub only; Gitea just gets the reply)</span>
+                    </label>
+
                     <div className="flex flex-col gap-1.5">
                       <label className="text-xs font-medium text-fg-muted">
                         Max concurrent agent runs <span className="text-fg-subtle">(blank = use the global default)</span>
@@ -1065,8 +1341,11 @@ export default function ReposPage() {
                       onDetect: () => detectRuntime(repo.id, setEditForm, setEditDetecting, setEditDetectNote),
                     })}
 
+                    {renderPRReviewSection()}
+
                     {renderVerifySection({ command: editForm.verify_command, timeout: editForm.verify_timeout_seconds, setter: setEditForm })}
                     {renderPreviewSection({ command: editForm.preview_command, routes: editForm.preview_routes, globs: editForm.preview_paths_glob, setter: setEditForm })}
+                    {renderAutoMergeSection({ form: editForm, setter: setEditForm })}
 
                     <div className="sm:col-span-2">
                       <p className="text-xs font-medium text-fg-muted mb-1">Skills</p>

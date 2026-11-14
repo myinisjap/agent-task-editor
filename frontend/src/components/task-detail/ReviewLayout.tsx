@@ -13,6 +13,7 @@ import RunLogPane from './RunLogPane'
 import VerificationPanel from './VerificationPanel'
 import { rejectDisabled, rejectPlaceholder } from './TaskActions'
 import { Badge, Button, Field, controlClasses, Icon } from '../ui'
+import { isReviewSource } from '../../lib/prReview'
 
 type MainTab = 'plan' | 'diff' | 'logs' | 'details'
 
@@ -270,7 +271,8 @@ export default function ReviewLayout({
         {tab === 'diff' && (
           <DiffReviewPane
             taskId={task.id}
-            prUrl={task.pr_url}
+            prUrl={isReviewSource(task.source) ? task.pr_review?.pr_url : task.pr_url}
+            reviewOnly={isReviewSource(task.source)}
             onCreatePR={onCreatePR}
             creatingPR={creatingPR}
             diffComments={diffComments}

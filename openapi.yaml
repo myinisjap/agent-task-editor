@@ -353,6 +353,24 @@ components:
         output_tokens: { type: integer }
         started_at: { type: string, format: date-time }
         finished_at: { type: string, format: date-time, nullable: true }
+    LessonDistillRun:
+      type: object
+      required: [id, repo_id, trigger, actor, status, provider_config_id, evidence_count, proposal_count, error, cost_usd, input_tokens, output_tokens, started_at, finished_at]
+      properties:
+        id: { type: string }
+        repo_id: { type: string }
+        trigger: { type: string, enum: [schedule, manual] }
+        actor: { type: string }
+        status: { type: string, enum: [running, succeeded, failed, skipped] }
+        provider_config_id: { type: string, nullable: true }
+        evidence_count: { type: integer }
+        proposal_count: { type: integer, description: Proposed lessons stored by this run. }
+        error: { type: string, description: Why the run failed or was skipped. }
+        cost_usd: { type: number }
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time, nullable: true }
     ShouldHaveAskedRequest:
       type: object
       properties:
@@ -577,6 +595,40 @@ components:
         updated_at:
           type: string
       required: [id, repo_id, provider_config_id, title, provider_session_id, worktree_path, created_at, updated_at]
+    PossibleDuplicate:
+      type: object
+      properties:
+        id:    { type: string }
+        title: { type: string }
+        label: { type: string }
+        score: { type: number }
+      required: [id, title, label, score]
+    IntakeAssistantSettings:
+      type: object
+      properties:
+        enabled:            { type: boolean }
+        auto_check:         { type: boolean, description: Also check tasks created on a parked (agent_ignore) label }
+        provider_config_id: { type: string, nullable: true }
+      required: [enabled, auto_check, provider_config_id]
+    IntakeCheck:
+      type: object
+      properties:
+        task_id:               { type: string }
+        status:                { type: string, enum: [running, done, failed] }
+        trigger:               { type: string, enum: [manual, auto] }
+        verdict:               { type: string, enum: ["", ready, needs_detail] }
+        questions:             { type: array, items: { type: string }, maxItems: 3 }
+        suggested_type:        { type: string }
+        suggested_workflow_id: { type: string }
+        duplicate_ids:         { type: array, items: { type: string } }
+        error:                 { type: string }
+        provider_config_id:    { type: string, nullable: true }
+        cost_usd:              { type: number }
+        input_tokens:          { type: integer }
+        output_tokens:         { type: integer }
+        started_at:            { type: string, format: date-time }
+        finished_at:           { type: string, format: date-time, nullable: true }
+      required: [task_id, status, trigger, verdict, questions, suggested_type, suggested_workflow_id, duplicate_ids, error, cost_usd, input_tokens, output_tokens, started_at]
     Task:
       type: object
       properties:
@@ -648,7 +700,9 @@ components:
           description: >
             Where the task was imported from ("github" for the GitHub Issues
             importer, "gitea" for the Gitea Issues importer against a
-            self-hosted instance, "webhook" for an intake webhook endpoint).
+            self-hosted instance, "webhook" for an intake webhook endpoint,
+            "github_pr"/"gitea_pr" for a review-only PR task, whose source_ref
+            is owner/repo#N).
             Empty for manually created tasks.
         source_ref:
           type: string
@@ -734,6 +788,22 @@ components:
           description: >
             A subtask's declared file globs (repo-relative); empty when unscoped.
             Used for the sibling overlap guard and a post-run out-of-scope warning.
+        pr_review:
+          type: object
+          nullable: true
+          description: >
+            Source PR state for a review-only PR task (source github_pr or
+            gitea_pr); null for every other task. Such tasks have no Create PR
+            action: they never push or open pull requests.
+          properties:
+            pr_url:        { type: string }
+            pr_number:     { type: integer }
+            pr_state:      { type: string, enum: [open, closed, merged] }
+            head_sha:      { type: string, description: "Current head commit of the PR as last seen" }
+            reviewed_sha:  { type: string, description: "Head commit covered by the last posted review; empty until one is posted" }
+            review_posted: { type: boolean, description: "A review has been posted on the PR" }
+            last_posted_at: { type: string, format: date-time, nullable: true }
+            stale:         { type: boolean, description: "head_sha differs from reviewed_sha (new commits since the review, or none posted yet)" }
         integration_status:
           type: string
           enum: ["", pending, done]
@@ -820,6 +890,31 @@ components:
             that are waiting, being retried after a failure, or failed for
             good. Populated on GET /tasks and GET /tasks/{id}; always an array,
             empty when nothing is outstanding or on mutation responses.
+        possible_duplicates:
+          type: array
+          items: { $ref: '#/components/schemas/PossibleDuplicate' }
+          description: >
+            Open, non-archived tasks in the same repo with a similar
+            title/description. Deterministic, computed on read (never stored);
+            populated on GET /tasks/{id} and task create, empty elsewhere.
+            Creation is never blocked by it.
+        intake_verdict:
+          type: string
+          enum: ["", ready, needs_detail]
+          description: >
+            Latest finished intake assistant verdict, empty when none. Advisory;
+            not counted in needs-you.
+        auto_merge:
+          nullable: true
+          type: object
+          description: >
+            Latest auto-merge evaluation of the task's open PR when the repo's
+            auto_merge_mode is when_green. null when it does not apply.
+          properties:
+            state: { type: string, enum: [waiting, merging], description: "waiting = blocked (see reason/message); merging = merge queued" }
+            reason: { type: string, description: "Blocking code, e.g. checks_pending, checks_failed, conflict, changes_requested, draft, always_ask, paused, active_run, no_checks, merge_refused; empty when merging" }
+            message: { type: string, description: Human-readable explanation of reason }
+          required: [state, reason, message]
         source_pending_update:
           nullable: true
           allOf:
@@ -860,11 +955,16 @@ components:
       properties:
         kind:
           type: string
-          enum: [terminal, create_pr, leave_not_ready]
+          enum: [terminal, create_pr, leave_not_ready, auto_merge, pr_review_post, review_reply]
           description: >
-            terminal = push the branch and tear down the worktree (or merge a
+            auto_merge = merge the task's PR through the forge (repo auto-merge
+            policy; a forge refusal fails it at once, no retries); terminal = push the branch and tear down the worktree (or merge a
             subtask back); create_pr = push and open a pull request;
-            leave_not_ready = apply the in-progress signal to the source issue.
+            leave_not_ready = apply the in-progress signal to the source issue;
+            pr_review_post = post the agent's review on the source pull request
+            (review-only PR tasks; idempotent via a hidden marker in the body).
+            review_reply = reply on the forge review thread of an ingested
+            comment the agent resolved.
         status:
           type: string
           enum: [pending, running, failed]
@@ -1003,7 +1103,80 @@ components:
         type:        { type: string, enum: [feature, bug, chore, spike] }
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
+        recipe_id:     { type: string, description: "Automation recipe id this object was created by; empty = not from a recipe." }
       required: [id, name, title, description, type, created_at, updated_at]
+
+    RepoMapConfig:
+      type: object
+      description: Per-repo repo map opt-in and refresh policy (off by default).
+      properties:
+        enabled: { type: boolean }
+        provider_config_id: { type: [string, "null"] }
+        refresh_interval_hours: { type: integer, description: "Scheduled refresh cadence in hours (default 168); 0 = manual only" }
+        min_commits_behind: { type: integer, description: "A scheduled refresh needs the default branch to be more than this many commits ahead (or the top-level layout to have changed); default 20" }
+      required: [enabled, provider_config_id, refresh_interval_hours, min_commits_behind]
+
+    RepoMapConfigUpdate:
+      type: object
+      description: Partial update; omitted fields keep their value.
+      properties:
+        enabled: { type: boolean }
+        provider_config_id: { type: string, description: "Empty string clears it" }
+        refresh_interval_hours: { type: integer, minimum: 0, maximum: 8760 }
+        min_commits_behind: { type: integer, minimum: 0, maximum: 100000 }
+
+    RepoMapPage:
+      type: object
+      properties:
+        slug: { type: string, enum: [overview, layout, build-test-run, key-flows, conventions] }
+        title: { type: string }
+        body: { type: string, description: Markdown, at most 5000 characters }
+        commit_sha: { type: string, description: Commit the page was generated from }
+      required: [slug, title, body, commit_sha]
+
+    RepoMapRun:
+      type: object
+      properties:
+        id: { type: string }
+        repo_id: { type: string }
+        trigger: { type: string, enum: [schedule, manual] }
+        actor: { type: string }
+        status: { type: string, enum: [running, succeeded, failed, skipped] }
+        commit_sha: { type: string }
+        provider_config_id: { type: [string, "null"] }
+        page_count: { type: integer }
+        char_count: { type: integer }
+        error: { type: string }
+        cost_usd: { type: number }
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+      required: [id, repo_id, trigger, actor, status, commit_sha, provider_config_id, page_count, char_count, error, cost_usd, input_tokens, output_tokens, started_at, finished_at]
+
+    RepoMap:
+      type: object
+      description: A repo's current map (latest successful run) plus staleness.
+      properties:
+        config: { $ref: "#/components/schemas/RepoMapConfig" }
+        pages: { type: array, items: { $ref: "#/components/schemas/RepoMapPage" } }
+        commit_sha: { type: string, description: "Commit the map was generated from; empty when there is no map" }
+        generated_at: { type: [string, "null"], format: date-time }
+        head_sha: { type: string, description: "Current tip of the default branch" }
+        commits_behind: { type: [integer, "null"], description: "Commits the default branch has moved since commit_sha; null when unknown or no map" }
+        layout_changed: { type: boolean, description: "The top-level files/directories differ from commit_sha" }
+        stale: { type: boolean, description: "The scheduled-refresh rule (more than min_commits_behind commits, or layout changed) holds right now" }
+        running: { type: boolean }
+        last_run: { oneOf: [{ $ref: "#/components/schemas/RepoMapRun" }, { type: "null" }] }
+      required: [config, pages, commit_sha, generated_at, head_sha, commits_behind, layout_changed, stale, running, last_run]
+
+    RepoMapSettings:
+      type: object
+      description: Global repo map injection settings.
+      properties:
+        inject_labels: { type: array, items: { type: string }, description: "Workflow labels whose agent runs get the REPO MAP prompt section (default [plan])" }
+        excluded_agent_ids: { type: array, items: { type: string }, description: "Agent configs that opted out of the section" }
+      required: [inject_labels, excluded_agent_ids]
 
     RepoLesson:
       type: object
@@ -1078,6 +1251,7 @@ components:
         last_run_at:   { type: string, format: date-time, nullable: true }
         created_at:    { type: string, format: date-time }
         updated_at:    { type: string, format: date-time }
+        recipe_id:     { type: string, description: "Automation recipe id this object was created by; empty = not from a recipe." }
       required: [id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at]
 
     IntakeRule:
@@ -1113,9 +1287,78 @@ components:
         apply_workflow_id:   { type: string, nullable: true, description: "Overrides the repo's default workflow for this task. Null = use the repo's own workflow." }
         apply_max_cost_usd:  { type: number, format: double, nullable: true, description: "Null = leave default (no per-task override)." }
         stop_processing:     { type: boolean, description: "Reserved; first-match-wins is the only evaluation mode in v1." }
+        recipe_id:           { type: string, description: "Automation recipe id this rule was created by; empty = not from a recipe." }
         created_at:          { type: string, format: date-time }
         updated_at:          { type: string, format: date-time }
       required: [id, name, enabled, sort_order, match_source, match_labels, match_title_pattern, match_body_pattern, match_author_assoc, apply_target_label, stop_processing, created_at, updated_at]
+
+    AutomationRecipeParam:
+      type: object
+      properties:
+        key:      { type: string }
+        label:    { type: string }
+        kind:     { type: string, enum: [repo, workflow, label, cron, string] }
+        required: { type: boolean }
+        default:  { type: string }
+        help:     { type: string }
+      required: [key, label, kind, required, default, help]
+
+    AutomationRecipe:
+      type: object
+      properties:
+        id:          { type: string }
+        version:     { type: integer }
+        name:        { type: string }
+        description: { type: string }
+        kind:        { type: string, enum: [webhook, schedule] }
+        default_cron: { type: string }
+        params:      { type: array, items: { $ref: "#/components/schemas/AutomationRecipeParam" } }
+        template:
+          type: object
+          properties:
+            name:        { type: string }
+            title:       { type: string }
+            description: { type: string }
+            type:        { type: string }
+          required: [name, title, description, type]
+        installed:   { type: boolean }
+        objects:
+          type: object
+          properties:
+            template_id: { type: string, nullable: true }
+            schedule_id: { type: string, nullable: true }
+            endpoint_id: { type: string, nullable: true }
+            rule_id:     { type: string, nullable: true }
+            repo_id:     { type: string, nullable: true }
+          required: [template_id, schedule_id, endpoint_id, rule_id, repo_id]
+      required: [id, version, name, description, kind, params, template, installed, objects]
+
+    AutomationRecipeInstallRequest:
+      type: object
+      properties:
+        params:
+          type: object
+          additionalProperties: { type: string }
+          description: "Keyed by the recipe's param keys (repo_id, workflow_id, target_label, cron_expr, branch)."
+        confirm_auto_start:
+          type: boolean
+          description: "Required when target_label is a non-human-gate label (tasks start agents without review)."
+      required: [params]
+
+    AutomationRecipeInstallResult:
+      type: object
+      properties:
+        recipe:       { type: string }
+        template:     { $ref: "#/components/schemas/TaskTemplate" }
+        schedule:     { $ref: "#/components/schemas/TaskSchedule" }
+        endpoint:     { $ref: "#/components/schemas/IntakeEndpoint" }
+        rule:         { $ref: "#/components/schemas/IntakeRule" }
+        url:          { type: string, description: "Full intake URL (webhook recipes)." }
+        secret:       { type: string, description: "HMAC secret, shown once (webhook recipes)." }
+        snippet:      { type: string, description: "Paste-ready sender snippet (webhook recipes). Never contains the secret." }
+        target_label: { type: string, description: "Label created tasks start on ('' for webhook recipes = the workflow's human-gate label)." }
+        warnings:     { type: array, items: { type: string } }
+      required: [recipe, template, target_label, warnings]
 
     IntakeEndpoint:
       type: object
@@ -1138,6 +1381,7 @@ components:
         updated_at:           { type: string, format: date-time }
         secret_set:           { type: boolean }
         url_path:             { type: string, example: "/api/v1/intake/<id>" }
+        recipe_id:     { type: string, description: "Automation recipe id this object was created by; empty = not from a recipe." }
       required: [id, name, repo_id, workflow_id, target_label, enabled, title_template, description_template, dedupe_key_template, last_received_at, created_at, updated_at, secret_set, url_path]
 
     IntakeEndpointCreated:
@@ -1722,6 +1966,51 @@ components:
             without a human having to click Reject. Requires remote_url.
             false = off (feedback is still ingested and surfaced in the prompt;
             a human must transition the task manually). See docs/task-sources.md.
+        pr_review_enabled:
+          type: boolean
+          description: >
+            Opt-in review-only PR path (default false; requires remote_url).
+            true = pull requests opened by people (or other tools) on this repo
+            get an agent review posted back on the PR as a comment-type review
+            (never an approval or a blocking request-changes). One review task
+            per PR; new commits re-run the review on the same task. See
+            docs/task-sources.md "Review any PR".
+        pr_review_author_assocs:
+          type: array
+          items: { type: string, enum: [OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, FIRST_TIMER, NONE] }
+          description: >
+            Author-association allowlist for PR review (default OWNER, MEMBER,
+            COLLABORATOR). A PR whose author association is not listed (or
+            unknown) is never reviewed.
+        pr_review_label:
+          type: string
+          description: Only review PRs carrying this forge label (case-insensitive). Empty = no label filter.
+        pr_review_skip_drafts:
+          type: boolean
+          description: Skip draft / work-in-progress PRs (default true).
+        pr_review_workflow_id:
+          type: string
+          nullable: true
+          description: Workflow the review tasks are created on. null = the seeded "PR review" workflow.
+        pr_review_target_label:
+          type: string
+          description: >
+            Label review tasks start on. Must be a non-terminal, non-agent_ignore
+            label of pr_review_workflow_id (400 otherwise). Empty = the
+            workflow's first such label ("pr-review" in the seeded workflow).
+        review_reply_enabled:
+          type: boolean
+          description: >
+            true = when an agent resolves a review comment ingested from the
+            forge (resolve_comment), reply on that comment's review thread with
+            the resolution text and pushed short SHA, once the branch is
+            pushed. Default false. Gitea has no thread-reply API, so the reply
+            is a PR conversation comment. See docs/task-sources.md.
+        review_reply_resolve_enabled:
+          type: boolean
+          description: >
+            true = also mark the thread resolved after replying (GitHub only;
+            ignored on Gitea). Requires review_reply_enabled. Default false.
         issue_sync_update_policy:
           type: string
           enum: [gate, always, never]
@@ -1826,6 +2115,18 @@ components:
           description: >
             Newline-separated globs deciding when a diff counts as a UI change.
             Empty = frontend/**, web/**, src/**/*.{tsx,jsx,vue,svelte,css}.
+        auto_merge_mode:
+          type: string
+          enum: [off, when_green]
+          description: >
+            Opt-in auto-merge policy (default off). when_green: ATE merges a
+            task's PR once all checks pass, it is not a draft or conflicting,
+            has no unresolved changes-requested review and the task has no
+            live run, is not paused and not always_ask. See docs/workflows.md.
+        auto_merge_method:
+          type: string
+          enum: [squash, merge, rebase]
+          description: Merge method used by auto-merge (default squash).
         created_at:  { type: string, format: date-time }
       required: [id, name, path, created_at]
 
@@ -2706,7 +3007,7 @@ components:
         or failed. A task.updated follows each one.
       properties:
         task_id:    { type: string }
-        kind:       { type: string, description: "Side-effect kind, e.g. create_pr, terminal, leave_not_ready." }
+        kind:       { type: string, description: "Side-effect kind, e.g. create_pr, terminal, leave_not_ready, pr_review_post." }
         status:     { type: string, enum: [done, pending, failed], description: "pending = the attempt failed and will be retried." }
         last_error: { type: string, description: "Empty string when there is no error." }
       required: [task_id, kind, status, last_error]
@@ -3768,6 +4069,79 @@ paths:
               schema: { $ref: "#/components/schemas/AutonomySettings" }
         "400": { description: Out of range, or unknown proposal_provider_config_id }
 
+  /tasks/similar:
+    get:
+      summary: Find open tasks similar to a title (no model call)
+      description: >
+        Deterministic possible-duplicate lookup for the New Task modal: open,
+        non-archived tasks in the repo whose title overlaps `q` (Jaccard index
+        of normalised tokens >= 0.5, at least 2 shared tokens). Best first, at
+        most 5.
+      parameters:
+        - { name: repo_id, in: query, required: true, schema: { type: string } }
+        - { name: q, in: query, required: false, schema: { type: string } }
+      responses:
+        "200":
+          description: Matches, possibly empty
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PossibleDuplicate" }
+        "400": { description: repo_id missing }
+
+  /tasks/{id}/intake-check:
+    get:
+      summary: Latest intake assistant check for a task
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeCheck" }
+        "404": { description: No check for this task }
+    post:
+      summary: Run the intake assistant on a task (advisory, background)
+      description: >
+        Starts a model check (clarity verdict, suggested type/workflow, which
+        duplicate candidates are real) in a scratch directory with shell
+        commands denied. It never moves, edits or archives the task. Returns the
+        running check; poll GET for the result. Requires the assistant to be
+        enabled in settings.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "202":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeCheck" }
+        "400": { description: Assistant disabled or no usable provider }
+        "404": { description: Task not found }
+        "409": { description: A check is already running for this task }
+
+  /settings/intake-assistant:
+    get:
+      summary: Get the intake assistant settings (off by default)
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeAssistantSettings" }
+    put:
+      summary: Update the intake assistant settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/IntakeAssistantSettings" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IntakeAssistantSettings" }
+        "400": { description: Unknown provider config, or enabled without one }
+
   /tasks/{id}/dependencies:
     get:
       summary: List a task's dependency edges
@@ -4144,6 +4518,7 @@ paths:
                   pr_url: { type: string }
                   git_state: { type: string, enum: ["", pushed, pr_open, pr_merged, pr_closed] }
         "400": { description: Task has no branch, or repo has no/invalid GitHub remote }
+        "409": { description: "Review-only PR task (source github_pr/gitea_pr): these never push or open pull requests" }
         "502": { description: gh pr create failed (e.g. not authenticated) }
 
   /tasks/{id}/side-effects/retry:
@@ -4727,6 +5102,111 @@ paths:
         "400": { description: Invalid kind/status/source, empty or over-long body, or non-array citations }
         "404": { description: Repo not found }
 
+  /repos/{id}/map:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Get a repo's generated map, config and staleness
+      description: Pages come from the latest successful generation run; pages is empty when none exists. Disabled repos return their (default) config.
+      responses:
+        "200":
+          description: The map
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepoMap" }
+        "404": { description: Repo not found }
+
+  /repos/{id}/map/config:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      summary: Set the repo's map opt-in and refresh policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RepoMapConfigUpdate" }
+      responses:
+        "200":
+          description: The saved config
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepoMapConfig" }
+        "400": { description: Unknown provider config, enabling without a provider config, or a value out of range }
+        "404": { description: Repo not found }
+
+  /repos/{id}/map/generate:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      summary: Generate or refresh the repo's map now
+      description: Starts a run in the background in a read-only scratch checkout of the default branch and returns the (still running) run row.
+      responses:
+        "202":
+          description: Run started
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepoMapRun" }
+        "400": { description: The map is not enabled for the repo, or its provider config is missing or unavailable }
+        "404": { description: Repo not found }
+        "409": { description: A run is already in progress, or a global cost ceiling is reached }
+
+  /repos/{id}/map/runs:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: List the repo's map generation runs, newest first
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 10 }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/RepoMapRun" } }
+        "400": { description: Invalid limit }
+        "404": { description: Repo not found }
+
+  /settings/repo-map:
+    get:
+      summary: Get the global repo map injection settings
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepoMapSettings" }
+    put:
+      summary: Set the labels flagged for the REPO MAP prompt section and the agent configs that opted out
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                inject_labels: { type: array, items: { type: string } }
+                excluded_agent_ids: { type: array, items: { type: string } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RepoMapSettings" }
+        "400": { description: A label name contains a comma or newline }
+
   /lessons:
     get:
       summary: List global lessons (repo_id null)
@@ -4780,6 +5260,55 @@ paths:
       responses:
         "204": { description: Deleted }
         "404": { description: Lesson not found }
+
+  /repos/{id}/lessons/distill:
+    post:
+      summary: Draft lessons for a repo from recent task history (distiller)
+      description: >-
+        Reads the repo's last 30 days of evidence (human rejection notes, human
+        replies, rework failure feedback, repeated verify failures, "should have
+        asked" notes), asks the provider config chosen for rule proposals for
+        candidate lessons, validates them like human-created lessons, drops
+        near-duplicates of existing or dismissed lessons and ones citing no real
+        task, and stores at most 5 as `status=proposed`, `source=distiller`.
+        Proposed lessons are never injected until accepted (PATCH the lesson to
+        `status=active`). Runs in the background; poll distill-runs.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "202":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LessonDistillRun" }
+        "400": { description: No usable provider config set for proposals }
+        "404": { description: Repo not found }
+        "409": { description: A run is already in progress for this repo }
+
+  /repos/{id}/lessons/distill-runs:
+    get:
+      summary: A repo's recent lesson distiller runs
+      description: Newest first, with cost.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/LessonDistillRun" } }
+        "400": { description: Invalid limit }
+        "404": { description: Repo not found }
+
+  /lessons/{id}/dismiss:
+    post:
+      summary: Dismiss a proposed distiller lesson
+      description: Deletes the proposal and remembers its text so it is not offered again.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Dismissed }
+        "404": { description: Lesson not found }
+        "409": { description: Lesson is not a proposed distiller lesson }
 
   /skills:
     get:
@@ -5685,6 +6214,8 @@ paths:
         The body also accepts verify_command (string) and
         verify_timeout_seconds (integer, 1-3600); see the Repo schema.
         It also accepts preview_command, preview_routes and preview_paths_glob (strings).
+        It also accepts the pr_review_* policy fields (see the Repo schema).
+        It also accepts auto_merge_mode (off|when_green) and auto_merge_method (squash|merge|rebase).
       responses:
         "201":
           content:
@@ -5725,6 +6256,17 @@ paths:
                 issue_writeback_enabled: { type: boolean }
                 issue_writeback_label: { type: string }
                 pr_review_auto_transition_enabled: { type: boolean }
+                pr_review_enabled: { type: boolean, description: "Enable the review-only PR path (requires remote_url). See Repo.pr_review_enabled." }
+                pr_review_author_assocs:
+                  type: array
+                  items: { type: string, enum: [OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, FIRST_TIMER, NONE] }
+                  description: Author-association allowlist; omit to leave unchanged, empty array resets to the default.
+                pr_review_label: { type: string }
+                pr_review_skip_drafts: { type: boolean }
+                pr_review_workflow_id: { type: string, nullable: true, description: "Empty string clears (use the seeded PR review workflow)." }
+                pr_review_target_label: { type: string }
+                review_reply_enabled: { type: boolean }
+                review_reply_resolve_enabled: { type: boolean }
                 issue_sync_update_policy:
                   type: string
                   enum: [gate, always, never]
@@ -5757,6 +6299,14 @@ paths:
                 preview_paths_glob:
                   type: string
                   description: Replaces the newline-separated UI path globs (empty = defaults). Omit to leave unchanged.
+                auto_merge_mode:
+                  type: string
+                  enum: [off, when_green]
+                  description: Auto-merge policy. Omit to leave unchanged.
+                auto_merge_method:
+                  type: string
+                  enum: [squash, merge, rebase]
+                  description: Auto-merge method. Omit to leave unchanged.
       responses:
         "200":
           content:
@@ -5952,6 +6502,63 @@ paths:
                 properties:
                   authed: { type: boolean }
                   note:   { type: string }
+
+  /automation-recipes:
+    get:
+      summary: List automation recipes
+      description: >
+        Bundled one-click presets (see docs/task-templates.md#automation-recipes)
+        with their install parameters and installed state.
+      responses:
+        "200":
+          description: Recipes
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AutomationRecipe" } }
+
+  /automation-recipes/{id}/install:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      summary: Install an automation recipe
+      description: >
+        Creates the recipe's template, schedule and/or intake endpoint + rule in
+        one transaction, tagged with the recipe id. An empty `target_label`
+        parks created tasks on the workflow's human-review label. A non-gate
+        label is rejected with code `auto_start_confirmation_required` unless
+        `confirm_auto_start` is true. For webhook recipes the response carries
+        the endpoint URL and HMAC secret (shown once) and a paste-ready sender
+        snippet.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AutomationRecipeInstallRequest" }
+      responses:
+        "201":
+          description: Installed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutomationRecipeInstallResult" }
+        "400": { description: "Validation error (or auto_start_confirmation_required)" }
+        "404": { description: Recipe not found }
+        "409": { description: Already installed, or the template name is taken }
+
+  /automation-recipes/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      summary: Remove an installed automation recipe
+      description: Deletes only the objects tagged with this recipe id. Tasks already created are kept.
+      responses:
+        "204": { description: Removed }
+        "404": { description: Recipe unknown or not installed }
 
   /intake-endpoints:
     get:

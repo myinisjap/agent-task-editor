@@ -82,7 +82,7 @@ var StdioTools = []string{"list_repos", "list_workflows", "create_task"}
 // is attacker-influenced, so nothing reachable from it may change state.
 var ReadOnlyRemoteTools = []string{
 	"list_repos", "list_workflows", "list_tasks", "get_task", "list_runs", "get_run_logs", "get_diff",
-	"get_workflow", "list_agents", "get_repo", "detect_repo_runtime",
+	"get_workflow", "list_agents", "get_repo", "get_repo_map", "detect_repo_runtime",
 	"list_needs_me", "get_costs", "list_provider_configs", "get_agent", "list_templates", "list_schedules",
 }
 
@@ -102,6 +102,7 @@ var AdminRemoteTools = append(slices.Clone(RemoteTools),
 	"create_workflow", "update_workflow", "add_repo", "update_repo",
 	"create_agent", "update_agent",
 	"create_template", "update_template", "create_schedule", "update_schedule",
+	"list_recipes", "install_recipe",
 )
 
 // Select returns the tools with the given names, in that order. Unknown names
@@ -400,13 +401,24 @@ func (c *Client) createTask(args json.RawMessage) (string, bool) {
 		payload["workflow_id"] = a.WorkflowID
 	}
 	var created struct {
-		ID    string `json:"id"`
-		Label string `json:"label"`
+		ID                 string `json:"id"`
+		Label              string `json:"label"`
+		PossibleDuplicates []struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		} `json:"possible_duplicates"`
 	}
 	if status, err := c.do(http.MethodPost, "/api/v1/tasks", payload, &created); err != nil {
 		return fmt.Sprintf("create_task failed (%d): %s", status, err.Error()), true
 	}
-	return fmt.Sprintf("Created task %s on label %q.", created.ID, created.Label), false
+	msg := fmt.Sprintf("Created task %s on label %q.", created.ID, created.Label)
+	if len(created.PossibleDuplicates) > 0 {
+		msg += " possible_duplicates (open tasks that look similar; the task was still created):"
+		for _, d := range created.PossibleDuplicates {
+			msg += fmt.Sprintf("\n- %s: %s", d.ID, d.Title)
+		}
+	}
+	return msg, false
 }
 
 func (c *Client) listTasks(args json.RawMessage) (string, bool) {

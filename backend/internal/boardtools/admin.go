@@ -81,6 +81,19 @@ func init() {
 		},
 	})
 	register(Tool{
+		Name:        "get_repo_map",
+		Description: "Get a repo's generated map: a short wiki of the codebase (overview, layout, how to build/test/run, key flows, conventions) with the commit it was generated from and how many commits behind the default branch it is. Generated content, possibly stale; the code is the source of truth. Empty pages means the repo has no map yet.",
+		InputSchema: obj(map[string]any{"repo_id": str("Repo ID (from list_repos)")}, "repo_id"),
+		ReadOnly:    true,
+		call: func(c *Client, args json.RawMessage) (string, bool) {
+			id, errMsg := repoArg(args)
+			if errMsg != "" {
+				return errMsg, true
+			}
+			return c.getRaw("/api/v1/repos/"+url.PathEscape(id)+"/map", "get_repo_map")
+		},
+	})
+	register(Tool{
 		Name:        "detect_repo_runtime",
 		Description: "Suggest toolchain pins (go, node, python, rust, ruby, java, godot) for a repo from its manifest files (go.mod, .nvmrc, .python-version, ...). Changes nothing; pass the suggestions to update_repo as runtime_languages to apply them.",
 		InputSchema: obj(map[string]any{"repo_id": str("Repo ID (from list_repos)")}, "repo_id"),
@@ -130,6 +143,8 @@ func repoProps(create bool) map[string]any {
 		"preview_routes":         str("Newline-separated paths to screenshot, e.g. \"/\\n/tasks\""),
 		"preview_paths_glob":     str("Newline-separated globs deciding when a diff is a UI change (empty = frontend/**, web/**, src/**/*.{tsx,jsx,vue,svelte,css})"),
 		"max_concurrent_runs":    map[string]any{"type": "integer", "description": "Max agent runs at once in this repo (default: the server's MAX_WORKERS)"},
+		"auto_merge_mode":        map[string]any{"type": "string", "enum": []string{"off", "when_green"}, "description": "Opt-in: when_green makes ATE merge a task's PR itself once checks pass, it has no conflicts or requested changes and nobody is working on it (default off). Warning: with no verify_command or an auto-approved gate upstream, a PR can open and merge with no human."},
+		"auto_merge_method":      map[string]any{"type": "string", "enum": []string{"squash", "merge", "rebase"}, "description": "How auto-merge merges the PR (default squash)"},
 		"runtime_languages": map[string]any{
 			"type":        "array",
 			"description": "Toolchain pins agents run with, e.g. [{\"id\":\"go\",\"version\":\"1.26\"}] (see detect_repo_runtime). On update this replaces the pins; [] clears them.",
@@ -156,6 +171,7 @@ func withRepoID(p map[string]any) map[string]any {
 var repoFields = []string{
 	"name", "path", "remote_url", "workflow_id", "verify_command", "verify_timeout_seconds",
 	"preview_command", "preview_routes", "preview_paths_glob",
+	"auto_merge_mode", "auto_merge_method",
 	"max_concurrent_runs", "runtime_languages", "issue_sync_enabled", "issue_sync_label",
 }
 

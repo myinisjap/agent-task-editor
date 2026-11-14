@@ -9,10 +9,27 @@ import (
 	"context"
 )
 
+const countTaskReviewCommentReplyByExternalID = `-- name: CountTaskReviewCommentReplyByExternalID :one
+SELECT COUNT(*) FROM task_review_comments WHERE task_id = ? AND reply_external_id = ?
+`
+
+type CountTaskReviewCommentReplyByExternalIDParams struct {
+	TaskID          string  `json:"task_id"`
+	ReplyExternalID *string `json:"reply_external_id"`
+}
+
+// Whether a forge comment id is a reply ATE itself posted.
+func (q *Queries) CountTaskReviewCommentReplyByExternalID(ctx context.Context, arg CountTaskReviewCommentReplyByExternalIDParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countTaskReviewCommentReplyByExternalID, arg.TaskID, arg.ReplyExternalID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createForgeTaskReviewComment = `-- name: CreateForgeTaskReviewComment :one
 INSERT INTO task_review_comments (id, task_id, file_path, side, start_line, end_line, quoted_text, body, external_id, source)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source
+RETURNING id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source, reply_external_id, reply_posted_at
 `
 
 type CreateForgeTaskReviewCommentParams struct {
@@ -62,6 +79,8 @@ func (q *Queries) CreateForgeTaskReviewComment(ctx context.Context, arg CreateFo
 		&i.UpdatedAt,
 		&i.ExternalID,
 		&i.Source,
+		&i.ReplyExternalID,
+		&i.ReplyPostedAt,
 	)
 	return i, err
 }
@@ -69,7 +88,7 @@ func (q *Queries) CreateForgeTaskReviewComment(ctx context.Context, arg CreateFo
 const createTaskReviewComment = `-- name: CreateTaskReviewComment :one
 INSERT INTO task_review_comments (id, task_id, file_path, side, start_line, end_line, quoted_text, body)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source
+RETURNING id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source, reply_external_id, reply_posted_at
 `
 
 type CreateTaskReviewCommentParams struct {
@@ -111,6 +130,8 @@ func (q *Queries) CreateTaskReviewComment(ctx context.Context, arg CreateTaskRev
 		&i.UpdatedAt,
 		&i.ExternalID,
 		&i.Source,
+		&i.ReplyExternalID,
+		&i.ReplyPostedAt,
 	)
 	return i, err
 }
@@ -133,7 +154,7 @@ func (q *Queries) DeleteTaskReviewComment(ctx context.Context, arg DeleteTaskRev
 }
 
 const getTaskReviewComment = `-- name: GetTaskReviewComment :one
-SELECT id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source FROM task_review_comments WHERE id = ? AND task_id = ?
+SELECT id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source, reply_external_id, reply_posted_at FROM task_review_comments WHERE id = ? AND task_id = ?
 `
 
 type GetTaskReviewCommentParams struct {
@@ -160,12 +181,14 @@ func (q *Queries) GetTaskReviewComment(ctx context.Context, arg GetTaskReviewCom
 		&i.UpdatedAt,
 		&i.ExternalID,
 		&i.Source,
+		&i.ReplyExternalID,
+		&i.ReplyPostedAt,
 	)
 	return i, err
 }
 
 const getTaskReviewCommentByExternalID = `-- name: GetTaskReviewCommentByExternalID :one
-SELECT id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source FROM task_review_comments WHERE task_id = ? AND external_id = ?
+SELECT id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source, reply_external_id, reply_posted_at FROM task_review_comments WHERE task_id = ? AND external_id = ?
 `
 
 type GetTaskReviewCommentByExternalIDParams struct {
@@ -192,12 +215,14 @@ func (q *Queries) GetTaskReviewCommentByExternalID(ctx context.Context, arg GetT
 		&i.UpdatedAt,
 		&i.ExternalID,
 		&i.Source,
+		&i.ReplyExternalID,
+		&i.ReplyPostedAt,
 	)
 	return i, err
 }
 
 const listOpenTaskReviewComments = `-- name: ListOpenTaskReviewComments :many
-SELECT id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source FROM task_review_comments WHERE task_id = ? AND status = 'open' ORDER BY created_at ASC
+SELECT id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source, reply_external_id, reply_posted_at FROM task_review_comments WHERE task_id = ? AND status = 'open' ORDER BY created_at ASC
 `
 
 func (q *Queries) ListOpenTaskReviewComments(ctx context.Context, taskID string) ([]TaskReviewComment, error) {
@@ -225,6 +250,8 @@ func (q *Queries) ListOpenTaskReviewComments(ctx context.Context, taskID string)
 			&i.UpdatedAt,
 			&i.ExternalID,
 			&i.Source,
+			&i.ReplyExternalID,
+			&i.ReplyPostedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -240,7 +267,7 @@ func (q *Queries) ListOpenTaskReviewComments(ctx context.Context, taskID string)
 }
 
 const listTaskReviewComments = `-- name: ListTaskReviewComments :many
-SELECT id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source FROM task_review_comments WHERE task_id = ? ORDER BY created_at ASC
+SELECT id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source, reply_external_id, reply_posted_at FROM task_review_comments WHERE task_id = ? ORDER BY created_at ASC
 `
 
 func (q *Queries) ListTaskReviewComments(ctx context.Context, taskID string) ([]TaskReviewComment, error) {
@@ -268,6 +295,8 @@ func (q *Queries) ListTaskReviewComments(ctx context.Context, taskID string) ([]
 			&i.UpdatedAt,
 			&i.ExternalID,
 			&i.Source,
+			&i.ReplyExternalID,
+			&i.ReplyPostedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -282,11 +311,78 @@ func (q *Queries) ListTaskReviewComments(ctx context.Context, taskID string) ([]
 	return items, nil
 }
 
+const listUnrepliedAgentResolvedForgeReviewComments = `-- name: ListUnrepliedAgentResolvedForgeReviewComments :many
+SELECT id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source, reply_external_id, reply_posted_at FROM task_review_comments
+WHERE task_id = ? AND status = 'resolved' AND resolved_by_run_id IS NOT NULL
+  AND external_id IS NOT NULL AND source != 'local' AND reply_posted_at IS NULL
+ORDER BY created_at ASC
+`
+
+// Forge-ingested comments an agent run resolved that have not yet had their
+// thread reply posted (reply_posted_at is the once-per-comment marker).
+func (q *Queries) ListUnrepliedAgentResolvedForgeReviewComments(ctx context.Context, taskID string) ([]TaskReviewComment, error) {
+	rows, err := q.db.QueryContext(ctx, listUnrepliedAgentResolvedForgeReviewComments, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TaskReviewComment
+	for rows.Next() {
+		var i TaskReviewComment
+		if err := rows.Scan(
+			&i.ID,
+			&i.TaskID,
+			&i.FilePath,
+			&i.Side,
+			&i.StartLine,
+			&i.EndLine,
+			&i.QuotedText,
+			&i.Body,
+			&i.Status,
+			&i.ResolutionNote,
+			&i.ResolvedByRunID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ExternalID,
+			&i.Source,
+			&i.ReplyExternalID,
+			&i.ReplyPostedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const markTaskReviewCommentReplied = `-- name: MarkTaskReviewCommentReplied :exec
+UPDATE task_review_comments
+SET reply_external_id = ?, reply_posted_at = CURRENT_TIMESTAMP
+WHERE id = ? AND task_id = ?
+`
+
+type MarkTaskReviewCommentRepliedParams struct {
+	ReplyExternalID *string `json:"reply_external_id"`
+	ID              string  `json:"id"`
+	TaskID          string  `json:"task_id"`
+}
+
+func (q *Queries) MarkTaskReviewCommentReplied(ctx context.Context, arg MarkTaskReviewCommentRepliedParams) error {
+	_, err := q.db.ExecContext(ctx, markTaskReviewCommentReplied, arg.ReplyExternalID, arg.ID, arg.TaskID)
+	return err
+}
+
 const reopenTaskReviewComment = `-- name: ReopenTaskReviewComment :one
 UPDATE task_review_comments
 SET status = 'open', resolution_note = NULL, resolved_by_run_id = NULL, updated_at = CURRENT_TIMESTAMP
 WHERE id = ? AND task_id = ?
-RETURNING id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source
+RETURNING id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source, reply_external_id, reply_posted_at
 `
 
 type ReopenTaskReviewCommentParams struct {
@@ -313,6 +409,8 @@ func (q *Queries) ReopenTaskReviewComment(ctx context.Context, arg ReopenTaskRev
 		&i.UpdatedAt,
 		&i.ExternalID,
 		&i.Source,
+		&i.ReplyExternalID,
+		&i.ReplyPostedAt,
 	)
 	return i, err
 }
@@ -321,7 +419,7 @@ const resolveTaskReviewComment = `-- name: ResolveTaskReviewComment :one
 UPDATE task_review_comments
 SET status = 'resolved', resolution_note = ?, resolved_by_run_id = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ? AND task_id = ? AND status = 'open'
-RETURNING id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source
+RETURNING id, task_id, file_path, side, start_line, end_line, quoted_text, body, status, resolution_note, resolved_by_run_id, created_at, updated_at, external_id, source, reply_external_id, reply_posted_at
 `
 
 type ResolveTaskReviewCommentParams struct {
@@ -355,6 +453,8 @@ func (q *Queries) ResolveTaskReviewComment(ctx context.Context, arg ResolveTaskR
 		&i.UpdatedAt,
 		&i.ExternalID,
 		&i.Source,
+		&i.ReplyExternalID,
+		&i.ReplyPostedAt,
 	)
 	return i, err
 }

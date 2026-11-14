@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -24,6 +26,16 @@ const (
 	// SideEffectLeaveNotReady applies the in-progress signal to the source issue
 	// after the task leaves the human-gate label.
 	SideEffectLeaveNotReady = "leave_not_ready"
+	// SideEffectPRReviewPost delivers the pending review of a review-only PR
+	// task to the forge after it reaches a terminal label.
+	SideEffectPRReviewPost = "pr_review_post"
+
+	// SideEffectAutoMerge merges the task's open PR through the forge once the
+	// repo's auto-merge policy found it safe (see EnqueueAutoMerge).
+	SideEffectAutoMerge = "auto_merge"
+	// SideEffectReviewReply posts the agent's resolution of ingested forge review
+	// comments onto their review threads once the branch is pushed.
+	SideEffectReviewReply = "review_reply"
 )
 
 // Side effect statuses. A finished effect has no row, so "done" is absent.
@@ -61,6 +73,40 @@ func DefaultSideEffectBackoff(attempts int) time.Duration {
 		d = 10 * time.Minute
 	}
 	return d
+}
+
+// errPermanent marks an effect error that retrying cannot fix.
+type permanentError struct{ err error }
+
+func (p permanentError) Error() string { return p.err.Error() }
+func (p permanentError) Unwrap() error { return p.err }
+
+// Permanent wraps err so the outbox parks the effect as failed immediately
+// (surfacing it for a manual Retry/Dismiss) instead of retrying with backoff.
+func Permanent(err error) error {
+	if err == nil {
+		return nil
+	}
+	return permanentError{err}
+}
+
+// EnqueueAutoMerge records an auto_merge side effect for the task unless one
+// is already outstanding in any state (pending, running or failed — a failed
+// one waits for a person's Retry/Dismiss rather than looping). Reports whether
+// a row was added.
+func (e *Engine) EnqueueAutoMerge(ctx context.Context, taskID string) (bool, error) {
+	n, err := e.sq.CountTaskSideEffectsOfKind(ctx, gen.CountTaskSideEffectsOfKindParams{TaskID: taskID, Kind: SideEffectAutoMerge})
+	if err != nil {
+		return false, err
+	}
+	if n > 0 {
+		return false, nil
+	}
+	if err := e.sq.EnqueueTaskSideEffect(ctx, gen.EnqueueTaskSideEffectParams{ID: uuid.NewString(), TaskID: taskID, Kind: SideEffectAutoMerge}); err != nil {
+		return false, err
+	}
+	e.nudgeWorker()
+	return true, nil
 }
 
 func (e *Engine) nudgeWorker() {
@@ -159,10 +205,12 @@ func (e *Engine) runSideEffect(ctx context.Context, se gen.TaskSideEffect) {
 	}
 
 	attempts := se.Attempts + 1
+	var perm permanentError
+	permanent := errors.As(err, &perm)
 	msg := err.Error()
 	slog.Warn("side effect failed", "kind", se.Kind, "task_id", se.TaskID, "attempt", attempts, "err", err)
 	bg := context.WithoutCancel(ctx)
-	if attempts >= MaxSideEffectAttempts {
+	if permanent || attempts >= MaxSideEffectAttempts {
 		if ferr := e.sq.FailTaskSideEffect(bg, gen.FailTaskSideEffectParams{ID: se.ID, Attempts: attempts, LastError: &msg}); ferr != nil {
 			slog.Warn("side effects: mark failed", "id", se.ID, "err", ferr)
 		}
@@ -193,9 +241,16 @@ func (e *Engine) execSideEffect(ctx context.Context, se gen.TaskSideEffect) erro
 	if err != nil {
 		return fmt.Errorf("get task: %w", err)
 	}
+	// Posting a review stays valid whatever label the task has moved to since.
+	if se.Kind == SideEffectPRReviewPost {
+		if e.OnPRReviewPost == nil {
+			return nil
+		}
+		return e.OnPRReviewPost(ctx, task)
+	}
 	// A merged/closed PR means the branch's work is upstream; push and PR
 	// effects can never be needed (and would fail: the local branch is gone).
-	if (se.Kind == SideEffectTerminal || se.Kind == SideEffectCreatePR) &&
+	if (se.Kind == SideEffectTerminal || se.Kind == SideEffectCreatePR || se.Kind == SideEffectAutoMerge) &&
 		(task.GitState == "pr_merged" || task.GitState == "pr_closed") {
 		return nil
 	}
@@ -218,15 +273,28 @@ func (e *Engine) execSideEffect(ctx context.Context, se gen.TaskSideEffect) erro
 		}
 		return e.OnTerminal(ctx, task)
 	case SideEffectCreatePR:
+		if forge.IsReviewSource(task.Source) {
+			return nil // review-only PR tasks never open pull requests
+		}
 		if e.OnCreatePR == nil || !on(func(l gen.WorkflowLabel) bool { return l.CreatePr != 0 }) {
 			return nil
 		}
 		return e.OnCreatePR(ctx, task)
+	case SideEffectReviewReply:
+		if e.OnReviewReply == nil {
+			return nil
+		}
+		return e.OnReviewReply(ctx, task)
 	case SideEffectLeaveNotReady:
 		if e.OnLeaveNotReady == nil {
 			return nil
 		}
 		return e.OnLeaveNotReady(ctx, task)
+	case SideEffectAutoMerge:
+		if e.OnAutoMerge == nil {
+			return nil
+		}
+		return e.OnAutoMerge(ctx, task)
 	default:
 		return fmt.Errorf("unknown side effect kind %q", se.Kind)
 	}
@@ -272,4 +340,20 @@ func (e *Engine) DismissSideEffects(ctx context.Context, taskID string) (int64, 
 		e.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: taskID})
 	}
 	return n, nil
+}
+
+// EnqueueReviewReply records that review-thread replies are owed for a task
+// (idempotent while one is pending) and wakes the worker. No-op when
+// OnReviewReply is not wired.
+func (e *Engine) EnqueueReviewReply(ctx context.Context, taskID string) error {
+	if e.OnReviewReply == nil {
+		return nil
+	}
+	if err := e.sq.EnqueueTaskSideEffect(ctx, gen.EnqueueTaskSideEffectParams{
+		ID: uuid.NewString(), TaskID: taskID, Kind: SideEffectReviewReply,
+	}); err != nil {
+		return fmt.Errorf("enqueue %s side effect: %w", SideEffectReviewReply, err)
+	}
+	e.nudgeWorker()
+	return nil
 }

@@ -3,6 +3,7 @@ package ghclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -482,5 +483,128 @@ func TestGitHubCompareURL(t *testing.T) {
 				t.Errorf("CompareURL = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestReplyToReviewComment(t *testing.T) {
+	reqs := fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) { jsonOK(w, `{"id":777}`) })
+	id, err := ReplyToReviewComment(context.Background(), "acme/widgets", 3, "55", "done")
+	if err != nil || id != "777" {
+		t.Fatalf("got %q %v", id, err)
+	}
+	r := (*reqs)[0]
+	if r.Method != "POST" || r.Path != "/repos/acme/widgets/pulls/3/comments/55/replies" || !strings.Contains(r.Body, `"done"`) {
+		t.Errorf("request = %+v", r)
+	}
+}
+
+func TestResolveReviewThread(t *testing.T) {
+	var mutated bool
+	reqs := fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) {
+		if strings.Contains(r.Body, "resolveReviewThread") {
+			mutated = true
+			if !strings.Contains(r.Body, "T_2") {
+				t.Errorf("mutation targeted wrong thread: %s", r.Body)
+			}
+			jsonOK(w, `{"data":{}}`)
+			return
+		}
+		jsonOK(w, `{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[
+			{"id":"T_1","isResolved":false,"comments":{"nodes":[{"databaseId":1}]}},
+			{"id":"T_2","isResolved":false,"comments":{"nodes":[{"databaseId":55},{"databaseId":56}]}}]}}}}}`)
+	})
+	if err := ResolveReviewThread(context.Background(), "acme/widgets", 3, "55"); err != nil {
+		t.Fatal(err)
+	}
+	if !mutated || (*reqs)[0].Path != "/graphql" {
+		t.Errorf("mutated=%v reqs=%+v", mutated, *reqs)
+	}
+	if err := ResolveReviewThread(context.Background(), "acme/widgets", 3, "999"); err == nil {
+		t.Error("expected error for a comment in no thread")
+	}
+}
+
+func TestGetPRChecks_AllBuckets(t *testing.T) {
+	fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) {
+		switch {
+		case strings.HasSuffix(r.Path, "/pulls/7"):
+			jsonOK(w, `{"number":7,"head":{"sha":"abc"}}`)
+		case strings.HasSuffix(r.Path, "/check-runs"):
+			jsonOK(w, `{"check_runs":[
+				{"name":"build","status":"completed","conclusion":"success"},
+				{"name":"lint","status":"in_progress","conclusion":""},
+				{"name":"opt","status":"completed","conclusion":"skipped"},
+				{"name":"test","status":"completed","conclusion":"failure"},
+				{"name":"x","status":"completed","conclusion":"cancelled"}]}`)
+		case strings.HasSuffix(r.Path, "/status"):
+			jsonOK(w, `{"statuses":[{"context":"ci/a","state":"success"},{"context":"ci/b","state":"pending"},{"context":"ci/c","state":"error"}]}`)
+		default:
+			t.Errorf("unexpected path %s", r.Path)
+		}
+	})
+	checks, err := GetPRChecks(context.Background(), "acme/widgets", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, c := range checks {
+		got[c.Name] = c.Bucket
+	}
+	want := map[string]string{"build": "pass", "lint": "pending", "opt": "skipping", "test": "fail", "x": "cancel", "ci/a": "pass", "ci/b": "pending", "ci/c": "fail"}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
+}
+
+func TestMergePullRequest(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+		want   error
+		ok     bool
+	}{
+		{"merged", 200, `{"merged":true}`, nil, true},
+		{"head moved", 409, `{"message":"Head branch was modified. Review and try the merge again."}`, forge.ErrHeadMoved, false},
+		{"blocked", 405, `{"message":"Required status check \"ci\" is expected."}`, forge.ErrMergeRefused, false},
+		{"review required", 405, `{"message":"At least 1 approving review is required"}`, forge.ErrMergeRefused, false},
+		{"server", 500, `boom`, nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reqs := fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			})
+			err := MergePullRequest(context.Background(), "acme/widgets", 7, forge.MergeSquash, "deadbeef")
+			r := (*reqs)[0]
+			if r.Method != http.MethodPut || r.Path != "/repos/acme/widgets/pulls/7/merge" {
+				t.Fatalf("request = %+v", r)
+			}
+			var body map[string]string
+			_ = json.Unmarshal([]byte(r.Body), &body)
+			if body["merge_method"] != "squash" || body["sha"] != "deadbeef" {
+				t.Errorf("body = %v", body)
+			}
+			switch {
+			case tc.ok && err != nil:
+				t.Fatalf("unexpected error %v", err)
+			case tc.want != nil && !errors.Is(err, tc.want):
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			case !tc.ok && tc.want == nil && err == nil:
+				t.Fatal("expected error")
+			}
+			if tc.want == forge.ErrMergeRefused && !strings.Contains(err.Error(), "check") && !strings.Contains(err.Error(), "review") {
+				t.Errorf("error should carry the forge message: %v", err)
+			}
+		})
+	}
+}
+
+func TestMergePullRequest_RejectsBadMethod(t *testing.T) {
+	if err := MergePullRequest(context.Background(), "a/b", 1, "fast-forward", ""); err == nil {
+		t.Fatal("expected error")
 	}
 }

@@ -70,6 +70,14 @@ func (GitHub) FailedChecks(ctx context.Context, repoName string, prNumber int) (
 	return GetFailedChecks(ctx, repoName, prNumber)
 }
 
+func (GitHub) PRChecks(ctx context.Context, repoName string, prNumber int) ([]forge.Check, error) {
+	return GetPRChecks(ctx, repoName, prNumber)
+}
+
+func (GitHub) MergePullRequest(ctx context.Context, repoName string, prNumber int, method forge.MergeMethod, expectedHeadSHA string) error {
+	return MergePullRequest(ctx, repoName, prNumber, method, expectedHeadSHA)
+}
+
 func (GitHub) ListOpenIssues(ctx context.Context, repoName, label string) ([]forge.Issue, error) {
 	return ListOpenIssues(ctx, repoName, label)
 }
@@ -88,6 +96,14 @@ func (GitHub) CommentOnIssue(ctx context.Context, repoName string, issueNumber i
 
 func (GitHub) CloseIssueWithComment(ctx context.Context, repoName string, issueNumber int, body string) error {
 	return CloseIssueWithComment(ctx, repoName, issueNumber, body)
+}
+
+func (GitHub) ReplyToReviewComment(ctx context.Context, repoName string, prNumber int, commentID, body string) (string, error) {
+	return ReplyToReviewComment(ctx, repoName, prNumber, commentID, body)
+}
+
+func (GitHub) ResolveReviewThread(ctx context.Context, repoName string, prNumber int, commentID string) error {
+	return ResolveReviewThread(ctx, repoName, prNumber, commentID)
 }
 
 func (GitHub) AuthStatus() (authed bool, note string) { return GHAuthStatus() }
@@ -291,6 +307,7 @@ type rawPR struct {
 	UpdatedAt string `json:"updated_at"`
 	MergedAt  string `json:"merged_at"`
 	Mergeable *bool  `json:"mergeable"`
+	Draft     bool   `json:"draft"`
 	Head      struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
@@ -488,6 +505,7 @@ func GetPRHead(ctx context.Context, repoName, branch string) (PRHead, error) {
 		State:     normalizePRState(full.rawState()),
 		URL:       full.HTMLURL,
 		UpdatedAt: full.UpdatedAt,
+		Draft:     full.Draft,
 	}, nil
 }
 
@@ -556,11 +574,16 @@ func GetPRReviewComments(ctx context.Context, repoName string, prNumber int) ([]
 			} `json:"user"`
 			CreatedAt         string `json:"created_at"`
 			AuthorAssociation string `json:"author_association"`
+			InReplyToID       *int64 `json:"in_reply_to_id"`
 		}
 		if err := json.Unmarshal(b, &page); err != nil {
 			return err
 		}
 		for _, c := range page {
+			inReplyTo := ""
+			if c.InReplyToID != nil {
+				inReplyTo = fmt.Sprint(*c.InReplyToID)
+			}
 			line := 0
 			if c.Line != nil {
 				line = *c.Line
@@ -581,6 +604,7 @@ func GetPRReviewComments(ctx context.Context, repoName string, prNumber int) ([]
 				Author:            c.User.Login,
 				CreatedAt:         c.CreatedAt,
 				AuthorAssociation: c.AuthorAssociation,
+				InReplyToID:       inReplyTo,
 			})
 		}
 		return nil
@@ -822,4 +846,251 @@ func ParseGitHubName(remoteURL string) (string, bool) {
 	}
 
 	return "", false
+}
+
+// ReplyToReviewComment posts a reply in the review thread of the inline
+// comment commentID on the given PR and returns the reply's id.
+func ReplyToReviewComment(ctx context.Context, repoName string, prNumber int, commentID, body string) (string, error) {
+	metrics.GhCallsTotal.WithLabelValues("review_reply").Inc()
+	out, _, err := apiDo(ctx, http.MethodPost,
+		fmt.Sprintf("%s/pulls/%d/comments/%s/replies", repoPath(repoName), prNumber, url.PathEscape(commentID)),
+		map[string]string{"body": body})
+	if err != nil {
+		return "", fmt.Errorf("github review reply: %w", err)
+	}
+	var resp struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return "", fmt.Errorf("github review reply: decode: %w", err)
+	}
+	return fmt.Sprint(resp.ID), nil
+}
+
+// graphqlURL derives the GraphQL endpoint from the REST base: api.github.com
+// -> /graphql; GitHub Enterprise's <host>/api/v3 -> <host>/api/graphql.
+func graphqlURL() string {
+	return strings.TrimSuffix(apiBase(), "/v3") + "/graphql"
+}
+
+// graphqlDo runs one GraphQL request and decodes data into out.
+func graphqlDo(ctx context.Context, query string, vars map[string]any, out any) error {
+	b, _, err := apiDo(ctx, http.MethodPost, graphqlURL(), map[string]any{"query": query, "variables": vars})
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Data   json.RawMessage `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		return err
+	}
+	if len(resp.Errors) > 0 {
+		return errors.New(resp.Errors[0].Message)
+	}
+	if out != nil {
+		return json.Unmarshal(resp.Data, out)
+	}
+	return nil
+}
+
+// ResolveReviewThread marks the review thread containing the inline comment
+// commentID resolved (GraphQL only: REST has no such endpoint). An already
+// resolved thread is a no-op.
+func ResolveReviewThread(ctx context.Context, repoName string, prNumber int, commentID string) error {
+	metrics.GhCallsTotal.WithLabelValues("review_resolve").Inc()
+	owner, name, ok := strings.Cut(repoName, "/")
+	if !ok {
+		return fmt.Errorf("github resolve thread: bad repo name %q", repoName)
+	}
+	const q = `query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{id isResolved comments(first:100){nodes{databaseId}}}}}}}`
+	after := ""
+	for {
+		vars := map[string]any{"owner": owner, "name": name, "number": prNumber}
+		if after != "" {
+			vars["after"] = after
+		}
+		var data struct {
+			Repository struct {
+				PullRequest struct {
+					ReviewThreads struct {
+						PageInfo struct {
+							HasNextPage bool   `json:"hasNextPage"`
+							EndCursor   string `json:"endCursor"`
+						} `json:"pageInfo"`
+						Nodes []struct {
+							ID         string `json:"id"`
+							IsResolved bool   `json:"isResolved"`
+							Comments   struct {
+								Nodes []struct {
+									DatabaseID int64 `json:"databaseId"`
+								} `json:"nodes"`
+							} `json:"comments"`
+						} `json:"nodes"`
+					} `json:"reviewThreads"`
+				} `json:"pullRequest"`
+			} `json:"repository"`
+		}
+		if err := graphqlDo(ctx, q, vars, &data); err != nil {
+			return fmt.Errorf("github resolve thread: %w", err)
+		}
+		threads := data.Repository.PullRequest.ReviewThreads
+		for _, th := range threads.Nodes {
+			for _, c := range th.Comments.Nodes {
+				if fmt.Sprint(c.DatabaseID) != commentID {
+					continue
+				}
+				if th.IsResolved {
+					return nil
+				}
+				const m = `mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}`
+				if err := graphqlDo(ctx, m, map[string]any{"id": th.ID}, nil); err != nil {
+					return fmt.Errorf("github resolve thread: %w", err)
+				}
+				return nil
+			}
+		}
+		if !threads.PageInfo.HasNextPage {
+			return fmt.Errorf("github resolve thread: no review thread contains comment %s", commentID)
+		}
+		after = threads.PageInfo.EndCursor
+	}
+}
+
+func (GitHub) GetPR(ctx context.Context, repoName string, number int) (forge.PullRequest, error) {
+	return GetPR(ctx, repoName, number)
+}
+
+func (GitHub) ListOpenPRs(ctx context.Context, repoName string) ([]forge.PullRequest, error) {
+	return ListOpenPRs(ctx, repoName)
+}
+
+func (GitHub) PostCommentReview(ctx context.Context, repoName string, number int, r forge.ReviewSubmission) (string, error) {
+	return PostCommentReview(ctx, repoName, number, r)
+}
+
+// GetPRChecks returns every check run and commit status on the PR's head
+// commit, bucketed. A check run that has not completed is "pending". Statuses
+// come from the combined-status endpoint, which already reports only the
+// latest state per context.
+func GetPRChecks(ctx context.Context, repoName string, prNumber int) ([]Check, error) {
+	metrics.GhCallsTotal.WithLabelValues("pr_checks_all").Inc()
+	pr, err := getPR(ctx, repoName, prNumber)
+	if err != nil {
+		return nil, err
+	}
+	sha := pr.Head.SHA
+	checks := make([]Check, 0)
+
+	err = apiPages(ctx, fmt.Sprintf("%s/commits/%s/check-runs?per_page=100", repoPath(repoName), url.PathEscape(sha)), func(b []byte) error {
+		var page struct {
+			CheckRuns []struct {
+				Name       string `json:"name"`
+				Status     string `json:"status"`
+				Conclusion string `json:"conclusion"`
+				HTMLURL    string `json:"html_url"`
+			} `json:"check_runs"`
+		}
+		if err := json.Unmarshal(b, &page); err != nil {
+			return err
+		}
+		for _, c := range page.CheckRuns {
+			checks = append(checks, Check{Name: c.Name, Link: c.HTMLURL, Bucket: checkRunBucket(c.Status, c.Conclusion)})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	err = apiPages(ctx, fmt.Sprintf("%s/commits/%s/status?per_page=100", repoPath(repoName), url.PathEscape(sha)), func(b []byte) error {
+		var page struct {
+			Statuses []struct {
+				Context   string `json:"context"`
+				State     string `json:"state"`
+				TargetURL string `json:"target_url"`
+			} `json:"statuses"`
+		}
+		if err := json.Unmarshal(b, &page); err != nil {
+			return err
+		}
+		for _, s := range page.Statuses {
+			bucket := "pending"
+			switch s.State {
+			case "success":
+				bucket = "pass"
+			case "failure", "error":
+				bucket = "fail"
+			}
+			checks = append(checks, Check{Name: s.Context, Link: s.TargetURL, Bucket: bucket})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return checks, nil
+}
+
+// checkRunBucket maps a check run's status/conclusion to a Check bucket.
+// Anything not explicitly successful is not "pass" (unknown -> "pending").
+func checkRunBucket(status, conclusion string) string {
+	if status != "completed" {
+		return "pending"
+	}
+	switch conclusion {
+	case "success":
+		return "pass"
+	case "neutral", "skipped":
+		return "skipping"
+	case "cancelled":
+		return "cancel"
+	case "failure", "timed_out", "startup_failure", "action_required", "stale":
+		return "fail"
+	}
+	return "pending"
+}
+
+// MergePullRequest merges a PR via PUT /pulls/{n}/merge. expectedHeadSHA, if
+// set, is sent as "sha" so GitHub rejects the merge (409) when the head moved.
+// 405 (not mergeable / blocked by branch protection or required reviews) and
+// 422 wrap forge.ErrMergeRefused with GitHub's own message.
+func MergePullRequest(ctx context.Context, repoName string, prNumber int, method forge.MergeMethod, expectedHeadSHA string) error {
+	metrics.GhCallsTotal.WithLabelValues("pr_merge").Inc()
+	if !forge.ValidMergeMethod(method) {
+		return fmt.Errorf("unsupported merge method %q", method)
+	}
+	payload := map[string]any{"merge_method": string(method)}
+	if expectedHeadSHA != "" {
+		payload["sha"] = expectedHeadSHA
+	}
+	_, _, err := apiDo(ctx, http.MethodPut, fmt.Sprintf("%s/pulls/%d/merge", repoPath(repoName), prNumber), payload)
+	if err == nil {
+		return nil
+	}
+	var ae *apiError
+	if errors.As(err, &ae) {
+		switch ae.Status {
+		case http.StatusConflict:
+			return fmt.Errorf("%w: %s", forge.ErrHeadMoved, apiMessage(ae.Body))
+		case http.StatusMethodNotAllowed, http.StatusUnprocessableEntity, http.StatusForbidden:
+			return fmt.Errorf("%w: %s", forge.ErrMergeRefused, apiMessage(ae.Body))
+		}
+	}
+	return err
+}
+
+// apiMessage extracts GitHub's {"message": ...} text from an error body, falling
+// back to the trimmed raw body.
+func apiMessage(body string) string {
+	var m struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal([]byte(body), &m) == nil && strings.TrimSpace(m.Message) != "" {
+		return strings.TrimSpace(m.Message)
+	}
+	return strings.TrimSpace(body)
 }

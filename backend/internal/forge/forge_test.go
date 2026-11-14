@@ -58,6 +58,12 @@ func (fakeForge) CommentOnIssue(ctx context.Context, repoName string, issueNumbe
 func (fakeForge) CloseIssueWithComment(ctx context.Context, repoName string, issueNumber int, body string) error {
 	return nil
 }
+func (fakeForge) ReplyToReviewComment(ctx context.Context, repoName string, prNumber int, commentID, body string) (string, error) {
+	return "", nil
+}
+func (fakeForge) ResolveReviewThread(ctx context.Context, repoName string, prNumber int, commentID string) error {
+	return forge.ErrThreadResolveUnsupported
+}
 func (fakeForge) AuthStatus() (bool, string) { return true, "fake" }
 func (fakeForge) CompareURL(repoName, base, branch, title, body string) string {
 	return "https://example.invalid/" + repoName
@@ -94,4 +100,23 @@ func TestMergeability_Constants(t *testing.T) {
 	if forge.MergeableUnknown == forge.MergeableClean || forge.MergeableUnknown == forge.MergeableConflicting {
 		t.Fatal("MergeableUnknown must be distinct from the other two states")
 	}
+}
+
+func (fakeForge) GetPR(ctx context.Context, repoName string, number int) (forge.PullRequest, error) {
+	return forge.PullRequest{}, nil
+}
+
+func (fakeForge) ListOpenPRs(ctx context.Context, repoName string) ([]forge.PullRequest, error) {
+	return nil, nil
+}
+
+func (fakeForge) PostCommentReview(ctx context.Context, repoName string, number int, r forge.ReviewSubmission) (string, error) {
+	return "", nil
+}
+
+func (fakeForge) PRChecks(ctx context.Context, repoName string, prNumber int) ([]forge.Check, error) {
+	return nil, nil
+}
+func (fakeForge) MergePullRequest(ctx context.Context, repoName string, prNumber int, method forge.MergeMethod, expectedHeadSHA string) error {
+	return nil
 }

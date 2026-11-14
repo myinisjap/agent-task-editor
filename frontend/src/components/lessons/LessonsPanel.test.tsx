@@ -9,7 +9,12 @@ const m = {
 }
 vi.mock('../../api/client', () => ({
   api: {
-    repos: { lessons: (...a: unknown[]) => m.repoLessons(...a), createLesson: (...a: unknown[]) => m.createLesson(...a) },
+    repos: {
+      lessons: (...a: unknown[]) => m.repoLessons(...a),
+      createLesson: (...a: unknown[]) => m.createLesson(...a),
+      lessonDistillRuns: () => Promise.resolve([]),
+      distillLessons: () => Promise.resolve({}),
+    },
     lessons: {
       listGlobal: (...a: unknown[]) => m.listGlobal(...a),
       createGlobal: (...a: unknown[]) => m.createGlobal(...a),
@@ -134,6 +139,6 @@ describe('LessonsPanel', () => {
   it('shows load errors', async () => {
     m.repoLessons.mockRejectedValue(new Error('load failed'))
     renderPanel()
-    expect(await screen.findByRole('alert')).toHaveTextContent('load failed')
+    expect((await screen.findAllByRole('alert'))[0]).toHaveTextContent('load failed')
   })
 })

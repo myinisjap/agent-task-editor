@@ -25,7 +25,7 @@ func (q *Queries) CountReposWithIssueSyncLabel(ctx context.Context) (int64, erro
 const createIntakeRule = `-- name: CreateIntakeRule :one
 INSERT INTO intake_rules (id, name, enabled, sort_order, match_source, match_repo_id, match_labels, match_title_pattern, match_body_pattern, match_author_assoc, apply_template_id, apply_priority, apply_target_label, apply_workflow_id, apply_max_cost_usd)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id, name, enabled, sort_order, match_source, match_repo_id, match_labels, match_title_pattern, match_body_pattern, match_author_assoc, apply_template_id, apply_priority, apply_target_label, apply_workflow_id, apply_max_cost_usd, stop_processing, created_at, updated_at
+RETURNING id, name, enabled, sort_order, match_source, match_repo_id, match_labels, match_title_pattern, match_body_pattern, match_author_assoc, apply_template_id, apply_priority, apply_target_label, apply_workflow_id, apply_max_cost_usd, stop_processing, created_at, updated_at, recipe_id
 `
 
 type CreateIntakeRuleParams struct {
@@ -84,6 +84,7 @@ func (q *Queries) CreateIntakeRule(ctx context.Context, arg CreateIntakeRulePara
 		&i.StopProcessing,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RecipeID,
 	)
 	return i, err
 }
@@ -98,7 +99,7 @@ func (q *Queries) DeleteIntakeRule(ctx context.Context, id string) error {
 }
 
 const getIntakeRule = `-- name: GetIntakeRule :one
-SELECT id, name, enabled, sort_order, match_source, match_repo_id, match_labels, match_title_pattern, match_body_pattern, match_author_assoc, apply_template_id, apply_priority, apply_target_label, apply_workflow_id, apply_max_cost_usd, stop_processing, created_at, updated_at
+SELECT id, name, enabled, sort_order, match_source, match_repo_id, match_labels, match_title_pattern, match_body_pattern, match_author_assoc, apply_template_id, apply_priority, apply_target_label, apply_workflow_id, apply_max_cost_usd, stop_processing, created_at, updated_at, recipe_id
 FROM intake_rules WHERE id = ?
 `
 
@@ -124,12 +125,13 @@ func (q *Queries) GetIntakeRule(ctx context.Context, id string) (IntakeRule, err
 		&i.StopProcessing,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RecipeID,
 	)
 	return i, err
 }
 
 const listEnabledIntakeRules = `-- name: ListEnabledIntakeRules :many
-SELECT id, name, enabled, sort_order, match_source, match_repo_id, match_labels, match_title_pattern, match_body_pattern, match_author_assoc, apply_template_id, apply_priority, apply_target_label, apply_workflow_id, apply_max_cost_usd, stop_processing, created_at, updated_at
+SELECT id, name, enabled, sort_order, match_source, match_repo_id, match_labels, match_title_pattern, match_body_pattern, match_author_assoc, apply_template_id, apply_priority, apply_target_label, apply_workflow_id, apply_max_cost_usd, stop_processing, created_at, updated_at, recipe_id
 FROM intake_rules WHERE enabled != 0 ORDER BY sort_order, created_at
 `
 
@@ -163,6 +165,7 @@ func (q *Queries) ListEnabledIntakeRules(ctx context.Context) ([]IntakeRule, err
 			&i.StopProcessing,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RecipeID,
 		); err != nil {
 			return nil, err
 		}
@@ -179,7 +182,7 @@ func (q *Queries) ListEnabledIntakeRules(ctx context.Context) ([]IntakeRule, err
 
 const listIntakeRules = `-- name: ListIntakeRules :many
 
-SELECT id, name, enabled, sort_order, match_source, match_repo_id, match_labels, match_title_pattern, match_body_pattern, match_author_assoc, apply_template_id, apply_priority, apply_target_label, apply_workflow_id, apply_max_cost_usd, stop_processing, created_at, updated_at
+SELECT id, name, enabled, sort_order, match_source, match_repo_id, match_labels, match_title_pattern, match_body_pattern, match_author_assoc, apply_template_id, apply_priority, apply_target_label, apply_workflow_id, apply_max_cost_usd, stop_processing, created_at, updated_at, recipe_id
 FROM intake_rules ORDER BY sort_order, created_at
 `
 
@@ -213,6 +216,7 @@ func (q *Queries) ListIntakeRules(ctx context.Context) ([]IntakeRule, error) {
 			&i.StopProcessing,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RecipeID,
 		); err != nil {
 			return nil, err
 		}
@@ -231,7 +235,7 @@ const updateIntakeRule = `-- name: UpdateIntakeRule :one
 UPDATE intake_rules
 SET name = ?, enabled = ?, sort_order = ?, match_source = ?, match_repo_id = ?, match_labels = ?, match_title_pattern = ?, match_body_pattern = ?, match_author_assoc = ?, apply_template_id = ?, apply_priority = ?, apply_target_label = ?, apply_workflow_id = ?, apply_max_cost_usd = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, name, enabled, sort_order, match_source, match_repo_id, match_labels, match_title_pattern, match_body_pattern, match_author_assoc, apply_template_id, apply_priority, apply_target_label, apply_workflow_id, apply_max_cost_usd, stop_processing, created_at, updated_at
+RETURNING id, name, enabled, sort_order, match_source, match_repo_id, match_labels, match_title_pattern, match_body_pattern, match_author_assoc, apply_template_id, apply_priority, apply_target_label, apply_workflow_id, apply_max_cost_usd, stop_processing, created_at, updated_at, recipe_id
 `
 
 type UpdateIntakeRuleParams struct {
@@ -290,6 +294,7 @@ func (q *Queries) UpdateIntakeRule(ctx context.Context, arg UpdateIntakeRulePara
 		&i.StopProcessing,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RecipeID,
 	)
 	return i, err
 }

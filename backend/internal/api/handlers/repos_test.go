@@ -1842,3 +1842,44 @@ func TestReposResponse_BooleansAreJSONBooleans(t *testing.T) {
 	}
 	check("list", list[0])
 }
+
+func TestReposUpdate_ReviewReplyRoundTrip(t *testing.T) {
+	base := t.TempDir()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewReposHandler(q, base, nil)
+	router := chi.NewRouter()
+	router.Post("/repos", h.Create)
+	router.Patch("/repos/{id}", h.Update)
+	repoDir := filepath.Join(base, "myorg", "myrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{"name": "myorg/myrepo", "path": repoDir, "remote_url": "https://github.com/myorg/myrepo"})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+	if repo["review_reply_enabled"] != false || repo["review_reply_resolve_enabled"] != false {
+		t.Errorf("defaults = %v / %v, want false", repo["review_reply_enabled"], repo["review_reply_resolve_enabled"])
+	}
+
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"review_reply_enabled": true})
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch: %d %s", w.Code, w.Body.String())
+	}
+	repo = map[string]any{}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if repo["review_reply_enabled"] != true || repo["review_reply_resolve_enabled"] != false {
+		t.Errorf("after enable = %v / %v", repo["review_reply_enabled"], repo["review_reply_resolve_enabled"])
+	}
+
+	// An unrelated PATCH leaves both untouched.
+	w = patchJSON(t, router, "/repos/"+id, map[string]any{"review_reply_resolve_enabled": true})
+	repo = map[string]any{}
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	if repo["review_reply_enabled"] != true || repo["review_reply_resolve_enabled"] != true {
+		t.Errorf("after resolve switch = %v / %v", repo["review_reply_enabled"], repo["review_reply_resolve_enabled"])
+	}
+}

@@ -78,6 +78,14 @@ func (f *fakeSecondForge) ListOpenIssues(ctx context.Context, repoName, label st
 func (f *fakeSecondForge) GetIssueComments(ctx context.Context, repoName string, issueNumber int) ([]forge.IssueComment, error) {
 	return nil, nil
 }
+func (f *fakeSecondForge) ReplyToReviewComment(ctx context.Context, repoName string, prNumber int, commentID, body string) (string, error) {
+	return "", nil
+}
+
+func (f *fakeSecondForge) ResolveReviewThread(ctx context.Context, repoName string, prNumber int, commentID string) error {
+	return forge.ErrThreadResolveUnsupported
+}
+
 func (f *fakeSecondForge) AddIssueLabel(ctx context.Context, repoName string, issueNumber int, label string) error {
 	return nil
 }
@@ -234,4 +242,23 @@ func TestIngestReviewComments_TagsSourceWithResolvedForgeName(t *testing.T) {
 	if comments[0].Source != fake.Name() {
 		t.Errorf("comment source = %q, want %q (the resolved forge's Name())", comments[0].Source, fake.Name())
 	}
+}
+
+func (f *fakeSecondForge) GetPR(ctx context.Context, repoName string, number int) (forge.PullRequest, error) {
+	return forge.PullRequest{}, nil
+}
+
+func (f *fakeSecondForge) ListOpenPRs(ctx context.Context, repoName string) ([]forge.PullRequest, error) {
+	return nil, nil
+}
+
+func (f *fakeSecondForge) PostCommentReview(ctx context.Context, repoName string, number int, r forge.ReviewSubmission) (string, error) {
+	return "", nil
+}
+
+func (f *fakeSecondForge) PRChecks(ctx context.Context, repoName string, prNumber int) ([]forge.Check, error) {
+	return nil, nil
+}
+func (f *fakeSecondForge) MergePullRequest(ctx context.Context, repoName string, prNumber int, method forge.MergeMethod, expectedHeadSHA string) error {
+	return nil
 }
