@@ -47,7 +47,7 @@ will not reach the CLI.
 | `mcp__task-editor__update_task_notes` | Writes persistent notes for subsequent agents |
 | `mcp__task-editor__store_info` | Stores a summary visible in the task UI |
 | `mcp__task-editor__resolve_comment` | Marks an open inline review comment as addressed |
-| `mcp__task-editor__create_subtask` | Splits the task into a child task (only exposed when the agent config has `subtasks_enabled`) |
+| `mcp__task-editor__create_subtask` | Splits the task into a child task (only exposed when the agent config has `subtasks_enabled`; takes an optional `repo_id` for another repo when `cross_repo_subtasks_enabled` is also set) |
 
 Qwen uses `--allowed-tools` (space-separated, multiple flags) rather than a comma-separated string like Claude:
 

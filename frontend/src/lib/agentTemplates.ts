@@ -15,6 +15,7 @@ export const EMPTY: Omit<AgentConfig, 'id' | 'created_at' | 'updated_at' | 'enab
   retry_backoff_secs: 30,
   resume_sessions: true,
   subtasks_enabled: false,
+  cross_repo_subtasks_enabled: false,
   max_subtasks: 10,
   max_cost_usd: 0,
   effort: '',

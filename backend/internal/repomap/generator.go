@@ -121,6 +121,7 @@ func (g ProviderGenerator) RunConfig() agent.AgentConfig {
 	cfg.MaxCostUSD = MaxRunCostUSD
 	cfg.ResumeSessions = false
 	cfg.SubtasksEnabled = false
+	cfg.CrossRepoSubtasksEnabled = false
 	cfg.EnabledPlugins = nil
 	cfg.EnabledMCPServers = nil
 	cfg.CommandAllowlist = nil

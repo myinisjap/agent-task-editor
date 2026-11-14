@@ -44,7 +44,8 @@ func behaviourChanged(a, b gen.AgentConfig) bool {
 		a.MaxCostUsd != b.MaxCostUsd || a.MaxRetries != b.MaxRetries ||
 		a.RetryBackoffSecs != b.RetryBackoffSecs || a.MaxSubtasks != b.MaxSubtasks ||
 		(a.ResumeSessions != 0) != (b.ResumeSessions != 0) ||
-		(a.SubtasksEnabled != 0) != (b.SubtasksEnabled != 0) {
+		(a.SubtasksEnabled != 0) != (b.SubtasksEnabled != 0) ||
+		(a.CrossRepoSubtasksEnabled != 0) != (b.CrossRepoSubtasksEnabled != 0) {
 		return true
 	}
 	return !jsonSemanticallyEqual(a.FallbackProviderConfigIds, b.FallbackProviderConfigIds) ||
@@ -209,6 +210,7 @@ func (h *AgentsHandler) applySnapshot(ctx context.Context, existing gen.AgentCon
 		Effort: snap.Effort, PermissionMode: snap.PermissionMode,
 		FallbackProviderConfigIds: fallbacks,
 		EscalationLadder:          ladderJSON,
+		CrossRepoSubtasksEnabled:  b2i(snap.CrossRepoSubtasksEnabled),
 		ID:                        existing.ID,
 	})
 	if err != nil {

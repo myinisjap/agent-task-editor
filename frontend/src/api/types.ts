@@ -1626,7 +1626,7 @@ export interface paths {
         put?: never;
         /**
          * Create a subtask under a parent
-         * @description Creates a child task under the parent named in the path (Mechanism 2). The create_subtask MCP tool posts here live during a planning run. The child inherits the parent's repo + workflow, lands on a human-gate (agent_ignore) label, and gets an auto-created parent→child dependency edge so the parent isn't dispatched until the child finishes. Guardrails: depth limit 1 (a subtask can't create subtasks), a per-parent cap (config max_subtasks, default 10), and — when a creating run is in flight — the run's config must have subtasks_enabled.
+         * @description Creates a child task under the parent named in the path (Mechanism 2). The create_subtask MCP tool posts here live during a planning run. The child inherits the parent's workflow (and its repo unless repo_id names another one, ADR 0041), lands on a human-gate (agent_ignore) label, and gets an auto-created parent→child dependency edge so the parent isn't dispatched until the child finishes. Guardrails: depth limit 1 (a subtask can't create subtasks), a per-parent cap (config max_subtasks, default 10), and — when a creating run is in flight — the run's config must have subtasks_enabled (plus cross_repo_subtasks_enabled for a repo_id naming another repo). A foreign child (another repo) lands via its own pull request instead of merging back; its merge_status follows the PR. With no creating run in flight (a human calling directly) repo_id is allowed.
          */
         post: {
             parameters: {
@@ -1648,6 +1648,8 @@ export interface paths {
                         file_scope?: string[];
                         /** @description Optional landing label; must be an agent_ignore (human-gate) label. Defaults to the workflow's first agent_ignore label. */
                         label?: string;
+                        /** @description Optional id of another configured repo (ADR 0041). Omitted (or equal to the parent's repo) creates a home child that merges back as before. Another repo creates a foreign child that uses the parent's workflow, forks from that repo's base and lands via its own PR; requires cross_repo_subtasks_enabled on the creating run's config. */
+                        repo_id?: string;
                     };
                 };
             };
@@ -1674,7 +1676,7 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description Creating run's config is not permitted to create subtasks */
+                /** @description Creating run's config is not permitted to create subtasks (or cross-repo subtasks for a foreign repo_id) */
                 403: {
                     headers: {
                         [name: string]: unknown;
@@ -8764,10 +8766,10 @@ export interface components {
             /** @description The agent run that created this subtask (provenance). */
             created_by_run_id?: string | null;
             /**
-             * @description A subtask's branch merge-back state into its parent's branch. Empty for non-subtasks and until the child reaches a terminal label.
+             * @description A subtask's branch merge-back state into its parent's branch. Empty for non-subtasks and until the child reaches a terminal label. For a foreign child (a subtask in a different repo than its parent, ADR 0041) it follows the child's own PR: pending until the PR exists, then pr_open, merged or pr_closed.
              * @enum {string}
              */
-            merge_status?: "" | "pending" | "merged" | "merge_conflict";
+            merge_status?: "" | "pending" | "merged" | "merge_conflict" | "pr_open" | "pr_closed";
             /** @description Derived: number of this task's direct children (0 if not a parent). */
             subtask_total?: number;
             /** @description Derived: children currently on a terminal label. */
@@ -9398,6 +9400,7 @@ export interface components {
             retry_backoff_secs?: number;
             resume_sessions?: boolean;
             subtasks_enabled?: boolean;
+            cross_repo_subtasks_enabled?: boolean;
             max_subtasks?: number;
             enabled_plugins?: string[];
             enabled_mcp_servers?: string[];
@@ -9534,6 +9537,8 @@ export interface components {
             resume_sessions?: boolean;
             /** @description Whether this config's runs may decompose their task into subtasks via the create_subtask MCP tool (claude/qwen_code only). Off by default — a deliberate capability granted to a specific agent (the planner). */
             subtasks_enabled?: boolean;
+            /** @description Off by default; also requires subtasks_enabled. Lets create_subtask target another configured repo via repo_id (ADR 0041); each such child lands via its own pull request. */
+            cross_repo_subtasks_enabled?: boolean;
             /** @description Per-parent cap on children this config may create. Default 10. */
             max_subtasks?: number;
             /** @description JSON array of Claude plugin IDs ("<name>@<marketplace>") enabled for this agent config. Claude-provider only; defaults to "[]" (all plugins off). */

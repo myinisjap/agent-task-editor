@@ -57,7 +57,7 @@ func TestCoordinator_IntegrationPendingInsteadOfAutoAdvance(t *testing.T) {
 	if got := coord.BuildIntegrationContext(ctx, parent.ID, "make test"); got != nil {
 		t.Fatalf("integration context before pending should be nil")
 	}
-	coord.OnChildTerminal(ctx, child, repo)
+	coord.OnChildTerminal(ctx, child, gen.Repo{Path: repo})
 
 	p, _ := q.GetTask(ctx, parent.ID)
 	if p.Label != "work" {
@@ -108,7 +108,7 @@ func TestCoordinator_IntegrationIncludesConflicts(t *testing.T) {
 		gitIn(t, wt, "add", "-A")
 		gitIn(t, wt, "-c", "user.name=test", "-c", "user.email=t@example.com", "commit", "-m", "x")
 	}
-	coord.OnChildTerminal(ctx, child, repo)
+	coord.OnChildTerminal(ctx, child, gen.Repo{Path: repo})
 	if s := coord.integrationStatus(ctx, parent.ID); s != "pending" {
 		t.Fatalf("conflicts should still trigger integration pending, got %q", s)
 	}

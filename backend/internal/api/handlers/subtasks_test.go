@@ -369,3 +369,171 @@ func TestSubtasks_BlockerSatisfiedOnlyAfterMerge(t *testing.T) {
 	}
 	check(true, "archived")
 }
+
+// --- repo_id / cross-repo subtasks (ADR 0041) ---
+
+func seedSecondRepo(t *testing.T, q *gen.Queries) string {
+	t.Helper()
+	wfs, _ := q.ListWorkflows(context.Background())
+	other := wfs[len(wfs)-1].ID
+	id := uuid.NewString()
+	if _, err := q.CreateRepo(context.Background(), gen.CreateRepoParams{ID: id, Name: "other", Path: t.TempDir(), WorkflowID: &other}); err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	return id
+}
+
+// activeRunWithFlags gives the parent an in-flight run whose config has the
+// given subtasks / cross-repo flags.
+func activeRunWithFlags(t *testing.T, q *gen.Queries, parentID string, subtasks, crossRepo int64) {
+	t.Helper()
+	ctx := context.Background()
+	pc, err := q.CreateProviderConfig(ctx, gen.CreateProviderConfigParams{ID: uuid.NewString(), Name: "p-" + uuid.NewString()[:6], Provider: "claude", Model: "sonnet", Env: "{}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
+		ID: uuid.NewString(), Name: "c-" + uuid.NewString()[:6], ProviderConfigID: pc.ID,
+		Labels: `["plan"]`, MaxTokens: 8192, TimeoutSecs: 600, MaxTurns: 50,
+		EnabledPlugins: "[]", EnabledMcpServers: "[]", CommandAllowlist: "[]", CommandDenylist: "[]",
+		MaxRetries: 3, RetryBackoffSecs: 30, ResumeSessions: 1, SubtasksEnabled: subtasks, MaxSubtasks: 2,
+		CrossRepoSubtasksEnabled: crossRepo,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: runID, TaskID: parentID, AgentConfigID: &cfg.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.SetTaskActiveRun(ctx, gen.SetTaskActiveRunParams{CurrentAgentRunID: &runID, ActiveAgentRunID: &runID, ID: parentID}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSubtasks_RepoIDOmittedUnchanged(t *testing.T) {
+	r, _, q, wfID, repoID := setupSubtaskRouter(t)
+	parent := mkTask(t, q, wfID, repoID, "parent", "plan")
+	w := postSubtask(t, r, parent.ID, map[string]any{"title": "c", "description": "x"})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	var c struct {
+		RepoID string `json:"repo_id"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &c)
+	if c.RepoID != repoID {
+		t.Fatalf("child repo_id=%q want parent's %q", c.RepoID, repoID)
+	}
+}
+
+func TestSubtasks_UnknownRepoRejected(t *testing.T) {
+	r, _, q, wfID, repoID := setupSubtaskRouter(t)
+	parent := mkTask(t, q, wfID, repoID, "parent", "plan")
+	w := postSubtask(t, r, parent.ID, map[string]any{"title": "c", "description": "x", "repo_id": "nope"})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "repo_id does not reference an existing repo") {
+		t.Fatalf("got %d %s", w.Code, w.Body.String())
+	}
+	if n, _ := q.CountSubtasks(context.Background(), &parent.ID); n != 0 {
+		t.Fatalf("subtasks created: %d", n)
+	}
+}
+
+func TestSubtasks_CrossRepoFlagOffRejected(t *testing.T) {
+	r, _, q, wfID, repoID := setupSubtaskRouter(t)
+	other := seedSecondRepo(t, q)
+	parent := mkTask(t, q, wfID, repoID, "parent", "plan")
+	activeRunWithFlags(t, q, parent.ID, 1, 0)
+
+	w := postSubtask(t, r, parent.ID, map[string]any{"title": "c", "description": "x", "repo_id": other})
+	if w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "this agent config is not permitted to create cross-repo subtasks") {
+		t.Fatalf("got %d %s", w.Code, w.Body.String())
+	}
+	if n, _ := q.CountSubtasks(context.Background(), &parent.ID); n != 0 {
+		t.Fatalf("subtasks created: %d", n)
+	}
+	// Explicit repo_id equal to the parent's repo is a plain home child.
+	if w := postSubtask(t, r, parent.ID, map[string]any{"title": "c", "description": "x", "repo_id": repoID}); w.Code != http.StatusCreated {
+		t.Fatalf("same-repo repo_id should be allowed, got %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestSubtasks_CrossRepoFlagOn(t *testing.T) {
+	r, _, q, wfID, repoID := setupSubtaskRouter(t)
+	other := seedSecondRepo(t, q)
+	parent := mkTask(t, q, wfID, repoID, "parent", "plan")
+	activeRunWithFlags(t, q, parent.ID, 1, 1)
+
+	w := postSubtask(t, r, parent.ID, map[string]any{"title": "c", "description": "x", "repo_id": other})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	var c struct {
+		ID, RepoID, Label, WorkflowID string
+	}
+	var raw map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &raw)
+	c.ID, _ = raw["id"].(string)
+	c.RepoID, _ = raw["repo_id"].(string)
+	c.Label, _ = raw["label"].(string)
+	c.WorkflowID, _ = raw["workflow_id"].(string)
+	if c.RepoID != other {
+		t.Fatalf("child repo=%q want %q", c.RepoID, other)
+	}
+	if c.WorkflowID != parent.WorkflowID {
+		t.Fatalf("child workflow=%q want parent's %q", c.WorkflowID, parent.WorkflowID)
+	}
+	if c.Label != "not_ready" {
+		t.Fatalf("label=%q", c.Label)
+	}
+	_, derr := q.GetTaskDependency(context.Background(), gen.GetTaskDependencyParams{TaskID: parent.ID, DependsOnTaskID: c.ID})
+	if derr != nil {
+		t.Fatalf("expected the parent→child edge: %v", derr)
+	}
+	// Cap (2) still applies to foreign children.
+	if w := postSubtask(t, r, parent.ID, map[string]any{"title": "c2", "description": "x", "repo_id": other}); w.Code != http.StatusCreated {
+		t.Fatalf("second: %d", w.Code)
+	}
+	if w := postSubtask(t, r, parent.ID, map[string]any{"title": "c3", "description": "x", "repo_id": other}); w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("third should hit cap, got %d", w.Code)
+	}
+}
+
+func TestSubtasks_RepoIDDepthLimit(t *testing.T) {
+	r, _, q, wfID, repoID := setupSubtaskRouter(t)
+	other := seedSecondRepo(t, q)
+	parent := mkTask(t, q, wfID, repoID, "parent", "plan")
+	_, body := createScoped(t, r, parent.ID, "A", nil)
+	if w := postSubtask(t, r, body["id"].(string), map[string]any{"title": "g", "description": "x", "repo_id": other}); w.Code != http.StatusBadRequest {
+		t.Fatalf("grandchild with repo_id should hit depth limit, got %d", w.Code)
+	}
+}
+
+func TestSubtasks_OverlapOnlySameRepo(t *testing.T) {
+	r, _, q, wfID, repoID := setupSubtaskRouter(t)
+	other := seedSecondRepo(t, q)
+	parent := mkTask(t, q, wfID, repoID, "parent", "plan")
+
+	post := func(repo string) map[string]any {
+		b := map[string]any{"title": "c", "description": "x", "file_scope": []string{"src/**"}}
+		if repo != "" {
+			b["repo_id"] = repo
+		}
+		w := postSubtask(t, r, parent.ID, b)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("%d %s", w.Code, w.Body.String())
+		}
+		var m map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &m)
+		return m
+	}
+	post("") // home sibling with src/**
+	foreign := post(other)
+	if od, _ := foreign["overlap_dependencies"].([]any); len(od) != 0 {
+		t.Fatalf("foreign child must not serialize behind a home sibling: %v", od)
+	}
+	home2 := post("")
+	if od, _ := home2["overlap_dependencies"].([]any); len(od) != 1 {
+		t.Fatalf("same-repo sibling should still overlap-serialize (and skip the foreign one): %v", od)
+	}
+}

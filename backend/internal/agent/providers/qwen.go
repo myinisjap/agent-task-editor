@@ -269,6 +269,7 @@ func (r *QwenRunner) runAttempt(ctx context.Context, input agent.RunInput, logCh
 			TaskID:      input.Task.ID,
 			Enabled:     input.AgentConfig.SubtasksEnabled,
 			MaxSubtasks: input.AgentConfig.MaxSubtasks,
+			CrossRepo:   input.AgentConfig.CrossRepoSubtasksEnabled,
 			PRReview:    input.PRReview,
 		})
 		if err != nil {

@@ -50,7 +50,7 @@ own `env` field. Any other backend env var will not reach the CLI.
 | `mcp__task-editor__update_task_notes` | Writes persistent notes for subsequent agents |
 | `mcp__task-editor__store_info` | Stores a summary visible in the task UI |
 | `mcp__task-editor__resolve_comment` | Marks an open inline review comment as addressed |
-| `mcp__task-editor__create_subtask` | Splits the task into a child task (only exposed when the agent config has `subtasks_enabled`) |
+| `mcp__task-editor__create_subtask` | Splits the task into a child task (only exposed when the agent config has `subtasks_enabled`; takes an optional `repo_id` for another repo when `cross_repo_subtasks_enabled` is also set) |
 
 Codex reads MCP servers from `[mcp_servers.<name>]` sections of `$CODEX_HOME/config.toml`, but any config key can also be set per invocation with `-c key=value`. This provider passes the sidecar that way on every run: `-c mcp_servers.task-editor.command=...`, `-c mcp_servers.task-editor.args=[...]`, and one `-c mcp_servers.task-editor.env.<KEY>=...` per sidecar env var (verified with `codex mcp list` against 0.163.0). Chat sessions wire the board tools the same way.
 

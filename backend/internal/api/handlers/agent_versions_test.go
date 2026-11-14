@@ -209,3 +209,48 @@ func TestAgentVersions_LazyBaseline(t *testing.T) {
 		t.Fatalf("versions: %+v", vs)
 	}
 }
+
+// cross_repo_subtasks_enabled defaults off, round-trips through create/update
+// (kept when omitted), writes a version when toggled, and is restored.
+func TestAgentVersions_CrossRepoFlag(t *testing.T) {
+	r, q := setupAgentsRouter(t)
+	pc := mkProviderConfig(t, q)
+	id := createAgentV(t, r, pc)
+
+	get := func() agentConfigResponse {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/agents/"+id, nil))
+		var c agentConfigResponse
+		_ = json.Unmarshal(w.Body.Bytes(), &c)
+		return c
+	}
+	if get().CrossRepoSubtasksEnabled {
+		t.Fatal("must default to false")
+	}
+	if w := putJSON(t, r, "/agents/"+id, agentBody(pc, "a", "p1", map[string]any{"cross_repo_subtasks_enabled": true})); w.Code != 200 {
+		t.Fatalf("put: %d %s", w.Code, w.Body)
+	}
+	if !get().CrossRepoSubtasksEnabled {
+		t.Fatal("flag not stored")
+	}
+	if n := len(listVersions(t, r, id)); n != 2 {
+		t.Fatalf("toggle should write a version, got %d", n)
+	}
+	// Omitted on update: kept.
+	if w := putJSON(t, r, "/agents/"+id, agentBody(pc, "a", "p1", nil)); w.Code != 200 {
+		t.Fatal(w.Body)
+	}
+	if !get().CrossRepoSubtasksEnabled {
+		t.Fatal("omitted flag should keep existing value")
+	}
+	if n := len(listVersions(t, r, id)); n != 2 {
+		t.Fatalf("no-op update wrote a version: %d", n)
+	}
+	// Restore v1 turns it off again.
+	if w := postJSON(t, r, "/agents/"+id+"/versions/1/restore", map[string]any{}); w.Code != 200 {
+		t.Fatalf("restore: %d %s", w.Code, w.Body)
+	}
+	if get().CrossRepoSubtasksEnabled {
+		t.Fatal("restore of v1 should clear the flag")
+	}
+}

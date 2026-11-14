@@ -87,7 +87,7 @@ as documented in ADR 0004. This means:
 - `update_task_notes` — **available**
 - `store_info` — **available**
 - `resolve_comment` — **available**
-- `create_subtask` — **available** when the agent config has subtasks enabled
+- `create_subtask` — **available** when the agent config has subtasks enabled; an optional `repo_id` (another repo, own PR) is added when `cross_repo_subtasks_enabled` is also on
 
 opencode's own tool-naming convention for MCP tools (e.g. whether it exposes
 `mcp__task-editor__signal_complete` verbatim, like `claude`/`qwen_code`, or

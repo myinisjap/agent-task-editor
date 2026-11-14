@@ -10,7 +10,7 @@ The agent package owns the agent runtime core: the provider abstraction, the bou
 | `pool.go` | `Pool` — bounded goroutine pool; persists logs, publishes WS events; classifies transient vs genuine failures and drives the per-task retry budget |
 | `dispatcher.go` | `Dispatcher` — periodic DB sweep; matches tasks to configs; submits jobs |
 | `worktree.go` | Per-task git worktree provisioning, safety-net commit, diff, push, teardown; `RepoGitLock` (per-repo git serialization) |
-| `subtasks.go` | `SubtaskCoordinator` — child→parent branch merge-back, conflict flagging, parent auto-advance (ADR 0016) |
+| `subtasks.go` | `SubtaskCoordinator` — child→parent branch merge-back, conflict flagging, parent auto-advance (ADR 0016); foreign-child PR landing, `IsForeignChild` / `IsForeignRepo` / `ForeignChildMergeStatus` ([ADR 0041](../../../docs/adr/0041-multi-repo-work-as-parent-with-per-repo-children.md)) |
 | `terminal.go` | `TerminalManager`/`NewTerminalManager` — interactive chat session CLI process management |
 | `errors.go` | `ErrTransient`; typed non-transient escalation signals `ErrMaxTurns` and `ErrCostBudgetExceeded` (detected via `errors.As` in `pool.go#handleProviderError`, routed to `waiting_human`, never retried) |
 | `errclass.go` | `Classification` + `ClassifyLine` — the single table of patterns that classify provider output (ADR 0010). `providers.is429Line`/`isTransientLine` are thin wrappers |
@@ -102,6 +102,8 @@ The pool persists each run's provider session id (`SetAgentRunSession`). `startR
 ## Subtask Merge-Back Coordinator (ADR 0016)
 
 `SubtaskCoordinator` is wired in `cmd/server/main.go`: `engine.OnTerminal` → `OnChildTerminal` (else the normal push/teardown), `pool.Subtasks` → `AfterParentRun`, `dispatcher.Subtasks` → `BuildConflictContext`. Child terminal → `--no-ff` merge into the parent branch; conflict → abort and `merge_status=merge_conflict`. Auto-advance requires every non-archived child terminal **and** `merged`, using `workflow.TriggerSubtasksComplete`. Per-parent mutex (`plocks`) then repo lock; merges are `pending` while the parent has a run in flight and flushed by `AfterParentRun`. Tests: `subtasks_e2e_test.go`, `subtasks_coord_test.go`.
+
+**Foreign children ([ADR 0041](../../../docs/adr/0041-multi-repo-work-as-parent-with-per-repo-children.md)).** A child whose `repo_id` differs from its parent's is *foreign* — derived via `IsForeignChild`/`IsForeignRepo` (never compare repo ids inline, never stored). `OnChildTerminal(ctx, child, childRepo)` routes it to `landForeignChild`: it never touches the parent's repo/worktree/branch/lock and never defers on the parent's active run; it calls the injected `SubtaskCoordinator.OpenPR` (wired in `cmd/server` to `prflow.CreateForTask`; `agent` cannot import `prflow`) with **no locks held**, tears down via `OnTaskTerminal` under only the child repo's lock, then takes the parent lock for the final `merge_status` write (`ForeignChildMergeStatus`: `pending`/`pr_open`/`merged`/`pr_closed`). Never hold two repo git locks (ADR 0009). `AfterParentRun`/`mergeChild` skip foreign children; the dispatcher doesn't fork them from the parent's branch (`parentBranchBase` → `""`); the pool pushes them like top-level tasks (`Task.ForeignChild`); ghsync mirrors their PR state into `merge_status`. Parent readiness for foreign children is a later stage (`evaluateParent` still waits for `merged`).
 
 ## Environment Variable Security
 

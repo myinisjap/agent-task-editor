@@ -797,3 +797,48 @@ func TestSyncTask_MergedClearsPushAndPRSideEffects(t *testing.T) {
 		t.Fatalf("expected 1 remaining row, got %+v", failed)
 	}
 }
+
+// A foreign subtask (different repo from its parent, ADR 0041) mirrors its PR
+// state into merge_status; a home subtask and a top-level task are untouched.
+func TestSyncTask_ForeignChildMergeStatus(t *testing.T) {
+	ctx := context.Background()
+	getPRHead := func(ctx context.Context, repo repoInfo, branch string) (forge.PRHead, error) {
+		return fakePRHead("pr_merged", "https://github.com/acme/widgets/pull/1", 1), nil
+	}
+	s, q, _ := newTestSyncer(t, getPRHead)
+	wfID, label := newTestWorkflow(t, q)
+	repoA := newTestRepo(t, q, wfID, initRepo(t), ghURL())
+	repoB := newTestRepo(t, q, wfID, initRepo(t), ghURL())
+	parent := newTestTask(t, q, repoA, wfID, label, "", "", "", "")
+
+	mkChild := func(repoID string) gen.Task {
+		id := uuid.NewString()
+		if _, err := q.CreateSubtask(ctx, gen.CreateSubtaskParams{ID: id, Title: "c", Type: "feature", Label: label, RepoID: repoID, WorkflowID: wfID, ParentTaskID: &parent.ID}); err != nil {
+			t.Fatal(err)
+		}
+		if err := q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{Branch: "br-" + id[:8], BaseRef: "main", ID: id}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := q.SetTaskPR(ctx, gen.SetTaskPRParams{GitState: "pr_open", ID: id}); err != nil {
+			t.Fatal(err)
+		}
+		tk, _ := q.GetTask(ctx, id)
+		return tk
+	}
+	foreign, home := mkChild(repoB), mkChild(repoA)
+	top := newTestTask(t, q, repoA, wfID, label, "top-br", "", "pr_open", "")
+
+	for _, tk := range []gen.Task{foreign, home, top} {
+		s.syncTask(ctx, tk, repoInfo{ghName: "acme/widgets", path: t.TempDir()})
+	}
+	want := map[string]string{foreign.ID: "merged", home.ID: "", top.ID: ""}
+	for id, ms := range want {
+		got, _ := q.GetTask(ctx, id)
+		if got.GitState != "pr_merged" {
+			t.Fatalf("%s git_state=%q", id, got.GitState)
+		}
+		if got.MergeStatus != ms {
+			t.Errorf("%s merge_status=%q want %q", id, got.MergeStatus, ms)
+		}
+	}
+}

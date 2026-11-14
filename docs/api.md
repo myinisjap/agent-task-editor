@@ -520,7 +520,8 @@ Create a child task under the parent named in the path.
   "description": "string",
   "type": "feature | bug | ...",
   "label": "optional agent_ignore label override",
-  "file_scope": ["repo-relative/globs/**"]
+  "file_scope": ["repo-relative/globs/**"],
+  "repo_id": "optional id of another configured repo (ADR 0041)"
 }
 ```
 
@@ -538,6 +539,7 @@ Create a child task under the parent named in the path.
   live (non-terminal, non-archived) scoped sibling, the new child gets a dependency
   on that sibling so they run sequentially. Unscoped subtasks get no overlap check.
   Creating a child resets the parent's `integration_status`.
+- `repo_id` (optional, [ADR 0041](adr/0041-multi-repo-work-as-parent-with-per-repo-children.md)): omitted or equal to the parent's repo creates a normal child that merges back. Another repo creates a *foreign child*: it uses the **parent's workflow** (not the other repo's default), forks from that repo's base, and on reaching a terminal label is pushed and gets its own PR instead of merging into the parent branch. Its `merge_status` follows the PR: `pending` → `pr_open` → `merged` (or `pr_closed`). An unknown `repo_id` is `400`. When a creating run is in flight its config must have `cross_repo_subtasks_enabled` for a foreign `repo_id` (`403` otherwise). With no creating run in scope (a human calling the endpoint directly) `repo_id` is allowed, mirroring how `subtasks_enabled` is only enforced for an in-flight run. Overlap serialization compares only siblings in the same repo. Depth limit and the per-parent cap apply unchanged.
 - Auto-creates a parent→child dependency edge (see Task Dependencies above) so
   the parent can't be dispatched again until every child finishes.
 - Publishes `task.created` (with `parent_id`) and `task.updated` (for the

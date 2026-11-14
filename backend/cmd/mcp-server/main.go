@@ -126,6 +126,7 @@ func main() {
 		taskID:      os.Getenv("TASK_ID"),
 		apiToken:    os.Getenv("API_TOKEN"),
 		maxSubtasks: os.Getenv("MAX_SUBTASKS"),
+		crossRepo:   os.Getenv("CROSS_REPO_SUBTASKS_ENABLED") == "1",
 	}
 
 	enc := json.NewEncoder(os.Stdout)
@@ -261,20 +262,7 @@ func main() {
 				})
 			}
 			if subtasks.enabled {
-				tools = append(tools, map[string]any{
-					"name":        "create_subtask",
-					"description": "Split this task into a smaller child task that a later agent will execute. Children run on their own branch (cut from this task's branch) and merge back automatically. Use during planning to decompose large work. Children land on a human-review label; a human releases them. Capped at " + subtasks.maxSubtasks + " per task. Give every subtask a file_scope; subtasks with overlapping scopes run sequentially. Only fan out for 3+ independent parts that touch disjoint files - otherwise write a single plan.",
-					"inputSchema": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"title":       map[string]any{"type": "string", "description": "Short title of the subtask"},
-							"description": map[string]any{"type": "string", "description": "What the subtask should accomplish"},
-							"type":        map[string]any{"type": "string", "enum": []string{"feature", "bug", "chore", "spike"}, "description": "Task type (default feature)"},
-							"file_scope":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional repo-relative globs this subtask may change (e.g. backend/internal/foo/**). Siblings with overlapping scopes are automatically serialized."},
-						},
-						"required": []string{"title", "description"},
-					},
-				})
+				tools = append(tools, createSubtaskTool(subtasks))
 			}
 			respond(map[string]any{"tools": tools})
 
@@ -440,6 +428,8 @@ type subtaskConfig struct {
 	taskID      string
 	apiToken    string
 	maxSubtasks string
+	// crossRepo exposes the optional repo_id arg (ADR 0041).
+	crossRepo bool
 }
 
 // createSubtask posts a new child task to the backend REST API and returns a
@@ -454,6 +444,7 @@ func createSubtask(cfg subtaskConfig, args json.RawMessage, log *slog.Logger) st
 		Description string   `json:"description"`
 		Type        string   `json:"type"`
 		FileScope   []string `json:"file_scope"`
+		RepoID      string   `json:"repo_id"`
 	}
 	_ = json.Unmarshal(args, &a)
 	if a.Title == "" {
@@ -464,6 +455,9 @@ func createSubtask(cfg subtaskConfig, args json.RawMessage, log *slog.Logger) st
 		"title":       a.Title,
 		"description": a.Description,
 		"type":        a.Type,
+	}
+	if a.RepoID != "" {
+		body["repo_id"] = a.RepoID
 	}
 	if len(a.FileScope) > 0 {
 		body["file_scope"] = a.FileScope
@@ -560,4 +554,31 @@ type prComment struct {
 	Line      int    `json:"line"`
 	StartLine int    `json:"start_line,omitempty"`
 	Body      string `json:"body"`
+}
+
+// createSubtaskTool builds the create_subtask tool definition. The optional
+// repo_id property (and its description sentence) is present only when the
+// run's agent config enabled cross-repo subtasks (ADR 0041), so agents without
+// the flag see a byte-identical tool list.
+func createSubtaskTool(cfg subtaskConfig) map[string]any {
+	desc := "Split this task into a smaller child task that a later agent will execute. Children run on their own branch (cut from this task's branch) and merge back automatically. Use during planning to decompose large work. Children land on a human-review label; a human releases them. Capped at " + cfg.maxSubtasks + " per task. Give every subtask a file_scope; subtasks with overlapping scopes run sequentially. Only fan out for 3+ independent parts that touch disjoint files - otherwise write a single plan."
+	props := map[string]any{
+		"title":       map[string]any{"type": "string", "description": "Short title of the subtask"},
+		"description": map[string]any{"type": "string", "description": "What the subtask should accomplish"},
+		"type":        map[string]any{"type": "string", "enum": []string{"feature", "bug", "chore", "spike"}, "description": "Task type (default feature)"},
+		"file_scope":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional repo-relative globs this subtask may change (e.g. backend/internal/foo/**). Siblings with overlapping scopes are automatically serialized."},
+	}
+	if cfg.crossRepo {
+		desc += " A subtask may target another configured repo via repo_id; it then lands via its own pull request instead of merging back."
+		props["repo_id"] = map[string]any{"type": "string", "description": "Optional id of another configured repo. The child is created there, runs on its own branch from that repo's base, and lands via its own pull request instead of merging back into this task's branch. Omit for this task's repo."}
+	}
+	return map[string]any{
+		"name":        "create_subtask",
+		"description": desc,
+		"inputSchema": map[string]any{
+			"type":       "object",
+			"properties": props,
+			"required":   []string{"title", "description"},
+		},
+	}
 }

@@ -94,7 +94,7 @@ outbound webhook when `NOTIFY_WEBHOOK_URL` is set (see
 A lightweight "something about this task changed, refetch it" signal. Fired
 from several places — a dependent task's blocked/blocking badge may have
 changed after a label change, a dependency edge was added/removed, a subtask
-was created (for the parent), a subtask's merge status changed, or an agent
+was created (for the parent), a subtask's merge status changed (including ghsync mirroring a foreign child's PR state), or an agent
 run just completed. The payload intentionally carries nothing but the id —
 clients should refetch the task rather than rely on payload fields.
 
