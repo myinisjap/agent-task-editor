@@ -92,29 +92,6 @@ func (q *Queries) RecordHumanReply(ctx context.Context, arg RecordHumanReplyPara
 	return err
 }
 
-const upsertHumanQuestion = `-- name: UpsertHumanQuestion :exec
-INSERT INTO task_human_decisions (run_id, task_id, label, escalation_reason, question)
-VALUES (?1, ?2, (SELECT label FROM tasks WHERE id = ?2), ?3, ?4)
-ON CONFLICT(run_id) DO UPDATE SET escalation_reason = excluded.escalation_reason, question = excluded.question
-`
-
-type UpsertHumanQuestionParams struct {
-	RunID            string `json:"run_id"`
-	TaskID           string `json:"task_id"`
-	EscalationReason string `json:"escalation_reason"`
-	Question         string `json:"question"`
-}
-
-func (q *Queries) UpsertHumanQuestion(ctx context.Context, arg UpsertHumanQuestionParams) error {
-	_, err := q.db.ExecContext(ctx, upsertHumanQuestion,
-		arg.RunID,
-		arg.TaskID,
-		arg.EscalationReason,
-		arg.Question,
-	)
-	return err
-}
-
 const recordHumanSteer = `-- name: RecordHumanSteer :exec
 INSERT INTO task_human_decisions (run_id, task_id, label, escalation_reason, question, reply, reply_run_id, replied_at, kind, actor)
 VALUES (?1, ?2, ?3, 'steer', ?4, ?5, ?6, CURRENT_TIMESTAMP, 'steer', ?7)
@@ -140,6 +117,29 @@ func (q *Queries) RecordHumanSteer(ctx context.Context, arg RecordHumanSteerPara
 		arg.Reply,
 		arg.ReplyRunID,
 		arg.Actor,
+	)
+	return err
+}
+
+const upsertHumanQuestion = `-- name: UpsertHumanQuestion :exec
+INSERT INTO task_human_decisions (run_id, task_id, label, escalation_reason, question)
+VALUES (?1, ?2, (SELECT label FROM tasks WHERE id = ?2), ?3, ?4)
+ON CONFLICT(run_id) DO UPDATE SET escalation_reason = excluded.escalation_reason, question = excluded.question
+`
+
+type UpsertHumanQuestionParams struct {
+	RunID            string `json:"run_id"`
+	TaskID           string `json:"task_id"`
+	EscalationReason string `json:"escalation_reason"`
+	Question         string `json:"question"`
+}
+
+func (q *Queries) UpsertHumanQuestion(ctx context.Context, arg UpsertHumanQuestionParams) error {
+	_, err := q.db.ExecContext(ctx, upsertHumanQuestion,
+		arg.RunID,
+		arg.TaskID,
+		arg.EscalationReason,
+		arg.Question,
 	)
 	return err
 }
