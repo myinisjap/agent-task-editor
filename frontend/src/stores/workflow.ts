@@ -12,6 +12,19 @@ type WorkflowState = {
   active: () => Workflow | undefined
 }
 
+// A transient failure (backend still warming up, a locked sqlite write) must not
+// leave the board permanently without columns, so retry a few times.
+async function listWithRetry(attempts = 4, delayMs = 400) {
+  for (let i = 1; ; i++) {
+    try {
+      return await api.workflows.list()
+    } catch (err) {
+      if (i >= attempts) throw err
+      await new Promise((r) => setTimeout(r, delayMs * i))
+    }
+  }
+}
+
 export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   workflows: [],
   loading: false,
@@ -22,7 +35,7 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   fetch: async () => {
     set({ loading: true })
     try {
-      const workflows = await api.workflows.list()
+      const workflows = await listWithRetry()
       const list = workflows ?? []
       // Validate stored selectedId still exists in the fetched list
       const storedId = get().selectedId

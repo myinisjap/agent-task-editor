@@ -46,7 +46,33 @@ jobs:
           git diff --exit-code -- internal/storage/gen
 
       - name: go test (with coverage)
-        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+        shell: bash
+        run: |
+          set +e
+          go test -json -race -coverprofile=coverage.out -covermode=atomic ./... > test.json
+          status=$?
+          set -e
+          jq -r 'select(.Action=="output") | .Output' test.json | tr -d '\r' | sed -e 's/\n$//' || true
+          if [ "$status" -ne 0 ]; then
+            {
+              echo "### Failed Go packages/tests"
+              jq -r 'select(.Action=="fail") | "- \(.Package) \(.Test // "(package)")"' test.json | sort -u
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "=== Output of failed tests/packages ==="
+            jq -rs '
+              (map(select(.Action=="fail") | [.Package, (.Test // "")]) | unique) as $f
+              | .[] | select(.Action=="output")
+              | select(. as $e | any($f[]; .[0]==$e.Package and (.[1]=="" or .[1]==$e.Test)))
+              | .Output' test.json | tail -n 400
+          fi
+          exit $status
+      - name: Upload go test json
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: go-test-json
+          path: backend/test.json
+          if-no-files-found: ignore
 
       # Two things are filtered out of the coverage profile before computing
       # the total, because they'd distort the metric rather than reflect real
