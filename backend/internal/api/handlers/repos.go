@@ -130,6 +130,8 @@ type createRepoBody struct {
 	PreviewCommand       *string `json:"preview_command"`
 	PreviewRoutes        *string `json:"preview_routes"`
 	PreviewPathsGlob     *string `json:"preview_paths_glob"`
+	AutoMergeMode        *string `json:"auto_merge_mode"`
+	AutoMergeMethod      *string `json:"auto_merge_method"`
 }
 
 func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -230,6 +232,11 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	autoMergeMode, autoMergeMethod, ok := resolveAutoMerge(w, body.AutoMergeMode, body.AutoMergeMethod, "", "")
+	if !ok {
+		return
+	}
+
 	repo, err := h.q.CreateRepo(r.Context(), gen.CreateRepoParams{
 		ID:                            uuid.NewString(),
 		Name:                          body.Name,
@@ -252,6 +259,8 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		PreviewCommand:                pv.Command,
 		PreviewRoutes:                 pv.Routes,
 		PreviewPathsGlob:              pv.PathsGlob,
+		AutoMergeMode:                 autoMergeMode,
+		AutoMergeMethod:               autoMergeMethod,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -670,6 +679,8 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		PreviewCommand       *string `json:"preview_command"`
 		PreviewRoutes        *string `json:"preview_routes"`
 		PreviewPathsGlob     *string `json:"preview_paths_glob"`
+		AutoMergeMode        *string `json:"auto_merge_mode"`
+		AutoMergeMethod      *string `json:"auto_merge_method"`
 	}
 	if err := json.Unmarshal(bodyBytes, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -835,6 +846,11 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	autoMergeMode, autoMergeMethod, ok := resolveAutoMerge(w, body.AutoMergeMode, body.AutoMergeMethod, existing.AutoMergeMode, existing.AutoMergeMethod)
+	if !ok {
+		return
+	}
+
 	if issueSyncEnabled != 0 {
 		if remoteURL == nil || *remoteURL == "" {
 			Err(w, http.StatusBadRequest, "issue sync requires a GitHub remote_url")
@@ -911,6 +927,8 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		PreviewCommand:                pv.Command,
 		PreviewRoutes:                 pv.Routes,
 		PreviewPathsGlob:              pv.PathsGlob,
+		AutoMergeMode:                 autoMergeMode,
+		AutoMergeMethod:               autoMergeMethod,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
@@ -1137,4 +1155,38 @@ func resolvePreview(w http.ResponseWriter, cmd, routes, globs *string, cur previ
 		out.PathsGlob = strings.Join(lines, "\n")
 	}
 	return out, true
+}
+
+// Auto-merge policy values (repos.auto_merge_mode / auto_merge_method).
+const (
+	autoMergeOff       = "off"
+	autoMergeWhenGreen = "when_green"
+)
+
+// resolveAutoMerge validates the auto_merge_mode / auto_merge_method request
+// fields. A nil field keeps the current value; empty stored values read as the
+// defaults (off / squash).
+func resolveAutoMerge(w http.ResponseWriter, mode, method *string, curMode, curMethod string) (string, string, bool) {
+	m, me := curMode, curMethod
+	if m == "" {
+		m = autoMergeOff
+	}
+	if me == "" {
+		me = "squash"
+	}
+	if mode != nil {
+		m = strings.TrimSpace(*mode)
+		if m != autoMergeOff && m != autoMergeWhenGreen {
+			Err(w, http.StatusBadRequest, "auto_merge_mode must be one of: off, when_green")
+			return "", "", false
+		}
+	}
+	if method != nil {
+		me = strings.TrimSpace(*method)
+		if me != "squash" && me != "merge" && me != "rebase" {
+			Err(w, http.StatusBadRequest, "auto_merge_method must be one of: squash, merge, rebase")
+			return "", "", false
+		}
+	}
+	return m, me, true
 }

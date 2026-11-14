@@ -50,7 +50,7 @@ ORDER BY created_at ASC;
 DELETE FROM task_side_effects WHERE task_id = ? AND status = 'failed';
 
 -- name: DeleteMootTaskSideEffects :execrows
--- Push (terminal) and PR (create_pr) effects are moot once the PR is merged or
+-- Push (terminal), PR (create_pr) and auto_merge effects are moot once the PR is merged or
 -- closed upstream. Running rows are left to the worker. Write-back effects stay.
 DELETE FROM task_side_effects
-WHERE task_id = ? AND kind IN ('terminal', 'create_pr') AND status IN ('pending', 'failed');
+WHERE task_id = ? AND kind IN ('terminal', 'create_pr', 'auto_merge') AND status IN ('pending', 'failed');

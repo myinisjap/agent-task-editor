@@ -16,7 +16,8 @@ function formatTimestamp(iso: string): string {
 // for waiting-on-agent-like activity, human = emerald for a completed human
 // action, subtasks_complete = slate as a neutral system trigger).
 const isPolicy = (e: TaskLabelHistoryEntry) => e.actor_id === 'policy'
-const isSync = (e: TaskLabelHistoryEntry) => e.actor_id === 'pr-feedback-sync'
+const isAutoMerge = (e: TaskLabelHistoryEntry) => e.actor_id === 'auto-merge'
+const isSync = (e: TaskLabelHistoryEntry) => e.actor_id === 'pr-feedback-sync' || isAutoMerge(e)
 
 function triggerBadgeClass(trigger: string): string {
   switch (trigger) {
@@ -83,13 +84,13 @@ export default function LabelHistoryList({
                 <span className="text-fg">{labelDisplayNameByName(entry.to_label, labels)}</span>
               </span>
               <span className={`shrink-0 px-1.5 py-0.5 rounded text-[11px] ${isPolicy(entry) ? 'bg-teal-900/60 text-teal-200' : isSync(entry) ? 'bg-border text-fg-muted' : triggerBadgeClass(entry.trigger)}`}>
-                {isPolicy(entry) ? 'Approved by policy' : isSync(entry) ? 'PR feedback' : entry.trigger}
+                {isPolicy(entry) ? 'Approved by policy' : isSync(entry) ? (isAutoMerge(entry) ? 'Auto-merge' : 'PR feedback') : entry.trigger}
               </span>
             </div>
             <div className="text-fg-subtle text-[11px] mt-0.5 flex items-center gap-1">
               <span>{formatTimestamp(entry.created_at)}</span>
               {entry.trigger === 'human' && (
-                <span>· {isPolicy(entry) ? 'by policy' : isSync(entry) ? 'by PR feedback sync' : `by ${entry.actor_id ? entry.actor_id : 'you'}`}</span>
+                <span>· {isPolicy(entry) ? 'by policy' : isSync(entry) ? (isAutoMerge(entry) ? 'by auto-merge' : 'by PR feedback sync') : `by ${entry.actor_id ? entry.actor_id : 'you'}`}</span>
               )}
               {entry.trigger !== 'human' && entry.actor_id && (
                 <span className="font-mono">· {entry.actor_id.slice(0, 8)}</span>

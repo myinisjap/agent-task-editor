@@ -14,7 +14,10 @@
 // risking an import cycle.
 package forge
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // Mergeability is a forge's verdict on whether a PR/MR can be merged into its
 // base branch without conflicts. Forges typically compute this asynchronously
@@ -60,6 +63,8 @@ type PRHead struct {
 	// doesn't report one — callers must treat that as "always fetch" rather
 	// than silently skipping ingestion forever.
 	UpdatedAt string
+	// Draft is true when the PR/MR is a draft. Auto-merge never merges drafts.
+	Draft bool
 }
 
 // Review is a single review left on a PR/MR (a "changes requested"/
@@ -109,6 +114,31 @@ type Check struct {
 	// Bucket is a coarse classification: "pass", "fail", "pending", "skipping", "cancel".
 	Bucket string
 }
+
+// MergeMethod is how a PR/MR is merged.
+type MergeMethod string
+
+const (
+	MergeSquash MergeMethod = "squash"
+	MergeMerge  MergeMethod = "merge"
+	MergeRebase MergeMethod = "rebase"
+)
+
+// ValidMergeMethod reports whether m is one of the supported methods.
+func ValidMergeMethod(m MergeMethod) bool {
+	return m == MergeSquash || m == MergeMerge || m == MergeRebase
+}
+
+var (
+	// ErrMergeRefused is wrapped by MergePullRequest when the forge refused the
+	// merge on policy grounds (branch protection, required review/checks, not
+	// mergeable). Retrying will not help until a person intervenes.
+	ErrMergeRefused = errors.New("merge refused by the forge")
+	// ErrHeadMoved is returned by MergePullRequest when the PR's head commit no
+	// longer matches the expected SHA (or the forge reports a merge conflict
+	// on the merge attempt). The caller should re-evaluate on the next refresh.
+	ErrHeadMoved = errors.New("pull request head changed since it was evaluated")
+)
 
 // Issue is an open issue/ticket as returned by a forge's issue-list API.
 type Issue struct {
@@ -197,6 +227,22 @@ type Forge interface {
 	// FailedChecks returns the checks on the given PR/MR that failed or were
 	// cancelled (pending/skipped/passing checks are excluded).
 	FailedChecks(ctx context.Context, repoName string, prNumber int) ([]Check, error)
+
+	// PRChecks returns every CI/status check on the given PR/MR's head commit
+	// with its coarse Bucket ("pass", "fail", "pending", "skipping", "cancel"),
+	// de-duplicated to the latest result per check. An empty slice means the
+	// commit has no checks at all. Used by auto-merge to require that every
+	// check completed successfully; implementations must report any check that
+	// has not finished as "pending" (never "pass").
+	PRChecks(ctx context.Context, repoName string, prNumber int) ([]Check, error)
+
+	// MergePullRequest merges the PR/MR using method (MergeSquash, MergeMerge
+	// or MergeRebase). expectedHeadSHA, when non-empty, is passed to the forge
+	// so the merge is refused if the head moved since the caller evaluated it
+	// (returns ErrHeadMoved). A refusal by the forge's rules (branch
+	// protection, required reviews, not mergeable) returns an error wrapping
+	// ErrMergeRefused whose text is the forge's own explanation.
+	MergePullRequest(ctx context.Context, repoName string, prNumber int, method MergeMethod, expectedHeadSHA string) error
 
 	// ListOpenIssues returns every open issue for repoName, optionally
 	// filtered to issues carrying the given label (empty = all open issues).

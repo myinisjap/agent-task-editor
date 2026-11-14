@@ -70,6 +70,14 @@ func (GitHub) FailedChecks(ctx context.Context, repoName string, prNumber int) (
 	return GetFailedChecks(ctx, repoName, prNumber)
 }
 
+func (GitHub) PRChecks(ctx context.Context, repoName string, prNumber int) ([]forge.Check, error) {
+	return GetPRChecks(ctx, repoName, prNumber)
+}
+
+func (GitHub) MergePullRequest(ctx context.Context, repoName string, prNumber int, method forge.MergeMethod, expectedHeadSHA string) error {
+	return MergePullRequest(ctx, repoName, prNumber, method, expectedHeadSHA)
+}
+
 func (GitHub) ListOpenIssues(ctx context.Context, repoName, label string) ([]forge.Issue, error) {
 	return ListOpenIssues(ctx, repoName, label)
 }
@@ -291,6 +299,7 @@ type rawPR struct {
 	UpdatedAt string `json:"updated_at"`
 	MergedAt  string `json:"merged_at"`
 	Mergeable *bool  `json:"mergeable"`
+	Draft     bool   `json:"draft"`
 	Head      struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
@@ -488,6 +497,7 @@ func GetPRHead(ctx context.Context, repoName, branch string) (PRHead, error) {
 		State:     normalizePRState(full.rawState()),
 		URL:       full.HTMLURL,
 		UpdatedAt: full.UpdatedAt,
+		Draft:     full.Draft,
 	}, nil
 }
 
@@ -822,4 +832,127 @@ func ParseGitHubName(remoteURL string) (string, bool) {
 	}
 
 	return "", false
+}
+
+// GetPRChecks returns every check run and commit status on the PR's head
+// commit, bucketed. A check run that has not completed is "pending". Statuses
+// come from the combined-status endpoint, which already reports only the
+// latest state per context.
+func GetPRChecks(ctx context.Context, repoName string, prNumber int) ([]Check, error) {
+	metrics.GhCallsTotal.WithLabelValues("pr_checks_all").Inc()
+	pr, err := getPR(ctx, repoName, prNumber)
+	if err != nil {
+		return nil, err
+	}
+	sha := pr.Head.SHA
+	checks := make([]Check, 0)
+
+	err = apiPages(ctx, fmt.Sprintf("%s/commits/%s/check-runs?per_page=100", repoPath(repoName), url.PathEscape(sha)), func(b []byte) error {
+		var page struct {
+			CheckRuns []struct {
+				Name       string `json:"name"`
+				Status     string `json:"status"`
+				Conclusion string `json:"conclusion"`
+				HTMLURL    string `json:"html_url"`
+			} `json:"check_runs"`
+		}
+		if err := json.Unmarshal(b, &page); err != nil {
+			return err
+		}
+		for _, c := range page.CheckRuns {
+			checks = append(checks, Check{Name: c.Name, Link: c.HTMLURL, Bucket: checkRunBucket(c.Status, c.Conclusion)})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	err = apiPages(ctx, fmt.Sprintf("%s/commits/%s/status?per_page=100", repoPath(repoName), url.PathEscape(sha)), func(b []byte) error {
+		var page struct {
+			Statuses []struct {
+				Context   string `json:"context"`
+				State     string `json:"state"`
+				TargetURL string `json:"target_url"`
+			} `json:"statuses"`
+		}
+		if err := json.Unmarshal(b, &page); err != nil {
+			return err
+		}
+		for _, s := range page.Statuses {
+			bucket := "pending"
+			switch s.State {
+			case "success":
+				bucket = "pass"
+			case "failure", "error":
+				bucket = "fail"
+			}
+			checks = append(checks, Check{Name: s.Context, Link: s.TargetURL, Bucket: bucket})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return checks, nil
+}
+
+// checkRunBucket maps a check run's status/conclusion to a Check bucket.
+// Anything not explicitly successful is not "pass" (unknown -> "pending").
+func checkRunBucket(status, conclusion string) string {
+	if status != "completed" {
+		return "pending"
+	}
+	switch conclusion {
+	case "success":
+		return "pass"
+	case "neutral", "skipped":
+		return "skipping"
+	case "cancelled":
+		return "cancel"
+	case "failure", "timed_out", "startup_failure", "action_required", "stale":
+		return "fail"
+	}
+	return "pending"
+}
+
+// MergePullRequest merges a PR via PUT /pulls/{n}/merge. expectedHeadSHA, if
+// set, is sent as "sha" so GitHub rejects the merge (409) when the head moved.
+// 405 (not mergeable / blocked by branch protection or required reviews) and
+// 422 wrap forge.ErrMergeRefused with GitHub's own message.
+func MergePullRequest(ctx context.Context, repoName string, prNumber int, method forge.MergeMethod, expectedHeadSHA string) error {
+	metrics.GhCallsTotal.WithLabelValues("pr_merge").Inc()
+	if !forge.ValidMergeMethod(method) {
+		return fmt.Errorf("unsupported merge method %q", method)
+	}
+	payload := map[string]any{"merge_method": string(method)}
+	if expectedHeadSHA != "" {
+		payload["sha"] = expectedHeadSHA
+	}
+	_, _, err := apiDo(ctx, http.MethodPut, fmt.Sprintf("%s/pulls/%d/merge", repoPath(repoName), prNumber), payload)
+	if err == nil {
+		return nil
+	}
+	var ae *apiError
+	if errors.As(err, &ae) {
+		switch ae.Status {
+		case http.StatusConflict:
+			return fmt.Errorf("%w: %s", forge.ErrHeadMoved, apiMessage(ae.Body))
+		case http.StatusMethodNotAllowed, http.StatusUnprocessableEntity, http.StatusForbidden:
+			return fmt.Errorf("%w: %s", forge.ErrMergeRefused, apiMessage(ae.Body))
+		}
+	}
+	return err
+}
+
+// apiMessage extracts GitHub's {"message": ...} text from an error body, falling
+// back to the trimmed raw body.
+func apiMessage(body string) string {
+	var m struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal([]byte(body), &m) == nil && strings.TrimSpace(m.Message) != "" {
+		return strings.TrimSpace(m.Message)
+	}
+	return strings.TrimSpace(body)
 }

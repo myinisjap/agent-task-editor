@@ -838,6 +838,17 @@ components:
             that are waiting, being retried after a failure, or failed for
             good. Populated on GET /tasks and GET /tasks/{id}; always an array,
             empty when nothing is outstanding or on mutation responses.
+        auto_merge:
+          nullable: true
+          type: object
+          description: >
+            Latest auto-merge evaluation of the task's open PR when the repo's
+            auto_merge_mode is when_green. null when it does not apply.
+          properties:
+            state: { type: string, enum: [waiting, merging], description: "waiting = blocked (see reason/message); merging = merge queued" }
+            reason: { type: string, description: "Blocking code, e.g. checks_pending, checks_failed, conflict, changes_requested, draft, always_ask, paused, active_run, no_checks, merge_refused; empty when merging" }
+            message: { type: string, description: Human-readable explanation of reason }
+          required: [state, reason, message]
         source_pending_update:
           nullable: true
           allOf:
@@ -878,9 +889,10 @@ components:
       properties:
         kind:
           type: string
-          enum: [terminal, create_pr, leave_not_ready]
+          enum: [terminal, create_pr, leave_not_ready, auto_merge]
           description: >
-            terminal = push the branch and tear down the worktree (or merge a
+            auto_merge = merge the task's PR through the forge (repo auto-merge
+            policy; a forge refusal fails it at once, no retries); terminal = push the branch and tear down the worktree (or merge a
             subtask back); create_pr = push and open a pull request;
             leave_not_ready = apply the in-progress signal to the source issue.
         status:
@@ -1844,6 +1856,18 @@ components:
           description: >
             Newline-separated globs deciding when a diff counts as a UI change.
             Empty = frontend/**, web/**, src/**/*.{tsx,jsx,vue,svelte,css}.
+        auto_merge_mode:
+          type: string
+          enum: [off, when_green]
+          description: >
+            Opt-in auto-merge policy (default off). when_green: ATE merges a
+            task's PR once all checks pass, it is not a draft or conflicting,
+            has no unresolved changes-requested review and the task has no
+            live run, is not paused and not always_ask. See docs/workflows.md.
+        auto_merge_method:
+          type: string
+          enum: [squash, merge, rebase]
+          description: Merge method used by auto-merge (default squash).
         created_at:  { type: string, format: date-time }
       required: [id, name, path, created_at]
 
@@ -5706,6 +5730,7 @@ paths:
         The body also accepts verify_command (string) and
         verify_timeout_seconds (integer, 1-3600); see the Repo schema.
         It also accepts preview_command, preview_routes and preview_paths_glob (strings).
+        It also accepts auto_merge_mode (off|when_green) and auto_merge_method (squash|merge|rebase).
       responses:
         "201":
           content:
@@ -5778,6 +5803,14 @@ paths:
                 preview_paths_glob:
                   type: string
                   description: Replaces the newline-separated UI path globs (empty = defaults). Omit to leave unchanged.
+                auto_merge_mode:
+                  type: string
+                  enum: [off, when_green]
+                  description: Auto-merge policy. Omit to leave unchanged.
+                auto_merge_method:
+                  type: string
+                  enum: [squash, merge, rebase]
+                  description: Auto-merge method. Omit to leave unchanged.
       responses:
         "200":
           content:

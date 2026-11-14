@@ -88,6 +88,7 @@ func (q *Queries) ListOutcomeQualityAgentConfigs(ctx context.Context) ([]ListOut
 const listOutcomeQualityLabelHistory = `-- name: ListOutcomeQualityLabelHistory :many
 SELECT id, task_id, from_label, to_label, trigger, created_at
 FROM task_label_history
+WHERE actor_id IS NULL OR actor_id != 'auto-merge'
 ORDER BY task_id, created_at ASC, id ASC
 `
 
