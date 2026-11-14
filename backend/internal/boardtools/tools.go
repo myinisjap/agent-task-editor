@@ -102,6 +102,7 @@ var AdminRemoteTools = append(slices.Clone(RemoteTools),
 	"create_workflow", "update_workflow", "add_repo", "update_repo",
 	"create_agent", "update_agent",
 	"create_template", "update_template", "create_schedule", "update_schedule",
+	"list_recipes", "install_recipe",
 )
 
 // Select returns the tools with the given names, in that order. Unknown names

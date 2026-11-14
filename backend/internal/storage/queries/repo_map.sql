@@ -1,4 +1,4 @@
--- Repo map storage (088_repo_map). Keep this file ASCII-only.
+-- Repo map storage (092_repo_map). Keep this file ASCII-only.
 
 -- name: GetRepoMapConfig :one
 SELECT * FROM repo_map_config WHERE repo_id = ?1;

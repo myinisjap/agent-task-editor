@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
+	"github.com/myinisjap/agent-task-editor/backend/internal/prreview"
 	"log/slog"
 	"net/http"
 	"os"
@@ -17,13 +18,16 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/agentuser"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
+	"github.com/myinisjap/agent-task-editor/backend/internal/automerge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/escape"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/policy"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/propose"
 	"github.com/myinisjap/agent-task-editor/backend/internal/backup"
 	"github.com/myinisjap/agent-task-editor/backend/internal/config"
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/ghsync"
 	"github.com/myinisjap/agent-task-editor/backend/internal/health"
+	"github.com/myinisjap/agent-task-editor/backend/internal/lessons/distill"
 	"github.com/myinisjap/agent-task-editor/backend/internal/logretention"
 	"github.com/myinisjap/agent-task-editor/backend/internal/memguard"
 	"github.com/myinisjap/agent-task-editor/backend/internal/notify"
@@ -144,6 +148,10 @@ func main() {
 		slog.Error("failed to seed default workflow", "err", err)
 		os.Exit(1)
 	}
+	if err := storage.SeedPRReviewWorkflow(seedCtx, db); err != nil {
+		slog.Error("failed to seed PR review workflow", "err", err)
+		os.Exit(1)
+	}
 
 	// Mark runs left 'running'/'pending' by a previous crash as 'interrupted'
 	// (not 'failed') and clear every task's dispatch lock so they re-dispatch;
@@ -256,6 +264,39 @@ func main() {
 		return nil
 	}
 
+	// Review-only PR path (opt-in per repo): the ingester turns eligible open
+	// PRs into review tasks (webhook + polling), the poster delivers the
+	// agent's review back on the PR as a comment-type review via the outbox.
+	prIngester := prreview.New(db.SQL(), engine, pub)
+	prPoster := prreview.NewPoster(db.SQL(), pub)
+	engine.OnPRReviewPost = func(ctx context.Context, task gen.Task) error {
+		repo, err := termQ.GetRepo(ctx, task.RepoID)
+		if err != nil {
+			return fmt.Errorf("get repo: %w", err)
+		}
+		return prPoster.Post(ctx, task, repo)
+	}
+
+	// On the auto_merge outbox effect (enqueued by ghsync when a repo's opt-in
+	// auto-merge policy finds a PR safe): re-evaluate against live forge state
+	// and merge, pinned to the head SHA. A forge refusal (branch protection,
+	// required review) is a permanent failure surfaced in Needs you. See
+	// internal/automerge.
+	engine.OnAutoMerge = func(ctx context.Context, task gen.Task) error {
+		repo, err := termQ.GetRepo(ctx, task.RepoID)
+		if err != nil {
+			return fmt.Errorf("get repo: %w", err)
+		}
+		if repo.RemoteUrl == nil || *repo.RemoteUrl == "" {
+			return nil
+		}
+		f, name, ok := forge.ForRemote(*repo.RemoteUrl)
+		if !ok {
+			return nil
+		}
+		return automerge.Merge(ctx, termQ, pub, f, name, task, repo)
+	}
+
 	// Backend base URL the create_subtask MCP sidecar posts to (same container).
 	backendURL := "http://localhost:" + cfg.Port
 
@@ -314,6 +355,18 @@ func main() {
 			return nil
 		}
 		return propose.ProviderModel{Provider: p, Config: ac}
+	})
+
+	// Model-proposed repo lessons: same provider config as rule proposals; drafts
+	// stay status=proposed (never injected) until a person accepts them.
+	lessonDistill := distill.New(db.SQL(), termQ, func(pc gen.ProviderConfig, system string) propose.Model {
+		ac := propose.AgentConfigFor(pc)
+		ac.ID, ac.Name = "lesson-distiller", "Lesson distiller"
+		p := newProvider(ac, false)
+		if p == nil {
+			return nil
+		}
+		return propose.ProviderModel{Provider: p, Config: ac, System: system}
 	})
 
 	// Repo map generation (docs/repo-map.md): a provider CLI in a read-only
@@ -430,6 +483,7 @@ func main() {
 		EscapeRecorder:      escapeRec,
 		Proposals:           proposals,
 		RepoMap:             repoMaps,
+		LessonDistill:       lessonDistill,
 		DB:                  db,
 		Engine:              engine,
 		Hub:                 hub,
@@ -441,6 +495,7 @@ func main() {
 		MetricsPublic:       cfg.MetricsPublic,
 		GitHubWebhookSecret: cfg.GitHubWebhookSecret,
 		PRRefresher:         ghSyncer,
+		PRReview:            prIngester,
 		RepoBaseDir:         cfg.RepoBaseDir,
 		ListenAddr:          listenAddr,
 		UploadDir:           uploadDir,
@@ -615,6 +670,7 @@ func main() {
 		return health.ProviderReady(provider, health.Input{}, nil)
 	})
 	go ghSyncer.Run(ctx)
+	go prIngester.Run(ctx, cfg.GitHubSyncInterval)
 	go issueImporter.Run(ctx)
 	go taskScheduler.Run(ctx)
 	if backupScheduler != nil {
@@ -628,6 +684,7 @@ func main() {
 	go policyRec.Run(ctx)
 	go proposals.Run(ctx)
 	go repoMaps.Run(ctx)
+	go lessonDistill.Run(ctx)
 	if cfg.ChatIdleTimeout > 0 {
 		go terminal.ReapLoop(ctx)
 	}

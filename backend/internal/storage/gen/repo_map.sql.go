@@ -229,7 +229,7 @@ const getRepoMapConfig = `-- name: GetRepoMapConfig :one
 SELECT repo_id, enabled, provider_config_id, refresh_interval_hours, min_commits_behind, updated_at FROM repo_map_config WHERE repo_id = ?1
 `
 
-// Repo map storage (088_repo_map). Keep this file ASCII-only.
+// Repo map storage (092_repo_map). Keep this file ASCII-only.
 func (q *Queries) GetRepoMapConfig(ctx context.Context, repoID string) (RepoMapConfig, error) {
 	row := q.db.QueryRowContext(ctx, getRepoMapConfig, repoID)
 	var i RepoMapConfig

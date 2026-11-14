@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -633,14 +632,20 @@ func isChatNodeScript(path string) (bool, error) {
 	}
 	defer func() { _ = f.Close() }()
 
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 4096), 4096)
-	if !sc.Scan() {
-		return false, sc.Err()
+	// Read a bounded prefix instead of scanning for a line: a native binary
+	// (e.g. /usr/bin/sh) can have no newline in its first 4 KiB, which made
+	// bufio.Scanner fail with "token too long" instead of answering "no".
+	buf := make([]byte, 4096)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return false, err
 	}
-	line := sc.Text()
+	line := string(buf[:n])
 	if !strings.HasPrefix(line, "#!") {
 		return false, nil
+	}
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
 	}
 	shebang := strings.TrimSpace(strings.TrimPrefix(line, "#!"))
 	fields := strings.Fields(shebang)

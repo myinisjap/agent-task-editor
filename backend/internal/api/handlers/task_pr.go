@@ -106,6 +106,11 @@ func (h *TasksHandler) CreatePR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if forge.IsReviewSource(task.Source) {
+		Err(w, http.StatusConflict, "review-only PR tasks cannot create PRs")
+		return
+	}
+
 	updated, prURL, err := prflow.New(h.q, h.wb).CreateForTask(r.Context(), task, repo)
 	if err != nil {
 		Err(w, prCreateStatus(err), err.Error())

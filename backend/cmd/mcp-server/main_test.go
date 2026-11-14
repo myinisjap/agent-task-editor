@@ -336,3 +336,25 @@ func TestCreateSubtask_FileScopeAndOverlap(t *testing.T) {
 		t.Errorf("file_scope should be omitted when empty: %q", gotBody)
 	}
 }
+
+func TestSubmitPRReview(t *testing.T) {
+	st := &toolState{commentIDs: map[string]bool{}, priorIDs: map[string]bool{"F1-1": true}}
+	if msg, r := dispatchTool("submit_pr_review", json.RawMessage(`{"summary":""}`), st, nil); r != nil || msg == "review recorded" {
+		t.Fatalf("empty summary must be rejected: %q", msg)
+	}
+	if _, r := dispatchTool("submit_pr_review", json.RawMessage(`{"summary":"s","comments":[{"path":"a.go","line":0,"body":"x"}]}`), st, nil); r != nil {
+		t.Fatal("non-positive line must be rejected")
+	}
+	if _, r := dispatchTool("submit_pr_review", json.RawMessage(`{"summary":"s","resolved_prior":["F9-9"]}`), st, nil); r != nil {
+		t.Fatal("unknown prior id must be rejected")
+	}
+	msg, r := dispatchTool("submit_pr_review", json.RawMessage(`{"summary":"s","comments":[{"path":"a.go","line":3,"body":"x"}],"resolved_prior":["F1-1"]}`), st, nil)
+	if msg != "review recorded" || r == nil || r.PRReview == nil || len(r.PRReview.Comments) != 1 {
+		t.Fatalf("msg=%q r=%+v", msg, r)
+	}
+	// The review survives a later terminal result.
+	_, term := dispatchTool("signal_complete", json.RawMessage(`{"outcome":"success","summary":"done"}`), st, nil)
+	if term.PRReview == nil || term.PRReview.Summary != "s" {
+		t.Fatalf("terminal result lost the review: %+v", term)
+	}
+}

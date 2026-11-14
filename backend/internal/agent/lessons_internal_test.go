@@ -232,3 +232,25 @@ func TestLessonSelector_GlobFilterWithRealDiff(t *testing.T) {
 		t.Fatalf("with diff got %s", g)
 	}
 }
+
+// A proposed lesson (for example from the distiller) is never injected and its
+// injected_count never moves, until a person makes it active.
+func TestLessonSelector_ProposedNeverInjected(t *testing.T) {
+	d, q, ta, _ := lessonFixture(t)
+	ctx := context.Background()
+	a := "A"
+	_, err := q.CreateRepoLesson(ctx, gen.CreateRepoLessonParams{
+		ID: "prop", RepoID: &a, Kind: "trap", Body: "proposed body", Citations: "[]", Source: "distiller", Status: "proposed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError + 1}))
+	if got := d.lessonSelector(ta, log)(ctx, "", "", false); len(got) != 0 {
+		t.Fatalf("proposed lesson injected: %s", idsOf(got))
+	}
+	l, _ := q.GetRepoLesson(ctx, "prop")
+	if l.InjectedCount != 0 {
+		t.Fatal("injected_count moved")
+	}
+}

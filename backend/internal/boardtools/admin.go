@@ -143,6 +143,8 @@ func repoProps(create bool) map[string]any {
 		"preview_routes":         str("Newline-separated paths to screenshot, e.g. \"/\\n/tasks\""),
 		"preview_paths_glob":     str("Newline-separated globs deciding when a diff is a UI change (empty = frontend/**, web/**, src/**/*.{tsx,jsx,vue,svelte,css})"),
 		"max_concurrent_runs":    map[string]any{"type": "integer", "description": "Max agent runs at once in this repo (default: the server's MAX_WORKERS)"},
+		"auto_merge_mode":        map[string]any{"type": "string", "enum": []string{"off", "when_green"}, "description": "Opt-in: when_green makes ATE merge a task's PR itself once checks pass, it has no conflicts or requested changes and nobody is working on it (default off). Warning: with no verify_command or an auto-approved gate upstream, a PR can open and merge with no human."},
+		"auto_merge_method":      map[string]any{"type": "string", "enum": []string{"squash", "merge", "rebase"}, "description": "How auto-merge merges the PR (default squash)"},
 		"runtime_languages": map[string]any{
 			"type":        "array",
 			"description": "Toolchain pins agents run with, e.g. [{\"id\":\"go\",\"version\":\"1.26\"}] (see detect_repo_runtime). On update this replaces the pins; [] clears them.",
@@ -169,6 +171,7 @@ func withRepoID(p map[string]any) map[string]any {
 var repoFields = []string{
 	"name", "path", "remote_url", "workflow_id", "verify_command", "verify_timeout_seconds",
 	"preview_command", "preview_routes", "preview_paths_glob",
+	"auto_merge_mode", "auto_merge_method",
 	"max_concurrent_runs", "runtime_languages", "issue_sync_enabled", "issue_sync_label",
 }
 

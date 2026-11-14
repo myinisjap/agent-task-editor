@@ -239,6 +239,8 @@ type giteaPR struct {
 	// been computed yet, true/false once it has. A nil pointer here maps to
 	// forge.MergeableUnknown (see normalizeMergeable) — the safe default.
 	Mergeable *bool `json:"mergeable"`
+	// Draft marks a work-in-progress PR (Gitea: "draft" is derived from the WIP title prefix by the API).
+	Draft bool `json:"draft"`
 }
 
 // normalizeState maps Gitea's PR state (open/closed + a separate merged
@@ -380,6 +382,7 @@ func (g *Gitea) PRHead(ctx context.Context, repoName, branch string) (forge.PRHe
 		State:     normalizeState(pr),
 		URL:       pr.HTMLURL,
 		UpdatedAt: pr.Updated,
+		Draft:     pr.Draft,
 	}, nil
 }
 
@@ -790,4 +793,81 @@ func (g *Gitea) CompareURL(repoName, base, branch, title, body string) string {
 	q.Set("title", title)
 	q.Set("body", body)
 	return fmt.Sprintf("%s/%s/compare/%s...%s?%s", g.baseURL, repoName, base, branch, q.Encode())
+}
+
+// PRChecks implements forge.Forge. Gitea reports checks as commit statuses
+// (newest first, history included), so only the first status seen per context
+// counts. Anything but "success"/"warning" that isn't a failure is pending.
+func (g *Gitea) PRChecks(ctx context.Context, repoName string, prNumber int) ([]forge.Check, error) {
+	pr, found, err := g.prByNumber(ctx, repoName, prNumber)
+	if err != nil {
+		return nil, err
+	}
+	if !found || pr.Head.Sha == "" {
+		return nil, nil
+	}
+	metrics.GiteaCallsTotal.WithLabelValues("pr_checks_all").Inc()
+	var statuses []giteaCommitStatus
+	if _, err := g.apiCall(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/commits/%s/statuses", repoName, pr.Head.Sha), nil, &statuses); err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	checks := make([]forge.Check, 0, len(statuses))
+	for _, s := range statuses {
+		name := s.Context
+		if name == "" {
+			name = "check"
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		bucket := "pending"
+		switch strings.ToLower(s.State) {
+		case "success", "warning":
+			bucket = "pass"
+		case "failure", "error":
+			bucket = "fail"
+		}
+		checks = append(checks, forge.Check{Name: name, Link: s.TargetURL, Bucket: bucket})
+	}
+	return checks, nil
+}
+
+// MergePullRequest implements forge.Forge via POST /pulls/{n}/merge. head_commit_id
+// makes Gitea refuse the merge if the head moved. 409 (head mismatch / merge
+// conflict) maps to forge.ErrHeadMoved; 405/403/422 (blocked by branch
+// protection, required approvals, not mergeable) to forge.ErrMergeRefused.
+func (g *Gitea) MergePullRequest(ctx context.Context, repoName string, prNumber int, method forge.MergeMethod, expectedHeadSHA string) error {
+	metrics.GiteaCallsTotal.WithLabelValues("pr_merge").Inc()
+	if !forge.ValidMergeMethod(method) {
+		return fmt.Errorf("unsupported merge method %q", method)
+	}
+	payload := map[string]any{"Do": string(method)}
+	if expectedHeadSHA != "" {
+		payload["head_commit_id"] = expectedHeadSHA
+	}
+	body, err := g.apiCall(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/pulls/%d/merge", repoName, prNumber), payload, nil)
+	if err == nil {
+		return nil
+	}
+	msg := giteaMessage(body)
+	switch {
+	case strings.Contains(err.Error(), "status 409"):
+		return fmt.Errorf("%w: %s", forge.ErrHeadMoved, msg)
+	case strings.Contains(err.Error(), "status 405"), strings.Contains(err.Error(), "status 403"), strings.Contains(err.Error(), "status 422"):
+		return fmt.Errorf("%w: %s", forge.ErrMergeRefused, msg)
+	}
+	return err
+}
+
+// giteaMessage extracts Gitea's {"message": ...} text, falling back to the raw body.
+func giteaMessage(body []byte) string {
+	var m struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(body, &m) == nil && strings.TrimSpace(m.Message) != "" {
+		return strings.TrimSpace(m.Message)
+	}
+	return strings.TrimSpace(string(body))
 }

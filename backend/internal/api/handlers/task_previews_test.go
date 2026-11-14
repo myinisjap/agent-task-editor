@@ -122,3 +122,42 @@ func TestTasks_ListPreviews(t *testing.T) {
 		t.Errorf("failed capture: %v", got)
 	}
 }
+
+func TestRepos_AutoMergeConfig(t *testing.T) {
+	base := t.TempDir()
+	db := openTestDB(t)
+	q := gen.New(db.SQL())
+	h := handlers.NewReposHandler(q, base, nil)
+	router := chi.NewRouter()
+	router.Post("/repos", h.Create)
+	router.Patch("/repos/{id}", h.Update)
+	repoDir := filepath.Join(base, "amrepo")
+	initBareGitRepo(t, repoDir)
+
+	w := postJSON(t, router, "/repos", map[string]any{"name": "amrepo", "path": repoDir})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	var repo map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&repo)
+	id := repo["id"].(string)
+	if repo["auto_merge_mode"] != "off" || repo["auto_merge_method"] != "squash" {
+		t.Fatalf("defaults must be off/squash, got %v / %v", repo["auto_merge_mode"], repo["auto_merge_method"])
+	}
+
+	if w = patchJSON(t, router, "/repos/"+id, map[string]any{"auto_merge_mode": "when_green", "auto_merge_method": "rebase"}); w.Code != http.StatusOK {
+		t.Fatalf("patch: %d %s", w.Code, w.Body.String())
+	}
+	if w = patchJSON(t, router, "/repos/"+id, map[string]any{"name": "renamed"}); w.Code != http.StatusOK {
+		t.Fatalf("unrelated patch: %d", w.Code)
+	}
+	stored, _ := q.GetRepo(context.Background(), id)
+	if stored.AutoMergeMode != "when_green" || stored.AutoMergeMethod != "rebase" {
+		t.Errorf("stored = %q/%q", stored.AutoMergeMode, stored.AutoMergeMethod)
+	}
+	for _, bad := range []map[string]any{{"auto_merge_mode": "always"}, {"auto_merge_method": "ff"}} {
+		if w = patchJSON(t, router, "/repos/"+id, bad); w.Code != http.StatusBadRequest {
+			t.Errorf("%v: want 400, got %d", bad, w.Code)
+		}
+	}
+}

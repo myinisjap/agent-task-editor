@@ -513,7 +513,7 @@ func (r *Service) doDetectEscape(ctx context.Context, task gen.Task, toLabel str
 	if h.ToLabel != toLabel || h.FromLabel == nil || h.Trigger != "human" {
 		return nil
 	}
-	if h.ActorID != nil && (*h.ActorID == autonomy.PolicyActor || *h.ActorID == workflow.ActorPRFeedbackSync) {
+	if h.ActorID != nil && (*h.ActorID == autonomy.PolicyActor || *h.ActorID == workflow.ActorPRFeedbackSync || *h.ActorID == workflow.ActorPRReviewSync || *h.ActorID == workflow.ActorAutoMerge) {
 		return nil
 	}
 	if h.Note != nil && *h.Note == autonomy.UndoNote {

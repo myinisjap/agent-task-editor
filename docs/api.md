@@ -171,7 +171,7 @@ Returns the task's label-transition audit trail (`task_label_history`), oldest f
 ]
 ```
 
-Reserved actors: `policy` (autonomy auto-approvals) and `pr-feedback-sync` (PR-feedback auto-transitions). Both keep trigger `human` but are not human decisions; gate metrics and rule proposals exclude `pr-feedback-sync`.
+Reserved actors: `policy` (autonomy auto-approvals), `pr-feedback-sync` (PR-feedback auto-transitions) and `auto-merge` (ATE merged the PR itself). They keep trigger `human` but are not human decisions; gate metrics and rule proposals exclude `pr-feedback-sync` and `auto-merge`.
 
 `actor_id` is the resolved named-token actor (see `API_TOKENS` in
 [getting-started.md](getting-started.md)) for human-triggered transitions —
@@ -641,6 +641,24 @@ missing, `400` on invalid values.
 
 ### `DELETE /lessons/{id}`
 Returns `204`, or `404` if missing.
+
+### `POST /repos/{id}/lessons/distill`
+Start the lesson distiller for a repo (background; returns `202` with the run).
+`400` when no proposal provider config is set (`PUT /settings/autonomy`), `404`
+for an unknown repo, `409` while a run is in progress. Drafts are stored as
+lessons with `status: proposed`, `source: distiller`, `source_task_id` and
+`citations` (`[{task_id,title,kind,quote}]`). See [lessons.md](lessons.md#distiller-proposed-lessons).
+
+### `GET /repos/{id}/lessons/distill-runs`
+Recent distiller runs, newest first (`?limit=`, default 10): status
+(`running|succeeded|failed|skipped`), `evidence_count`, `proposal_count`,
+`error`, `cost_usd`, tokens.
+
+### `POST /lessons/{id}/dismiss`
+Dismiss a proposed distiller lesson. It is deleted and its text remembered so the
+same lesson is not offered again. `204`; `404` if missing; `409` if the lesson is
+not a proposed distiller lesson. To accept a proposal use `PATCH /lessons/{id}`
+with `{"status":"active"}` (plus any edits).
 
 ---
 

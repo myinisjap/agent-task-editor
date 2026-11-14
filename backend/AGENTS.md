@@ -41,6 +41,7 @@ internal/prflow/  Push a task's branch and create/find its PR (forge resolution,
 internal/storage/ SQLite DB, migrations, sqlc-generated queries, seed data
 internal/tasksource/ GitHub Issues importer — polls opted-in repos, creates tasks for new issues, updates tasks whose issue drifted, reconciles tasks whose issue closed/unlabeled, and (opt-in) ingests the issue comment thread
 internal/intakehook/ Signed inbound webhook events (POST /api/v1/intake/{id}) -> tasks via intake rules; dedupe appends untrusted source comments to open tasks
+internal/recipes/ Bundled automation recipe definitions (data only) + sender-snippet renderer; install/remove lives in api/handlers/recipes.go
 internal/workflow/ State machine engine — validates/executes label transitions
 internal/ws/      WebSocket hub + per-client connection management
 ```

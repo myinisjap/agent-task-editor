@@ -51,7 +51,7 @@ The Chat tab defaults to `full` because it is driven by you, but it reads repo
 code that can contain prompt injection; set `MCP_BOARD_TOOL_PROFILE=create` (or
 `readonly`) to narrow it. `admin` adds board configuration (`create_workflow`,
 `update_workflow`, `add_repo`, `update_repo`, `create_agent`, `update_agent`,
-`create_template`, `update_template`, `create_schedule`, `update_schedule`) on
+`create_template`, `update_template`, `create_schedule`, `update_schedule`, `list_recipes`, `install_recipe`) on
 any surface that selects it. The full lists per profile are in
 [Remote connector](#remote-connector).
 
@@ -212,13 +212,14 @@ The admin profile adds:
 |---|---|
 | `create_workflow` | Create a workflow from a YAML document (same shape as [workflow export](workflows.md); human-gate labels may carry an optional `autonomy:` block, see workflows.md "Autonomy per gate") |
 | `update_workflow` | Replace a workflow's name, description, labels and transitions from YAML. It's a full replacement, so read it with `get_workflow` first. Refused if it would drop a label that still holds tasks in that workflow (archived ones included) |
-| `add_repo` | Onboard a repo: `remote_url` clones it under `REPO_BASE_DIR` in the background (poll `get_repo` for `clone_status: ready`), or `path` registers a checkout already on the server. Also takes `name`, `workflow_id`, `verify_command`, `verify_timeout_seconds`, `preview_command`, `preview_routes`, `preview_paths_glob`, `runtime_languages`, `max_concurrent_runs`, `issue_sync_enabled`, `issue_sync_label` |
+| `add_repo` | Onboard a repo: `remote_url` clones it under `REPO_BASE_DIR` in the background (poll `get_repo` for `clone_status: ready`), or `path` registers a checkout already on the server. Also takes `name`, `workflow_id`, `verify_command`, `verify_timeout_seconds`, `preview_command`, `preview_routes`, `preview_paths_glob`, `auto_merge_mode`, `auto_merge_method`, `runtime_languages`, `max_concurrent_runs`, `issue_sync_enabled`, `issue_sync_label` |
 | `update_repo` | Change those same settings (except `path`) on an existing repo; only the fields passed change |
 | `create_agent` | Create an agent config: `name`, `provider_config_id` (from `list_provider_configs`), `system_prompt`, `labels`, `enabled`, `max_turns`, `timeout_secs`, `max_cost_usd`, `priority`, `effort`, `permission_mode`, `fallback_provider_config_ids`, `escalation_ladder`. Starts disabled if another agent already lists one of the labels, unless `enabled` is passed |
 | `update_agent` | Change those fields on an existing agent; the current config is merged in, so only the fields passed change (optional `note`, here and on `create_agent`, is recorded in the agent's version history; behavioural edits are versioned) |
 | `create_template` / `update_template` | Create a task template (`name`, `title`, `description`, `type`); an update changes only the fields passed |
 | `create_schedule` | Create a task from a template in a repo on a 5-field cron (`minute hour day-of-month month day-of-week`, e.g. `0 9 * * 1` = Mondays 09:00). Optional `target_label`, `enabled` |
 | `update_schedule` | Change `cron_expr` or `target_label`, or pause/resume with `enabled: false/true`; only the fields passed change. Template and repo are fixed. There are no delete tools |
+| `list_recipes` / `install_recipe` | List the bundled automation recipes (with install state), or install one (`recipe_id`, `repo_id`, optional `workflow_id`, `target_label`, `cron_expr`, `branch`, `confirm_auto_start`). Webhook recipes return the endpoint URL and secret once. There is no remove tool; use Settings > Intake rules > Recipes |
 
 A typical onboarding chat: `add_repo` → `get_repo` until ready →
 `detect_repo_runtime` → `update_repo` with the pins and a `verify_command` →

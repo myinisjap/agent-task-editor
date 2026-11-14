@@ -55,6 +55,11 @@ type Job struct {
 type WorktreeResult struct {
 	Path   string
 	Branch string
+	// BaseRef is the ref the review diff is computed against (review-only PR
+	// tasks); empty otherwise.
+	BaseRef string
+	// HeadSHA is the PR head commit checked out (review-only PR tasks).
+	HeadSHA string
 }
 
 // Pool manages a bounded set of concurrent agent runs.
@@ -626,6 +631,14 @@ func (p *Pool) setupWorktree(ctx context.Context, job Job, rc *runControl, log *
 	}
 	job.Input.RepoPath = res.Path
 	job.Input.Task.Branch = res.Branch
+	if job.Input.PRReview != nil {
+		in := *job.Input.PRReview
+		if res.HeadSHA != "" {
+			in.HeadSHA = res.HeadSHA
+		}
+		fillPRDiff(ctx, &in, res.Path, res.BaseRef)
+		job.Input.PRReview = &in
+	}
 	if spec := job.Input.Runtime; spec != nil {
 		cp := *spec
 		cp.WorktreeDir = res.Path
@@ -954,6 +967,10 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 		}
 	}
 
+	if finalStatus == "completed" && result.Outcome == "success" && job.Input.PRReview != nil {
+		p.recordPRReview(ctx, job, *result, log)
+	}
+
 	if result.Notes != nil && *result.Notes != "" {
 		if _, err := p.q.UpdateTaskNotes(ctx, gen.UpdateTaskNotesParams{
 			AgentNotes: *result.Notes,
@@ -971,6 +988,9 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 // (non-subtask) tasks' branches. No-op unless the run completed with a repo
 // path; no-op on the commit if the agent already committed.
 func (p *Pool) safetyNetCommit(ctx context.Context, job Job, finalStatus string, log *slog.Logger) {
+	if isReviewJob(job) {
+		return // review-only PR tasks never commit or push
+	}
 	isSubtask := job.Input.Task.ParentID != ""
 	if finalStatus == "completed" && job.Input.RepoPath != "" {
 		// Serialize ref-mutating git ops against other tasks/merges in this repo.

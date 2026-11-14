@@ -200,7 +200,7 @@ DELETE FROM tasks WHERE id = ?;
 -- Tasks worth polling GitHub for PR status: branch-bearing, not archived, and
 -- not in a terminal PR state (pr_merged / pr_closed). Filtering here instead of
 -- in Go keeps the number of `gh` calls per sweep bounded by open work.
-SELECT * FROM tasks_full WHERE branch != '' AND archived = 0 AND git_state NOT IN ('pr_merged', 'pr_closed') ORDER BY created_at DESC;
+SELECT * FROM tasks_full WHERE branch != '' AND archived = 0 AND git_state NOT IN ('pr_merged', 'pr_closed') AND source NOT IN ('github_pr', 'gitea_pr') ORDER BY created_at DESC;
 
 -- name: ListTasksByLabel :many
 SELECT * FROM tasks_full WHERE label = ? ORDER BY created_at DESC;

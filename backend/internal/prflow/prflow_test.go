@@ -53,6 +53,7 @@ func TestCreateForTask_Preconditions(t *testing.T) {
 		repo gen.Repo
 	}{
 		{"no branch", gen.Task{}, gen.Repo{}},
+		{"review-only PR task", gen.Task{Branch: "pr-review-1-x", Source: "github_pr"}, gen.Repo{RemoteUrl: &remote}},
 		{"no remote", gen.Task{Branch: "b"}, gen.Repo{}},
 		{"unsupported forge", gen.Task{Branch: "b"}, gen.Repo{RemoteUrl: &remote}},
 	}
