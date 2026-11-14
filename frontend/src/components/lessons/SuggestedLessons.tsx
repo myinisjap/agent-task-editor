@@ -155,7 +155,7 @@ export default function SuggestedLessons({ repoId, onAccepted }: { repoId: strin
                   ))}
                 </ul>
                 <div className="flex flex-wrap gap-2 mt-1">
-                  <button className="px-2 py-1 text-xs rounded bg-emerald-700 hover:bg-emerald-600 text-white" onClick={() => accept(l).catch(() => {})}>
+                  <button className="px-2 py-1 text-xs rounded bg-emerald-600 hover:bg-emerald-500 text-white" onClick={() => accept(l).catch(() => {})}>
                     Accept
                   </button>
                   <button className={btnCls} onClick={() => { setEditingId(l.id); setRowError(l.id, '') }}>Edit and accept</button>
