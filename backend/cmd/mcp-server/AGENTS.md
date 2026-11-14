@@ -12,7 +12,7 @@ The `claude`, `qwen_code` and `codex_cli` providers run this as a sidecar over s
 - `update_task_notes(notes, append)` — persists markdown notes on the task for subsequent agents
 - `store_info(info)` — stores per-run info shown in the task detail view
 - `resolve_comment(comment_id, note)` — marks an inline diff review comment (from the prompt's "OPEN REVIEW COMMENTS" section) as addressed; applied to the DB by the pool only if the run completes successfully
-- `create_subtask(title, description, type)` — splits the task into a child (Mechanism 2). **Exposed only when `SUBTASKS_ENABLED=1`** (set by `MCPManager.Prepare` when the run's agent config has `subtasks_enabled`). Unlike the deferred result-file tools, it writes **live**: it `POST`s to `{BACKEND_URL}/api/v1/tasks/{TASK_ID}/subtasks` (with the `API_TOKEN` bearer when set) and returns the created task id synchronously, so children appear on the board mid-run. The backend enforces the cap / human-gate label / depth limit and returns the error text, which the tool surfaces back to the agent.
+- `create_subtask(title, description, type, file_scope, repo_id?)` — splits the task into a child (Mechanism 2). **Exposed only when `SUBTASKS_ENABLED=1`** (set by `MCPManager.Prepare` when the run's agent config has `subtasks_enabled`). Unlike the deferred result-file tools, it writes **live**: it `POST`s to `{BACKEND_URL}/api/v1/tasks/{TASK_ID}/subtasks` (with the `API_TOKEN` bearer when set) and returns the created task id synchronously, so children appear on the board mid-run. `repo_id` (another repo; ADR 0041 [`docs/adr/0041-multi-repo-work-as-parent-with-per-repo-children.md`](../../../docs/adr/0041-multi-repo-work-as-parent-with-per-repo-children.md)) is advertised only when `CROSS_REPO_SUBTASKS_ENABLED=1`. The backend enforces the cap / human-gate label / depth limit and returns the error text, which the tool surfaces back to the agent.
 
 ## How It Works (ADR 0004)
 
@@ -30,6 +30,7 @@ The `claude`, `qwen_code` and `codex_cli` providers run this as a sidecar over s
 | `TRANSITIONS` | JSON array of available transitions for `get_task_transitions` |
 | `REVIEW_COMMENTS` | JSON array of open review comments, used to validate `resolve_comment` IDs |
 | `SUBTASKS_ENABLED` | `"1"` when the run's config opted in; gates the `create_subtask` tool |
+| `CROSS_REPO_SUBTASKS_ENABLED` | `"1"` when the config also set `cross_repo_subtasks_enabled`; adds the optional `repo_id` arg to `create_subtask` |
 | `BACKEND_URL` / `TASK_ID` / `API_TOKEN` / `MAX_SUBTASKS` | Backend coordinates for `create_subtask`'s live POST (set only when subtasks are enabled) |
 
 ## Protocol Details

@@ -168,6 +168,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, input agent.RunInput, logCh chan
 			TaskID:      input.Task.ID,
 			Enabled:     input.AgentConfig.SubtasksEnabled,
 			MaxSubtasks: input.AgentConfig.MaxSubtasks,
+			CrossRepo:   input.AgentConfig.CrossRepoSubtasksEnabled,
 			PRReview:    input.PRReview,
 		})
 		if err != nil {

@@ -19,7 +19,7 @@ POST /api/v1/intake/{endpoint_id}  IntakeEndpointsHandler.Receive (outside Beare
   tasks/{id}/runs/*            TasksHandler (list/get/logs/cancel/reply)
   tasks/{id}/label-history     TasksHandler.ListLabelHistory (task_label_history audit trail)
   tasks/{id}/dependencies/*    DependenciesHandler (dispatch-gating peer task dependencies)
-  tasks/{id}/subtasks          SubtasksHandler (create_subtask MCP tool)
+  tasks/{id}/subtasks          SubtasksHandler (create_subtask MCP tool; optional `repo_id` makes a foreign child, gated by `cross_repo_subtasks_enabled` — [ADR 0041](../../../docs/adr/0041-multi-repo-work-as-parent-with-per-repo-children.md))
   tasks/{id}/review-comments/* ReviewCommentsHandler (inline diff review comments)
   tasks/{id}/review-brief      ReviewBriefHandler (deterministic risk flags + verification summary; internal/reviewbrief)
   tasks/{id}/autonomy-decision AutonomyHandler (latest shadow autonomy decision for the current label)

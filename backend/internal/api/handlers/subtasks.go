@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -18,7 +19,8 @@ import (
 // SubtasksHandler creates child tasks under a parent (Mechanism 2). The
 // create_subtask MCP tool posts here live during a planning run so children
 // appear on the board mid-run and the agent gets real task ids back. Humans can
-// also call it directly. Each child inherits the parent's repo + workflow, lands
+// also call it directly. Each child inherits the parent's workflow (and its repo
+// unless repo_id names another one, ADR 0041), lands
 // on a human-gate (agent_ignore) label by default, and gets an auto-created
 // parent→child dependency edge (reusing Mechanism 1) so the parent isn't
 // dispatched until every child finishes.
@@ -45,6 +47,7 @@ func (h *SubtasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Type        string   `json:"type"`
 		Label       string   `json:"label"`
 		FileScope   []string `json:"file_scope"`
+		RepoID      string   `json:"repo_id"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -77,6 +80,24 @@ func (h *SubtasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// repo_id (ADR 0041): omitted or equal to the parent's repo is a plain home
+	// child; another repo makes a foreign child that lands via its own PR.
+	foreign := agent.IsForeignRepo(parent.RepoID, body.RepoID)
+	if body.RepoID != "" {
+		if _, rerr := h.q.GetRepo(ctx, body.RepoID); rerr != nil {
+			if errors.Is(rerr, sql.ErrNoRows) {
+				Err(w, http.StatusBadRequest, "repo_id does not reference an existing repo")
+			} else {
+				Err(w, http.StatusInternalServerError, rerr.Error())
+			}
+			return
+		}
+	}
+	childRepoID := parent.RepoID
+	if foreign {
+		childRepoID = body.RepoID
+	}
+
 	// Determine the creating run + its cap / opt-in from the parent's active
 	// run. An agent decomposing its parent is that parent's in-flight run.
 	subtaskCap := int64(defaultSubtaskCap)
@@ -87,6 +108,10 @@ func (h *SubtasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			if cfg, cerr := h.q.GetAgentConfig(ctx, *run.AgentConfigID); cerr == nil {
 				if cfg.SubtasksEnabled == 0 {
 					Err(w, http.StatusForbidden, "this agent config is not permitted to create subtasks")
+					return
+				}
+				if foreign && cfg.CrossRepoSubtasksEnabled == 0 {
+					Err(w, http.StatusForbidden, "this agent config is not permitted to create cross-repo subtasks")
 					return
 				}
 				if cfg.MaxSubtasks > 0 {
@@ -145,7 +170,7 @@ func (h *SubtasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Description:    body.Description,
 		Type:           body.Type,
 		Label:          label,
-		RepoID:         parent.RepoID,
+		RepoID:         childRepoID,
 		WorkflowID:     parent.WorkflowID,
 		ParentTaskID:   &parentID,
 		CreatedByRunID: createdByRun,
@@ -167,7 +192,7 @@ func (h *SubtasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	overlaps, err := h.addOverlapDependencies(ctx, tq, childID, parentID, scope)
+	overlaps, err := h.addOverlapDependencies(ctx, tq, childID, parentID, childRepoID, scope)
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
@@ -218,7 +243,7 @@ type overlapDependency struct {
 // sibling whose file scope overlaps its own (so they run sequentially). An
 // unscoped child is treated as unknown and gets no edges. Cannot form a cycle:
 // the new child has no dependents besides the parent.
-func (h *SubtasksHandler) addOverlapDependencies(ctx context.Context, tq *gen.Queries, childID, parentID string, scope []string) ([]overlapDependency, error) {
+func (h *SubtasksHandler) addOverlapDependencies(ctx context.Context, tq *gen.Queries, childID, parentID, childRepoID string, scope []string) ([]overlapDependency, error) {
 	if len(scope) == 0 {
 		return nil, nil
 	}
@@ -228,7 +253,8 @@ func (h *SubtasksHandler) addOverlapDependencies(ctx context.Context, tq *gen.Qu
 	}
 	var ids []string
 	for _, s := range siblings {
-		if s.ID != childID {
+		// Only same-repo siblings serialize (ADR 0041): different repos cannot conflict.
+		if s.ID != childID && s.RepoID == childRepoID {
 			ids = append(ids, s.ID)
 		}
 	}
@@ -255,7 +281,7 @@ func (h *SubtasksHandler) addOverlapDependencies(ctx context.Context, tq *gen.Qu
 	}
 	var out []overlapDependency
 	for _, s := range siblings {
-		if s.ID == childID || s.Archived != 0 || terminal[s.Label] {
+		if s.ID == childID || s.RepoID != childRepoID || s.Archived != 0 || terminal[s.Label] {
 			continue
 		}
 		sc := scopes[s.ID]

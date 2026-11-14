@@ -256,6 +256,9 @@ type Task struct {
 	// The pool reads it to skip pushing child branches (children merge back into
 	// the parent's branch instead) and to trigger merge-back on the parent.
 	ParentID string
+	// ForeignChild marks a subtask in a different repo from its parent (ADR 0041);
+	// it is pushed like a top-level task and lands via its own PR.
+	ForeignChild bool
 	// FileScope is this subtask's declared file globs (empty = unscoped).
 	FileScope []string
 	// RepoPath is the repo's main clone path (not the worktree). Set so the pool
@@ -312,6 +315,9 @@ type AgentConfig struct {
 	// (claude/qwen_code only). Off by default — decomposition is a deliberate
 	// capability granted to a specific agent (typically the planning agent).
 	SubtasksEnabled bool
+	// CrossRepoSubtasksEnabled additionally lets create_subtask target another
+	// repo (repo_id; ADR 0041). Requires SubtasksEnabled. Off by default.
+	CrossRepoSubtasksEnabled bool
 	// MaxSubtasks caps how many children a single parent may have; enforced at
 	// the create endpoint. Defaults to 10.
 	MaxSubtasks int64

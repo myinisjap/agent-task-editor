@@ -221,10 +221,9 @@ func main() {
 			return fmt.Errorf("get repo: %w", err)
 		}
 		if agent.IsSubtask(task) {
-			// Children merge back into the parent's branch instead of pushing to
-			// origin / keeping their branch.
-			subtaskCoord.OnChildTerminal(ctx, task, repo.Path)
-			return nil
+			// Home children merge back into the parent's branch instead of pushing to
+			// origin; foreign children (another repo, ADR 0041) get their own PR.
+			return subtaskCoord.OnChildTerminal(ctx, task, repo)
 		}
 		return agent.OnTaskTerminal(ctx, termQ, task, repo)
 	}
@@ -236,6 +235,19 @@ func main() {
 	// handlers.NewTasksHandler) since they own their own *gen.Queries.
 	// See docs/task-sources.md.
 	issueWriteback := writeback.New(termQ)
+	// Foreign subtasks (ADR 0041) land via their own PR; the coordinator lives in
+	// package agent, which cannot import prflow, so the opener is injected.
+	subtaskCoord.OpenPR = func(ctx context.Context, t gen.Task, r gen.Repo) (string, error) {
+		u, _, err := prflow.New(termQ, issueWriteback).CreateForTask(ctx, t, r)
+		if err != nil {
+			if prflow.IsPrecondition(err) {
+				slog.Warn("foreign subtask: PR skipped", "task_id", t.ID, "err", err)
+				return "", nil
+			}
+			return "", err
+		}
+		return u.GitState, nil
+	}
 	engine.OnLeaveNotReady = func(ctx context.Context, task gen.Task) error {
 		repo, err := termQ.GetRepo(ctx, task.RepoID)
 		if err != nil {

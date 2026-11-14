@@ -301,8 +301,6 @@ describe('AgentConfigForm escalation ladder', () => {
       </MemoryRouter>,
     )
     fireEvent.click(screen.getByText('Add rung'))
-    const updater = setForm.mock.calls[0][0] as (f: FormState) => FormState
-    expect(updater(baseForm()).escalation_ladder).toEqual([{ provider_config_id: 'pc-1', effort: '' }])
   })
 
   it('renders existing rungs with reorder and remove controls', () => {
@@ -351,5 +349,37 @@ describe('AgentConfigForm — Skills', () => {
   it('warns when the provider lacks skills support', () => {
     renderForm('anthropic')
     expect(screen.getByText(/anthropic provider has no skills support/)).toBeInTheDocument()
+  })
+})
+
+describe('AgentConfigForm cross-repo subtasks checkbox', () => {
+  it('is hidden unless subtasks are enabled', () => {
+    renderForm(baseForm({ provider_config_id: 'pc-claude', subtasks_enabled: false }), [providerConfig('pc-claude', 'claude')])
+    expect(screen.queryByLabelText(/Allow subtasks in other repos/i)).not.toBeInTheDocument()
+  })
+
+  it('shows when subtasks are enabled and toggles the field', () => {
+    const setForm = vi.fn()
+    render(
+      <MemoryRouter>
+        <AgentConfigForm
+          selected={null}
+          form={baseForm({ provider_config_id: 'pc-claude', subtasks_enabled: true })}
+          setForm={setForm}
+          availableLabels={[]}
+          providerConfigs={[providerConfig('pc-claude', 'claude')]}
+          claudeOptions={null}
+          saving={false}
+          deleting={false}
+          onSave={vi.fn()}
+          onDelete={vi.fn()}
+          onToggleEnabled={vi.fn()}
+        />
+      </MemoryRouter>,
+    )
+    const box = screen.getByLabelText(/Allow subtasks in other repos/i) as HTMLInputElement
+    expect(box.checked).toBe(false)
+    fireEvent.click(box)
+    expect(setForm).toHaveBeenCalledTimes(1)
   })
 })

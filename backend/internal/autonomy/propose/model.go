@@ -84,6 +84,7 @@ func (m ProviderModel) Complete(ctx context.Context, prompt string) (Completion,
 	cfg.MaxCostUSD = 0
 	cfg.ResumeSessions = false
 	cfg.SubtasksEnabled = false
+	cfg.CrossRepoSubtasksEnabled = false
 	cfg.EnabledPlugins = nil
 	cfg.EnabledMCPServers = nil
 	cfg.CommandDenylist = []string{"*"}

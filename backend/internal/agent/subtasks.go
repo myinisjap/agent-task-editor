@@ -19,8 +19,9 @@ import (
 // SubtaskCoordinator owns the child→parent branch merge-back lifecycle
 // (Mechanism 2). When a child reaches a terminal label, its branch is merged
 // back into the parent's branch (a plain merge commit); the child's worktree and
-// local branch are then removed. Children never push to origin or open PRs — the
-// parent's branch is the only outward-facing artifact. Once every child is
+// local branch are then removed. Home children never push to origin or open PRs — the
+// parent's branch is the only outward-facing artifact; foreign children (a
+// different repo, ADR 0041) push and open their own PR instead. Once every child is
 // terminal and merged (or conflicted), the parent is marked integration_status=
 // pending and the dispatcher runs its agent with an integration brief; a
 // conflicting merge-back is flagged and resolved by that run.
@@ -31,6 +32,14 @@ type SubtaskCoordinator struct {
 
 	GitName  string
 	GitEmail string
+
+	// OpenPR pushes a foreign child's branch and opens (or reuses) its PR (ADR
+	// 0041). Wired in cmd/server to prflow.CreateForTask (agent cannot import
+	// prflow). Returns the resulting git_state. A precondition failure (no
+	// remote / unsupported forge) must be returned as ("", nil) after logging;
+	// any other error is returned so the OnTerminal outbox retries. Nil means
+	// foreign children are torn down without a PR and stay merge_status=pending.
+	OpenPR func(ctx context.Context, task gen.Task, repo gen.Repo) (gitState string, err error)
 
 	// Per-parent serialization: children reaching terminal concurrently must not
 	// merge into the same parent worktree at once (git would race). All merge-back
@@ -62,34 +71,75 @@ func (c *SubtaskCoordinator) parentLock(parentID string) *sync.Mutex {
 }
 
 // IsSubtask reports whether a task is a child (has a parent). The pool uses this
-// to skip the normal per-run push to origin for children.
+// to skip the normal per-run push to origin for home children; foreign children
+// (IsForeignChild, ADR 0041) are pushed like top-level tasks.
 func IsSubtask(t gen.Task) bool { return t.ParentTaskID != nil && *t.ParentTaskID != "" }
 
+// IsForeignRepo reports whether a child in childRepoID would be foreign to a
+// parent in parentRepoID (ADR 0041). An empty childRepoID means "inherit", so
+// it is never foreign. Use this where no child row exists yet.
+func IsForeignRepo(parentRepoID, childRepoID string) bool {
+	return childRepoID != "" && childRepoID != parentRepoID
+}
+
+// IsForeignChild reports whether child is a subtask of parent that lives in a
+// different repo (ADR 0041). Derived from the repo mismatch, never stored.
+func IsForeignChild(parent, child gen.Task) bool {
+	return child.ParentTaskID != nil && *child.ParentTaskID == parent.ID && IsForeignRepo(parent.RepoID, child.RepoID)
+}
+
+// ForeignChildMergeStatus maps a foreign child's git_state to its merge_status:
+// the status follows the child's own PR. No PR yet (""/"pushed") is "pending".
+func ForeignChildMergeStatus(gitState string) string {
+	switch gitState {
+	case "pr_open":
+		return "pr_open"
+	case "pr_merged":
+		return "merged"
+	case "pr_closed":
+		return "pr_closed"
+	default:
+		return "pending"
+	}
+}
+
 // OnChildTerminal is invoked when a subtask reaches a terminal label (from
-// engine.OnTerminal). It merges the child's branch back into the parent's branch
-// and re-evaluates the parent. If the parent has a run in flight the merge is
+// engine.OnTerminal). A home child is merged back into the parent's branch and
+// the parent re-evaluated; if the parent has a run in flight the merge is
 // deferred (merge_status=pending) and retried when that run finishes
-// (FlushParent).
-func (c *SubtaskCoordinator) OnChildTerminal(ctx context.Context, child gen.Task, repoPath string) {
+// (AfterParentRun). A foreign child (different repo, ADR 0041) is instead pushed
+// and given its own PR (landForeignChild). childRepo is the repo the child lives
+// in. A non-nil error asks the side-effect outbox to retry.
+func (c *SubtaskCoordinator) OnChildTerminal(ctx context.Context, child gen.Task, childRepo gen.Repo) error {
 	log := slog.With("component", "subtasks", "task_id", child.ID)
 	if child.ParentTaskID == nil {
-		return
+		return nil
 	}
-	lock := c.parentLock(*child.ParentTaskID)
-	lock.Lock()
-	defer lock.Unlock()
-
+	// Read the parent before taking any lock: the foreign path must not touch
+	// the parent's lock or repo at all until its own repo work is done.
 	parent, err := c.q.GetTask(ctx, *child.ParentTaskID)
 	if err != nil {
 		// Parent gone (deleted/orphaned): nothing to merge back into. Tear the
 		// child's worktree down so we don't leak it.
 		if child.WorktreePath != "" {
-			gl := RepoGitLock(repoPath)
+			gl := RepoGitLock(childRepo.Path)
 			gl.Lock()
-			_ = RemoveWorktree(ctx, repoPath, child.WorktreePath)
+			_ = RemoveWorktree(ctx, childRepo.Path, child.WorktreePath)
 			gl.Unlock()
 		}
-		return
+		return nil
+	}
+	if IsForeignChild(parent, child) {
+		return c.landForeignChild(ctx, parent, child, childRepo)
+	}
+
+	lock := c.parentLock(parent.ID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// Re-read under the lock for a fresh ActiveAgentRunID.
+	if fresh, ferr := c.q.GetTask(ctx, parent.ID); ferr == nil {
+		parent = fresh
 	}
 
 	// Merge safety: never merge into a parent branch while the parent has a run
@@ -100,11 +150,74 @@ func (c *SubtaskCoordinator) OnChildTerminal(ctx context.Context, child gen.Task
 			log.Warn("subtasks: set pending merge status", "err", serr)
 		}
 		c.publishUpdated(child.ID, parent.ID)
-		return
+		return nil
 	}
 
-	c.mergeChild(ctx, repoPath, parent, child)
-	c.evaluateParent(ctx, parent.ID, repoPath)
+	// A home child shares the parent's repo, so childRepo.Path is the parent repo path.
+	c.mergeChild(ctx, childRepo.Path, parent, child)
+	c.evaluateParent(ctx, parent.ID)
+	return nil
+}
+
+// landForeignChild lands a foreign child via its own PR (ADR 0041). It never
+// touches the parent's repo, worktree, branch or git lock, and never defers on
+// the parent's active run (it writes nothing to the parent branch). Locks: the
+// child repo lock is taken only inside OnTaskTerminal; the parent lock only for
+// the final status write, so no two repo locks are ever held (ADR 0009).
+func (c *SubtaskCoordinator) landForeignChild(ctx context.Context, parent, child gen.Task, childRepo gen.Repo) error {
+	log := slog.With("component", "subtasks", "task_id", child.ID, "parent_id", parent.ID)
+	if child.Branch == "" {
+		// Never ran: nothing to push or PR.
+		lock := c.parentLock(parent.ID)
+		lock.Lock()
+		defer lock.Unlock()
+		c.setMerge(ctx, child.ID, "merged")
+		c.publishUpdated(child.ID, parent.ID)
+		c.evaluateParent(ctx, parent.ID)
+		return nil
+	}
+	// Outbox retries re-enter here: only mark pending when no PR status is
+	// recorded yet, so a later pr_open/merged is never overwritten.
+	cur, err := c.q.GetTask(ctx, child.ID)
+	if err != nil {
+		return fmt.Errorf("reload child: %w", err)
+	}
+	if cur.MergeStatus == "" {
+		c.setMerge(ctx, child.ID, "pending")
+		c.publishUpdated(child.ID, parent.ID)
+	}
+
+	state := ""
+	if c.OpenPR != nil {
+		// No locks held: prflow pushes and calls the forge itself.
+		state, err = c.OpenPR(ctx, cur, childRepo)
+		if err != nil {
+			return fmt.Errorf("open PR for foreign subtask: %w", err)
+		}
+	}
+	reloaded, err := c.q.GetTask(ctx, child.ID)
+	if err != nil {
+		return fmt.Errorf("reload child: %w", err)
+	}
+	if state == "" {
+		state = reloaded.GitState
+	}
+	if err := OnTaskTerminal(ctx, c.q, reloaded, childRepo); err != nil {
+		log.Warn("subtasks: foreign child teardown", "err", err)
+		return err
+	}
+
+	lock := c.parentLock(parent.ID)
+	lock.Lock()
+	defer lock.Unlock()
+	// ghsync may have moved the PR on (e.g. merged) meanwhile; prefer the freshest state.
+	if latest, lerr := c.q.GetTask(ctx, child.ID); lerr == nil && latest.GitState != "" {
+		state = latest.GitState
+	}
+	c.setMerge(ctx, child.ID, ForeignChildMergeStatus(state))
+	c.publishUpdated(child.ID, parent.ID)
+	c.evaluateParent(ctx, parent.ID)
+	return nil
 }
 
 // AfterParentRun is called by the pool once a parent's run completes. It marks
@@ -115,7 +228,7 @@ func (c *SubtaskCoordinator) OnChildTerminal(ctx context.Context, child gen.Task
 // complete the set) and, when an integration run (integration_status=pending)
 // ended with a successful outcome and no conflicts remain, marks it done.
 // A no-op for tasks that aren't parents. Returns whether anything changed.
-func (c *SubtaskCoordinator) AfterParentRun(ctx context.Context, parentID, repoPath string, runSucceeded, outcomeSuccess bool) bool {
+func (c *SubtaskCoordinator) AfterParentRun(ctx context.Context, parentID, parentRepoPath string, runSucceeded, outcomeSuccess bool) bool {
 	lock := c.parentLock(parentID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -131,21 +244,26 @@ func (c *SubtaskCoordinator) AfterParentRun(ctx context.Context, parentID, repoP
 	wasPending := c.integrationStatus(ctx, parentID) == "pending"
 	changed := false
 	for _, child := range children {
+		if IsForeignChild(parent, child) {
+			// Foreign children (ADR 0041) have no branch to merge back and their
+			// worktree is in another repo: nothing to flush or clean up here.
+			continue
+		}
 		switch {
 		case child.MergeStatus == "pending":
-			c.mergeChild(ctx, repoPath, parent, child)
+			c.mergeChild(ctx, parentRepoPath, parent, child)
 			changed = true
 		case child.MergeStatus == "merge_conflict" && runSucceeded:
 			// The work run resolved and committed the conflicting merge on the
 			// parent branch; mark the child merged and tear it down (under the
 			// repo git lock so the ref writes don't race other tasks).
 			c.setMerge(ctx, child.ID, "merged")
-			lock := RepoGitLock(repoPath)
+			lock := RepoGitLock(parentRepoPath)
 			lock.Lock()
 			if child.WorktreePath != "" {
-				_ = RemoveWorktree(ctx, repoPath, child.WorktreePath)
+				_ = RemoveWorktree(ctx, parentRepoPath, child.WorktreePath)
 			}
-			_ = DeleteLocalBranch(ctx, repoPath, child.Branch)
+			_ = DeleteLocalBranch(ctx, parentRepoPath, child.Branch)
 			lock.Unlock()
 			c.publishUpdated(child.ID, parentID)
 			changed = true
@@ -165,7 +283,7 @@ func (c *SubtaskCoordinator) AfterParentRun(ctx context.Context, parentID, repoP
 			changed = true
 		}
 	}
-	c.evaluateParent(ctx, parentID, repoPath)
+	c.evaluateParent(ctx, parentID)
 	return changed
 }
 
@@ -173,8 +291,12 @@ func (c *SubtaskCoordinator) AfterParentRun(ctx context.Context, parentID, repoP
 // whole git sequence (optional parent re-provision, merge, worktree/branch
 // teardown) runs under the repo's git lock so it never overlaps a concurrent
 // commit/merge on the same repo.
-func (c *SubtaskCoordinator) mergeChild(ctx context.Context, repoPath string, parent, child gen.Task) {
+func (c *SubtaskCoordinator) mergeChild(ctx context.Context, parentRepoPath string, parent, child gen.Task) {
 	log := slog.With("component", "subtasks", "task_id", child.ID, "parent_id", parent.ID)
+	if IsForeignChild(parent, child) {
+		log.Warn("subtasks: refusing to merge a foreign child into the parent branch")
+		return
+	}
 	if child.Branch == "" {
 		// The child reached terminal without ever running: nothing to merge.
 		c.setMerge(ctx, child.ID, "merged")
@@ -186,7 +308,7 @@ func (c *SubtaskCoordinator) mergeChild(ctx context.Context, repoPath string, pa
 		return
 	}
 
-	lock := RepoGitLock(repoPath)
+	lock := RepoGitLock(parentRepoPath)
 	lock.Lock()
 	defer lock.Unlock()
 
@@ -194,7 +316,7 @@ func (c *SubtaskCoordinator) mergeChild(ctx context.Context, repoPath string, pa
 	// dispatch; re-provision defensively if it was pruned).
 	parentDir := parent.WorktreePath
 	if parentDir == "" || !gitcmd.DirExists(parentDir) {
-		wtPath, _, baseRef, perr := provisionWorktree(ctx, repoPath, parent.ID, parent.Title)
+		wtPath, _, baseRef, perr := provisionWorktree(ctx, parentRepoPath, parent.ID, parent.Title)
 		if perr != nil {
 			log.Warn("subtasks: provision parent worktree", "err", perr)
 			return
@@ -221,11 +343,11 @@ func (c *SubtaskCoordinator) mergeChild(ctx context.Context, repoPath string, pa
 		c.setMerge(ctx, child.ID, "merged")
 		// Children never push; tear down the child's worktree + local branch.
 		if child.WorktreePath != "" {
-			if rerr := RemoveWorktree(ctx, repoPath, child.WorktreePath); rerr != nil {
+			if rerr := RemoveWorktree(ctx, parentRepoPath, child.WorktreePath); rerr != nil {
 				log.Warn("subtasks: remove child worktree", "err", rerr)
 			}
 		}
-		if derr := DeleteLocalBranch(ctx, repoPath, child.Branch); derr != nil {
+		if derr := DeleteLocalBranch(ctx, parentRepoPath, child.Branch); derr != nil {
 			log.Warn("subtasks: delete child branch", "err", derr)
 		}
 		c.publishUpdated(child.ID, parent.ID)
@@ -244,7 +366,7 @@ func (c *SubtaskCoordinator) mergeChild(ctx context.Context, repoPath string, pa
 // so the old behaviour is kept as a fallback: auto-advance along the
 // agent-success transition (only when there are no conflicts).
 // Callers hold the per-parent lock.
-func (c *SubtaskCoordinator) evaluateParent(ctx context.Context, parentID, repoPath string) {
+func (c *SubtaskCoordinator) evaluateParent(ctx context.Context, parentID string) {
 	log := slog.With("component", "subtasks", "parent_id", parentID)
 	children, err := c.q.ListSubtasks(ctx, &parentID)
 	if err != nil || len(children) == 0 {

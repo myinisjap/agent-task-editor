@@ -116,6 +116,7 @@ func (c *ResetChecker) probe(ctx context.Context, cfg AgentConfig) error {
 	pcfg.MaxCostUSD = 0
 	pcfg.ResumeSessions = false
 	pcfg.SubtasksEnabled = false
+	pcfg.CrossRepoSubtasksEnabled = false
 	pcfg.EnabledPlugins = nil
 	pcfg.EnabledMCPServers = nil
 

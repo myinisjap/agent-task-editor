@@ -1069,6 +1069,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		}
 	}
 
+	foreignChild := d.isForeignChild(ctx, t)
 	enqueued := d.pool.Submit(Job{
 		RunID:         runID,
 		Provider:      provider,
@@ -1076,7 +1077,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		SelectLessons: d.lessonSelector(t, log),
 		Input: RunInput{
 			RunID:                runID,
-			Task:                 Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Branch: t.Branch, ParentID: derefStr(t.ParentTaskID), FileScope: fileScope, RepoPath: repo.Path, Attachments: attachmentRels, Source: t.Source},
+			Task:                 Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Branch: t.Branch, ParentID: derefStr(t.ParentTaskID), ForeignChild: foreignChild, FileScope: fileScope, RepoPath: repo.Path, Attachments: attachmentRels, Source: t.Source},
 			AgentConfig:          agentCfg,
 			RepoPath:             workDir,
 			RepoRemoteURL:        derefStr(repo.RemoteUrl),
@@ -1496,6 +1497,16 @@ func (d *Dispatcher) loadSourceComments(ctx context.Context, taskID string, log 
 	return sourceComments
 }
 
+// isForeignChild reports whether t is a subtask living in a different repo from
+// its parent (ADR 0041). Does a DB read; call outside the repo git lock.
+func (d *Dispatcher) isForeignChild(ctx context.Context, t gen.Task) bool {
+	if t.ParentTaskID == nil || *t.ParentTaskID == "" {
+		return false
+	}
+	parent, err := d.q.GetTask(ctx, *t.ParentTaskID)
+	return err == nil && IsForeignChild(parent, t)
+}
+
 // parentBranchBase returns the branch a subtask should fork from: its parent's
 // branch. Returns "" for a top-level task, or when the parent has no branch yet
 // (falls back to the repo base). The parent's branch always exists by the time a
@@ -1506,7 +1517,9 @@ func (d *Dispatcher) parentBranchBase(ctx context.Context, t gen.Task) string {
 		return ""
 	}
 	parent, err := d.q.GetTask(ctx, *t.ParentTaskID)
-	if err != nil || parent.Branch == "" {
+	if err != nil || parent.Branch == "" || IsForeignChild(parent, t) {
+		// A foreign child (ADR 0041) lives in another repo, where the parent's
+		// branch does not exist: it forks from its own repo's base.
 		return ""
 	}
 	return parent.Branch
@@ -1613,28 +1626,29 @@ func toAgentConfig(cfg gen.AgentConfig, pc gen.ProviderConfig) AgentConfig {
 	var commandDenylist []string
 	_ = json.Unmarshal([]byte(cfg.CommandDenylist), &commandDenylist)
 	return AgentConfig{
-		ID:                cfg.ID,
-		Name:              cfg.Name,
-		Provider:          pc.Provider,
-		Model:             pc.Model,
-		UsagePool:         UsagePoolKey(pc.ID, pc.Provider, env),
-		SystemPrompt:      cfg.SystemPrompt,
-		MaxTokens:         cfg.MaxTokens,
-		TimeoutSecs:       cfg.TimeoutSecs,
-		MaxTurns:          cfg.MaxTurns,
-		MaxRetries:        cfg.MaxRetries,
-		RetryBackoffSecs:  cfg.RetryBackoffSecs,
-		ResumeSessions:    cfg.ResumeSessions != 0,
-		SubtasksEnabled:   cfg.SubtasksEnabled != 0,
-		MaxSubtasks:       cfg.MaxSubtasks,
-		MaxCostUSD:        cfg.MaxCostUsd,
-		Effort:            cfg.Effort,
-		PermissionMode:    cfg.PermissionMode,
-		Env:               env,
-		EnabledPlugins:    enabledPlugins,
-		EnabledMCPServers: enabledMCPServers,
-		CommandAllowlist:  commandAllowlist,
-		CommandDenylist:   commandDenylist,
+		ID:                       cfg.ID,
+		Name:                     cfg.Name,
+		Provider:                 pc.Provider,
+		Model:                    pc.Model,
+		UsagePool:                UsagePoolKey(pc.ID, pc.Provider, env),
+		SystemPrompt:             cfg.SystemPrompt,
+		MaxTokens:                cfg.MaxTokens,
+		TimeoutSecs:              cfg.TimeoutSecs,
+		MaxTurns:                 cfg.MaxTurns,
+		MaxRetries:               cfg.MaxRetries,
+		RetryBackoffSecs:         cfg.RetryBackoffSecs,
+		ResumeSessions:           cfg.ResumeSessions != 0,
+		SubtasksEnabled:          cfg.SubtasksEnabled != 0,
+		CrossRepoSubtasksEnabled: cfg.CrossRepoSubtasksEnabled != 0,
+		MaxSubtasks:              cfg.MaxSubtasks,
+		MaxCostUSD:               cfg.MaxCostUsd,
+		Effort:                   cfg.Effort,
+		PermissionMode:           cfg.PermissionMode,
+		Env:                      env,
+		EnabledPlugins:           enabledPlugins,
+		EnabledMCPServers:        enabledMCPServers,
+		CommandAllowlist:         commandAllowlist,
+		CommandDenylist:          commandDenylist,
 	}
 }
 

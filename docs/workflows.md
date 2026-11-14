@@ -428,6 +428,7 @@ leaving prose in `agent_notes`. Subtasks build on the dependency gate above.
   then removed. Children never push to origin or open PRs — the parent's branch
   (and its single eventual PR) is the only outward-facing artifact, and
   `GET /tasks/{parent}/diff` shows the integrated result.
+- **Cross-repo children (ADR 0041).** With `cross_repo_subtasks_enabled` (also needs `subtasks_enabled`), `create_subtask` accepts a `repo_id`. A child in another repo uses this workflow, forks from its own repo's base, and is **not** merged into the parent branch: on a terminal label it is pushed and opens its own PR, and its `merge_status` follows that PR (`pending` → `pr_open` → `merged`/`pr_closed`). Children in the parent's repo behave as above. Parent readiness, integration prompts and UI for foreign children arrive in later stages.
 - **Conflicts.** A conflicting merge-back is aborted cleanly and the child is
   flagged `merge_conflict`. Because the child is terminal, the parent's edge is
   satisfied and the parent becomes dispatch-eligible; the dispatcher hands the

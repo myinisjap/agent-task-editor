@@ -19,9 +19,10 @@ import (
 // agents.go), not the raw int64s on the sqlc-generated struct.
 type agentConfigResponse struct {
 	gen.AgentConfig
-	Enabled         bool `json:"enabled"`
-	ResumeSessions  bool `json:"resume_sessions"`
-	SubtasksEnabled bool `json:"subtasks_enabled"`
+	Enabled                  bool `json:"enabled"`
+	ResumeSessions           bool `json:"resume_sessions"`
+	SubtasksEnabled          bool `json:"subtasks_enabled"`
+	CrossRepoSubtasksEnabled bool `json:"cross_repo_subtasks_enabled"`
 
 	FallbackProviderConfigIDs []string         `json:"fallback_provider_config_ids"`
 	EscalationLadder          []map[string]any `json:"escalation_ladder"`

@@ -1026,10 +1026,10 @@ func (p *Pool) safetyNetCommit(ctx context.Context, job Job, finalStatus string,
 		if err := commitIfDirty(ctx, job.Input.RepoPath, msg, p.GitName, p.GitEmail); err != nil {
 			log.Warn("pool: safety-net commit failed", "err", err)
 		}
-		// Children never push to origin — their branch merges back into the
+		// Home children never push to origin — their branch merges back into the
 		// parent's branch on terminal (see SubtaskCoordinator). Only push
-		// ordinary tasks.
-		if !isSubtask && job.Input.RepoRemoteURL != "" && job.Input.Task.Branch != "" {
+		// ordinary tasks and foreign children (ADR 0041: they land via their own PR).
+		if (!isSubtask || job.Input.Task.ForeignChild) && job.Input.RepoRemoteURL != "" && job.Input.Task.Branch != "" {
 			if err := PushBranch(ctx, job.Input.RepoPath, job.Input.Task.Branch); err != nil {
 				log.Warn("pool: push branch failed", "branch", job.Input.Task.Branch, "err", err)
 			}

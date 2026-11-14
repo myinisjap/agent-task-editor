@@ -103,11 +103,12 @@ type agentConfigView struct {
 	// API carries a real array.
 	FallbackProviderConfigIDs []string `json:"fallback_provider_config_ids"`
 	// EscalationLadder shadows the JSON-text column with a real array.
-	EscalationLadder []agent.LadderRung  `json:"escalation_ladder"`
-	Enabled          bool                `json:"enabled"`
-	ResumeSessions   bool                `json:"resume_sessions"`
-	SubtasksEnabled  bool                `json:"subtasks_enabled"`
-	ProviderConfig   *gen.ProviderConfig `json:"provider_config,omitempty"`
+	EscalationLadder         []agent.LadderRung  `json:"escalation_ladder"`
+	Enabled                  bool                `json:"enabled"`
+	ResumeSessions           bool                `json:"resume_sessions"`
+	SubtasksEnabled          bool                `json:"subtasks_enabled"`
+	CrossRepoSubtasksEnabled bool                `json:"cross_repo_subtasks_enabled"`
+	ProviderConfig           *gen.ProviderConfig `json:"provider_config,omitempty"`
 	// CurrentVersion is the latest version number in the config's history
 	// (nil when it has none yet).
 	CurrentVersion *int64 `json:"current_version"`
@@ -131,6 +132,7 @@ func (h *AgentsHandler) safeConfig(r *http.Request, cfg gen.AgentConfig) agentCo
 		Enabled:                   cfg.Enabled != 0,
 		ResumeSessions:            cfg.ResumeSessions != 0,
 		SubtasksEnabled:           cfg.SubtasksEnabled != 0,
+		CrossRepoSubtasksEnabled:  cfg.CrossRepoSubtasksEnabled != 0,
 	}
 	if cfg.ProviderConfigID != "" {
 		if pc, err := h.q.GetProviderConfig(r.Context(), cfg.ProviderConfigID); err == nil {
@@ -303,29 +305,30 @@ func (h *AgentsHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name              string             `json:"name"`
-		ProviderConfigID  string             `json:"provider_config_id"`
-		SystemPrompt      string             `json:"system_prompt"`
-		Labels            string             `json:"labels"`
-		MaxTokens         int64              `json:"max_tokens"`
-		TimeoutSecs       int64              `json:"timeout_secs"`
-		MaxTurns          int64              `json:"max_turns"`
-		EnabledPlugins    string             `json:"enabled_plugins"`
-		EnabledMCPServers string             `json:"enabled_mcp_servers"`
-		CommandAllowlist  string             `json:"command_allowlist"`
-		CommandDenylist   string             `json:"command_denylist"`
-		MaxRetries        *int64             `json:"max_retries"`
-		RetryBackoffSecs  *int64             `json:"retry_backoff_secs"`
-		ResumeSessions    *flexBool          `json:"resume_sessions"`
-		SubtasksEnabled   *flexBool          `json:"subtasks_enabled"`
-		MaxSubtasks       *int64             `json:"max_subtasks"`
-		MaxCostUsd        *float64           `json:"max_cost_usd"`
-		Priority          *int64             `json:"priority"`
-		Effort            *string            `json:"effort"`
-		PermissionMode    *string            `json:"permission_mode"`
-		FallbackIDs       []string           `json:"fallback_provider_config_ids"`
-		EscalationLadder  []agent.LadderRung `json:"escalation_ladder"`
-		Note              string             `json:"note"`
+		Name                     string             `json:"name"`
+		ProviderConfigID         string             `json:"provider_config_id"`
+		SystemPrompt             string             `json:"system_prompt"`
+		Labels                   string             `json:"labels"`
+		MaxTokens                int64              `json:"max_tokens"`
+		TimeoutSecs              int64              `json:"timeout_secs"`
+		MaxTurns                 int64              `json:"max_turns"`
+		EnabledPlugins           string             `json:"enabled_plugins"`
+		EnabledMCPServers        string             `json:"enabled_mcp_servers"`
+		CommandAllowlist         string             `json:"command_allowlist"`
+		CommandDenylist          string             `json:"command_denylist"`
+		MaxRetries               *int64             `json:"max_retries"`
+		RetryBackoffSecs         *int64             `json:"retry_backoff_secs"`
+		ResumeSessions           *flexBool          `json:"resume_sessions"`
+		SubtasksEnabled          *flexBool          `json:"subtasks_enabled"`
+		CrossRepoSubtasksEnabled *flexBool          `json:"cross_repo_subtasks_enabled"`
+		MaxSubtasks              *int64             `json:"max_subtasks"`
+		MaxCostUsd               *float64           `json:"max_cost_usd"`
+		Priority                 *int64             `json:"priority"`
+		Effort                   *string            `json:"effort"`
+		PermissionMode           *string            `json:"permission_mode"`
+		FallbackIDs              []string           `json:"fallback_provider_config_ids"`
+		EscalationLadder         []agent.LadderRung `json:"escalation_ladder"`
+		Note                     string             `json:"note"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -400,6 +403,10 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.SubtasksEnabled != nil && *body.SubtasksEnabled {
 		subtasksEnabled = 1
 	}
+	crossRepo := int64(0)
+	if body.CrossRepoSubtasksEnabled != nil && *body.CrossRepoSubtasksEnabled {
+		crossRepo = 1
+	}
 	maxSubtasks := int64(10)
 	if body.MaxSubtasks != nil && *body.MaxSubtasks > 0 {
 		maxSubtasks = *body.MaxSubtasks
@@ -459,6 +466,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		RetryBackoffSecs:          retryBackoffSecs,
 		ResumeSessions:            resumeSessions,
 		SubtasksEnabled:           subtasksEnabled,
+		CrossRepoSubtasksEnabled:  crossRepo,
 		MaxSubtasks:               maxSubtasks,
 		MaxCostUsd:                maxCostUsd,
 		Priority:                  priority,
@@ -496,6 +504,7 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			PermissionMode:            cfg.PermissionMode,
 			FallbackProviderConfigIds: cfg.FallbackProviderConfigIds,
 			EscalationLadder:          cfg.EscalationLadder,
+			CrossRepoSubtasksEnabled:  cfg.CrossRepoSubtasksEnabled,
 			Enabled:                   0, ID: cfg.ID,
 		})
 		if err != nil {
@@ -520,30 +529,31 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name              string              `json:"name"`
-		ProviderConfigID  string              `json:"provider_config_id"`
-		SystemPrompt      string              `json:"system_prompt"`
-		Labels            string              `json:"labels"`
-		MaxTokens         int64               `json:"max_tokens"`
-		TimeoutSecs       int64               `json:"timeout_secs"`
-		MaxTurns          int64               `json:"max_turns"`
-		Enabled           *flexBool           `json:"enabled"`
-		EnabledPlugins    string              `json:"enabled_plugins"`
-		EnabledMCPServers string              `json:"enabled_mcp_servers"`
-		CommandAllowlist  string              `json:"command_allowlist"`
-		CommandDenylist   string              `json:"command_denylist"`
-		MaxRetries        *int64              `json:"max_retries"`
-		RetryBackoffSecs  *int64              `json:"retry_backoff_secs"`
-		ResumeSessions    *flexBool           `json:"resume_sessions"`
-		SubtasksEnabled   *flexBool           `json:"subtasks_enabled"`
-		MaxSubtasks       *int64              `json:"max_subtasks"`
-		MaxCostUsd        *float64            `json:"max_cost_usd"`
-		Priority          *int64              `json:"priority"`
-		Effort            *string             `json:"effort"`
-		PermissionMode    *string             `json:"permission_mode"`
-		FallbackIDs       *[]string           `json:"fallback_provider_config_ids"`
-		EscalationLadder  *[]agent.LadderRung `json:"escalation_ladder"`
-		Note              *string             `json:"note"`
+		Name                     string              `json:"name"`
+		ProviderConfigID         string              `json:"provider_config_id"`
+		SystemPrompt             string              `json:"system_prompt"`
+		Labels                   string              `json:"labels"`
+		MaxTokens                int64               `json:"max_tokens"`
+		TimeoutSecs              int64               `json:"timeout_secs"`
+		MaxTurns                 int64               `json:"max_turns"`
+		Enabled                  *flexBool           `json:"enabled"`
+		EnabledPlugins           string              `json:"enabled_plugins"`
+		EnabledMCPServers        string              `json:"enabled_mcp_servers"`
+		CommandAllowlist         string              `json:"command_allowlist"`
+		CommandDenylist          string              `json:"command_denylist"`
+		MaxRetries               *int64              `json:"max_retries"`
+		RetryBackoffSecs         *int64              `json:"retry_backoff_secs"`
+		ResumeSessions           *flexBool           `json:"resume_sessions"`
+		SubtasksEnabled          *flexBool           `json:"subtasks_enabled"`
+		CrossRepoSubtasksEnabled *flexBool           `json:"cross_repo_subtasks_enabled"`
+		MaxSubtasks              *int64              `json:"max_subtasks"`
+		MaxCostUsd               *float64            `json:"max_cost_usd"`
+		Priority                 *int64              `json:"priority"`
+		Effort                   *string             `json:"effort"`
+		PermissionMode           *string             `json:"permission_mode"`
+		FallbackIDs              *[]string           `json:"fallback_provider_config_ids"`
+		EscalationLadder         *[]agent.LadderRung `json:"escalation_ladder"`
+		Note                     *string             `json:"note"`
 	}
 	if err := decode(r, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -660,6 +670,13 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			subtasksEnabled = 0
 		}
 	}
+	crossRepo := existing.CrossRepoSubtasksEnabled
+	if body.CrossRepoSubtasksEnabled != nil {
+		crossRepo = 0
+		if *body.CrossRepoSubtasksEnabled {
+			crossRepo = 1
+		}
+	}
 	maxSubtasks := existing.MaxSubtasks
 	if body.MaxSubtasks != nil && *body.MaxSubtasks > 0 {
 		maxSubtasks = *body.MaxSubtasks
@@ -711,6 +728,7 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		RetryBackoffSecs:          retryBackoffSecs,
 		ResumeSessions:            resumeSessions,
 		SubtasksEnabled:           subtasksEnabled,
+		CrossRepoSubtasksEnabled:  crossRepo,
 		MaxSubtasks:               maxSubtasks,
 		MaxCostUsd:                maxCostUsd,
 		Priority:                  priority,
