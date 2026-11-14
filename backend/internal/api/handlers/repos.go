@@ -242,6 +242,9 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	prCur := gen.Repo{PrReviewAuthorAssocs: `["OWNER","MEMBER","COLLABORATOR"]`, PrReviewSkipDrafts: 1}
 	prParams, ok := h.resolvePRReview(w, r, body.prReviewBody, prCur, remoteURL != "")
+	if !ok {
+		return
+	}
 	autoMergeMode, autoMergeMethod, ok := resolveAutoMerge(w, body.AutoMergeMode, body.AutoMergeMethod, "", "")
 	if !ok {
 		return
@@ -277,7 +280,7 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if body.prReviewBody.any() {
+	if body.any() {
 		prParams.ID = repo.ID
 		if repo, err = h.q.SetRepoPRReview(r.Context(), prParams); err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
@@ -865,6 +868,9 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	prParams, ok := h.resolvePRReview(w, r, body.prReviewBody, existing, remoteURL != nil && *remoteURL != "")
+	if !ok {
+		return
+	}
 	autoMergeMode, autoMergeMethod, ok := resolveAutoMerge(w, body.AutoMergeMode, body.AutoMergeMethod, existing.AutoMergeMode, existing.AutoMergeMethod)
 	if !ok {
 		return
@@ -953,7 +959,7 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if body.prReviewBody.any() {
+	if body.any() {
 		prParams.ID = repo.ID
 		if repo, err = h.q.SetRepoPRReview(r.Context(), prParams); err != nil {
 			Err(w, http.StatusInternalServerError, err.Error())
