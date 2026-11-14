@@ -90,6 +90,14 @@ func (GitHub) CloseIssueWithComment(ctx context.Context, repoName string, issueN
 	return CloseIssueWithComment(ctx, repoName, issueNumber, body)
 }
 
+func (GitHub) ReplyToReviewComment(ctx context.Context, repoName string, prNumber int, commentID, body string) (string, error) {
+	return ReplyToReviewComment(ctx, repoName, prNumber, commentID, body)
+}
+
+func (GitHub) ResolveReviewThread(ctx context.Context, repoName string, prNumber int, commentID string) error {
+	return ResolveReviewThread(ctx, repoName, prNumber, commentID)
+}
+
 func (GitHub) AuthStatus() (authed bool, note string) { return GHAuthStatus() }
 
 // CompareURL builds a GitHub compare URL for the given repo/base/branch with
@@ -556,11 +564,16 @@ func GetPRReviewComments(ctx context.Context, repoName string, prNumber int) ([]
 			} `json:"user"`
 			CreatedAt         string `json:"created_at"`
 			AuthorAssociation string `json:"author_association"`
+			InReplyToID       *int64 `json:"in_reply_to_id"`
 		}
 		if err := json.Unmarshal(b, &page); err != nil {
 			return err
 		}
 		for _, c := range page {
+			inReplyTo := ""
+			if c.InReplyToID != nil {
+				inReplyTo = fmt.Sprint(*c.InReplyToID)
+			}
 			line := 0
 			if c.Line != nil {
 				line = *c.Line
@@ -581,6 +594,7 @@ func GetPRReviewComments(ctx context.Context, repoName string, prNumber int) ([]
 				Author:            c.User.Login,
 				CreatedAt:         c.CreatedAt,
 				AuthorAssociation: c.AuthorAssociation,
+				InReplyToID:       inReplyTo,
 			})
 		}
 		return nil
@@ -822,4 +836,116 @@ func ParseGitHubName(remoteURL string) (string, bool) {
 	}
 
 	return "", false
+}
+
+// ReplyToReviewComment posts a reply in the review thread of the inline
+// comment commentID on the given PR and returns the reply's id.
+func ReplyToReviewComment(ctx context.Context, repoName string, prNumber int, commentID, body string) (string, error) {
+	metrics.GhCallsTotal.WithLabelValues("review_reply").Inc()
+	out, _, err := apiDo(ctx, http.MethodPost,
+		fmt.Sprintf("%s/pulls/%d/comments/%s/replies", repoPath(repoName), prNumber, url.PathEscape(commentID)),
+		map[string]string{"body": body})
+	if err != nil {
+		return "", fmt.Errorf("github review reply: %w", err)
+	}
+	var resp struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return "", fmt.Errorf("github review reply: decode: %w", err)
+	}
+	return fmt.Sprint(resp.ID), nil
+}
+
+// graphqlURL derives the GraphQL endpoint from the REST base: api.github.com
+// -> /graphql; GitHub Enterprise's <host>/api/v3 -> <host>/api/graphql.
+func graphqlURL() string {
+	return strings.TrimSuffix(apiBase(), "/v3") + "/graphql"
+}
+
+// graphqlDo runs one GraphQL request and decodes data into out.
+func graphqlDo(ctx context.Context, query string, vars map[string]any, out any) error {
+	b, _, err := apiDo(ctx, http.MethodPost, graphqlURL(), map[string]any{"query": query, "variables": vars})
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Data   json.RawMessage `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		return err
+	}
+	if len(resp.Errors) > 0 {
+		return errors.New(resp.Errors[0].Message)
+	}
+	if out != nil {
+		return json.Unmarshal(resp.Data, out)
+	}
+	return nil
+}
+
+// ResolveReviewThread marks the review thread containing the inline comment
+// commentID resolved (GraphQL only: REST has no such endpoint). An already
+// resolved thread is a no-op.
+func ResolveReviewThread(ctx context.Context, repoName string, prNumber int, commentID string) error {
+	metrics.GhCallsTotal.WithLabelValues("review_resolve").Inc()
+	owner, name, ok := strings.Cut(repoName, "/")
+	if !ok {
+		return fmt.Errorf("github resolve thread: bad repo name %q", repoName)
+	}
+	const q = `query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{id isResolved comments(first:100){nodes{databaseId}}}}}}}`
+	after := ""
+	for {
+		vars := map[string]any{"owner": owner, "name": name, "number": prNumber}
+		if after != "" {
+			vars["after"] = after
+		}
+		var data struct {
+			Repository struct {
+				PullRequest struct {
+					ReviewThreads struct {
+						PageInfo struct {
+							HasNextPage bool   `json:"hasNextPage"`
+							EndCursor   string `json:"endCursor"`
+						} `json:"pageInfo"`
+						Nodes []struct {
+							ID         string `json:"id"`
+							IsResolved bool   `json:"isResolved"`
+							Comments   struct {
+								Nodes []struct {
+									DatabaseID int64 `json:"databaseId"`
+								} `json:"nodes"`
+							} `json:"comments"`
+						} `json:"nodes"`
+					} `json:"reviewThreads"`
+				} `json:"pullRequest"`
+			} `json:"repository"`
+		}
+		if err := graphqlDo(ctx, q, vars, &data); err != nil {
+			return fmt.Errorf("github resolve thread: %w", err)
+		}
+		threads := data.Repository.PullRequest.ReviewThreads
+		for _, th := range threads.Nodes {
+			for _, c := range th.Comments.Nodes {
+				if fmt.Sprint(c.DatabaseID) != commentID {
+					continue
+				}
+				if th.IsResolved {
+					return nil
+				}
+				const m = `mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id}}}`
+				if err := graphqlDo(ctx, m, map[string]any{"id": th.ID}, nil); err != nil {
+					return fmt.Errorf("github resolve thread: %w", err)
+				}
+				return nil
+			}
+		}
+		if !threads.PageInfo.HasNextPage {
+			return fmt.Errorf("github resolve thread: no review thread contains comment %s", commentID)
+		}
+		after = threads.PageInfo.EndCursor
+	}
 }

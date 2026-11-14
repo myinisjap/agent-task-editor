@@ -673,13 +673,38 @@ curl -X PATCH http://localhost:8080/api/v1/repos/<id> \
   -d '{"pr_review_auto_transition_enabled": true}'
 ```
 
-### v2 (not yet implemented)
+### Replying on review threads
 
-Resolve/reply write-back — after the agent addresses an ingested GitHub
-review comment (e.g. via the `resolve_comment` MCP tool), replying on the
-originating GitHub review thread — is intentionally out of scope for v1. The
-`external_id`/`source` columns on `task_review_comments` are structured to
-make that a natural follow-up without a schema change.
+Opt-in per repo, next to the other write-back settings (repo edit form, or
+`review_reply_enabled` / `review_reply_resolve_enabled` on `PATCH /repos/{id}`;
+both default off):
+
+```sh
+curl -X PATCH http://localhost:8080/api/v1/repos/<id> \
+  -H 'Content-Type: application/json' \
+  -d '{"review_reply_enabled": true, "review_reply_resolve_enabled": false}'
+```
+
+When an agent resolves an ingested review comment (the `resolve_comment` MCP
+tool), ATE replies on the originating review thread with the agent's
+resolution note, prefixed `**Agent (agent-task-editor):**`, capped at 1000
+characters, plus the short SHA of the pushed head. Details:
+
+- Only comments with a forge `source`/`external_id` that an **agent** resolved
+  get a reply; comments made in ATE's diff viewer and human-resolved comments
+  are untouched.
+- The reply is posted through the side-effect outbox (`review_reply`) only once
+  the task's branch head is on the PR; until then the effect retries with
+  backoff (a failed effect shows on the task and can be retried), so a reply
+  never points at code that is not on the PR.
+- Each comment gets exactly one reply in its lifetime
+  (`task_review_comments.reply_posted_at`), so retries never double-post.
+- With `review_reply_resolve_enabled`, the thread is also marked resolved
+  (GitHub, via GraphQL). This is best-effort: a failure is logged, not retried.
+- Gitea has no reply-in-thread API, so the reply is a PR conversation comment
+  referencing the review comment id, and threads are never resolved.
+- ATE's replies are recognised (recorded reply id, or a hidden marker in the
+  body) and never re-ingested as review feedback.
 
 ## GitHub webhook (optional)
 

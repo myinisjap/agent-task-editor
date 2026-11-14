@@ -791,3 +791,28 @@ func (g *Gitea) CompareURL(repoName, base, branch, title, body string) string {
 	q.Set("body", body)
 	return fmt.Sprintf("%s/%s/compare/%s...%s?%s", g.baseURL, repoName, base, branch, q.Encode())
 }
+
+// ReplyToReviewComment implements forge.Forge. Gitea's API has no
+// reply-in-thread endpoint for inline review comments, so the reply goes out
+// as a plain PR conversation comment that references the original
+// review comment by id, and its id is returned.
+func (g *Gitea) ReplyToReviewComment(ctx context.Context, repoName string, prNumber int, commentID, body string) (string, error) {
+	metrics.GiteaCallsTotal.WithLabelValues("review_reply").Inc()
+	reqBody := struct {
+		Body string `json:"body"`
+	}{Body: fmt.Sprintf("Re: review comment #%s\n\n%s", commentID, body)}
+	var resp struct {
+		ID int64 `json:"id"`
+	}
+	if _, err := g.apiCall(ctx, http.MethodPost, fmt.Sprintf("/repos/%s/issues/%d/comments", repoName, prNumber), reqBody, &resp); err != nil {
+		return "", fmt.Errorf("gitea review reply: %w", err)
+	}
+	return strconv.FormatInt(resp.ID, 10), nil
+}
+
+// ResolveReviewThread implements forge.Forge. Gitea's resolve-conversation
+// endpoint is not part of its stable public API, so threads are never
+// resolved here; the reply alone is posted.
+func (g *Gitea) ResolveReviewThread(ctx context.Context, repoName string, prNumber int, commentID string) error {
+	return forge.ErrThreadResolveUnsupported
+}

@@ -57,6 +57,8 @@ type EditForm = {
   issue_writeback_enabled: boolean
   issue_writeback_label: string
   pr_review_auto_transition_enabled: boolean
+  review_reply_enabled: boolean
+  review_reply_resolve_enabled: boolean
   issue_sync_update_policy: IssueSyncUpdatePolicy
   issue_sync_gone_action: IssueSyncGoneAction
   issue_sync_gone_label: string
@@ -84,6 +86,8 @@ const BLANK_FORM: EditForm = {
   issue_writeback_enabled: false,
   issue_writeback_label: '',
   pr_review_auto_transition_enabled: false,
+  review_reply_enabled: false,
+  review_reply_resolve_enabled: false,
   issue_sync_update_policy: 'gate',
   issue_sync_gone_action: 'flag',
   issue_sync_gone_label: '',
@@ -186,6 +190,8 @@ export default function ReposPage() {
         issue_writeback_enabled: form.issue_writeback_enabled,
         issue_writeback_label: form.issue_writeback_label.trim(),
         pr_review_auto_transition_enabled: form.pr_review_auto_transition_enabled,
+        review_reply_enabled: form.review_reply_enabled,
+        review_reply_resolve_enabled: form.review_reply_resolve_enabled,
         issue_sync_update_policy: form.issue_sync_update_policy,
         issue_sync_gone_action: form.issue_sync_gone_action,
         issue_sync_gone_label: form.issue_sync_gone_label.trim(),
@@ -220,6 +226,8 @@ export default function ReposPage() {
       issue_writeback_enabled: !!repo.issue_writeback_enabled,
       issue_writeback_label: repo.issue_writeback_label ?? '',
       pr_review_auto_transition_enabled: !!repo.pr_review_auto_transition_enabled,
+      review_reply_enabled: !!repo.review_reply_enabled,
+      review_reply_resolve_enabled: !!repo.review_reply_resolve_enabled,
       issue_sync_update_policy: repo.issue_sync_update_policy ?? 'gate',
       issue_sync_gone_action: repo.issue_sync_gone_action ?? 'flag',
       issue_sync_gone_label: repo.issue_sync_gone_label ?? '',
@@ -273,6 +281,8 @@ export default function ReposPage() {
         issue_writeback_enabled: editForm.issue_writeback_enabled,
         issue_writeback_label: editForm.issue_writeback_label.trim(),
         pr_review_auto_transition_enabled: editForm.pr_review_auto_transition_enabled,
+        review_reply_enabled: editForm.review_reply_enabled,
+        review_reply_resolve_enabled: editForm.review_reply_resolve_enabled,
         issue_sync_update_policy: editForm.issue_sync_update_policy,
         issue_sync_gone_action: editForm.issue_sync_gone_action,
         issue_sync_gone_label: editForm.issue_sync_gone_label.trim(),
@@ -742,6 +752,29 @@ export default function ReposPage() {
               </span>
             </label>
 
+            <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.review_reply_enabled}
+                onChange={(e) => setForm((f) => ({ ...f, review_reply_enabled: e.target.checked }))}
+                className="accent-indigo-500"
+              />
+              Reply on PR review threads when the agent resolves a comment
+              <span className="text-fg-subtle">(posted after the branch is pushed, with the resolution note and short SHA)</span>
+            </label>
+
+            <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.review_reply_resolve_enabled}
+                disabled={!form.review_reply_enabled}
+                onChange={(e) => setForm((f) => ({ ...f, review_reply_resolve_enabled: e.target.checked }))}
+                className="accent-indigo-500"
+              />
+              Also resolve the thread
+              <span className="text-fg-subtle">(GitHub only; Gitea just gets the reply)</span>
+            </label>
+
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium text-fg-muted">
                 Max concurrent agent runs <span className="text-fg-subtle">(blank = use the global default)</span>
@@ -1041,6 +1074,29 @@ export default function ReposPage() {
                       <span className="text-fg-subtle">
                         (move a task back to its failure-path label when GitHub reports a changes-requested review, new review comment, or failed check; requires remote URL)
                       </span>
+                    </label>
+
+                    <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editForm.review_reply_enabled}
+                        onChange={(e) => setEditForm((f) => ({ ...f, review_reply_enabled: e.target.checked }))}
+                        className="accent-indigo-500"
+                      />
+                      Reply on PR review threads when the agent resolves a comment
+                      <span className="text-fg-subtle">(posted after the branch is pushed, with the resolution note and short SHA)</span>
+                    </label>
+
+                    <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={editForm.review_reply_resolve_enabled}
+                        disabled={!editForm.review_reply_enabled}
+                        onChange={(e) => setEditForm((f) => ({ ...f, review_reply_resolve_enabled: e.target.checked }))}
+                        className="accent-indigo-500"
+                      />
+                      Also resolve the thread
+                      <span className="text-fg-subtle">(GitHub only; Gitea just gets the reply)</span>
                     </label>
 
                     <div className="flex flex-col gap-1.5">

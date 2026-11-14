@@ -55,6 +55,14 @@ func (f *fakeOtherForge) ListOpenIssues(ctx context.Context, repoName, label str
 func (f *fakeOtherForge) GetIssueComments(ctx context.Context, repoName string, issueNumber int) ([]forge.IssueComment, error) {
 	return nil, nil
 }
+func (f *fakeOtherForge) ReplyToReviewComment(ctx context.Context, repoName string, prNumber int, commentID, body string) (string, error) {
+	return "", nil
+}
+
+func (f *fakeOtherForge) ResolveReviewThread(ctx context.Context, repoName string, prNumber int, commentID string) error {
+	return forge.ErrThreadResolveUnsupported
+}
+
 func (f *fakeOtherForge) AddIssueLabel(ctx context.Context, repoName string, issueNumber int, label string) error {
 	f.labelCalls = append(f.labelCalls, label)
 	return nil

@@ -5554,6 +5554,8 @@ export interface paths {
                         issue_writeback_enabled?: boolean;
                         issue_writeback_label?: string;
                         pr_review_auto_transition_enabled?: boolean;
+                        review_reply_enabled?: boolean;
+                        review_reply_resolve_enabled?: boolean;
                         /** @enum {string} */
                         issue_sync_update_policy?: "gate" | "always" | "never";
                         /** @enum {string} */
@@ -7841,10 +7843,10 @@ export interface components {
         /** @description One outstanding row of the side-effect outbox. A label transition records the work it owes (pushing the branch, opening a PR, updating the source issue) in the same transaction as the move; a background worker runs it with exponential backoff. Rows are deleted on success, so only unfinished work is listed. A pending row with attempts > 0 and a last_error is "failed, retrying"; status failed means the attempt budget is exhausted and it needs a manual retry. */
         TaskSideEffect: {
             /**
-             * @description terminal = push the branch and tear down the worktree (or merge a subtask back); create_pr = push and open a pull request; leave_not_ready = apply the in-progress signal to the source issue.
+             * @description terminal = push the branch and tear down the worktree (or merge a subtask back); create_pr = push and open a pull request; leave_not_ready = apply the in-progress signal to the source issue; review_reply = reply on the forge review thread of an ingested comment the agent resolved.
              * @enum {string}
              */
-            kind: "terminal" | "create_pr" | "leave_not_ready";
+            kind: "terminal" | "create_pr" | "leave_not_ready" | "review_reply";
             /** @enum {string} */
             status: "pending" | "running" | "failed";
             /** @description Failed attempts so far */
@@ -8435,6 +8437,10 @@ export interface components {
             issue_writeback_label?: string;
             /** @description true = when ghsync ingests new GitHub PR review/GHA feedback for one of this repo's tasks (a changes_requested review, a new inline review comment, or a failed check), the task is automatically transitioned along its workflow's "failure" human path (the same target as a manual Reject), so it lands back in front of an agent without a human having to click Reject. Requires remote_url. false = off (feedback is still ingested and surfaced in the prompt; a human must transition the task manually). See docs/task-sources.md. */
             pr_review_auto_transition_enabled?: boolean;
+            /** @description true = when an agent resolves a review comment ingested from the forge (resolve_comment), reply on that comment's review thread with the resolution text and pushed short SHA, once the branch is pushed. Default false. Gitea has no thread-reply API, so the reply is a PR conversation comment. See docs/task-sources.md. */
+            review_reply_enabled?: boolean;
+            /** @description true = also mark the thread resolved after replying (GitHub only; ignored on Gitea). Requires review_reply_enabled. Default false. */
+            review_reply_resolve_enabled?: boolean;
             /**
              * @description Conflict policy for propagating upstream title/body/label drift (and, when issue_comment_sync_enabled is on, comment ingestion) to an already-imported task. 'gate' (default; empty string is treated the same as 'gate') applies updates only while the task is still on its workflow's human-gate label; 'always' applies them regardless of label; 'never' detects drift but never writes it to the task. See docs/task-sources.md.
              * @enum {string}

@@ -141,6 +141,10 @@ type Engine struct {
 	// enqueue a "create_pr" side effect, regardless of who triggered the move.
 	// Used to push the task's branch and open a pull request.
 	OnCreatePR func(ctx context.Context, task gen.Task) error
+	// OnReviewReply, if set, runs the "review_reply" side effect enqueued by
+	// EnqueueReviewReply: it posts the agent's resolutions of ingested forge
+	// review comments onto their threads (see internal/reviewreply).
+	OnReviewReply func(ctx context.Context, task gen.Task) error
 
 	// SideEffectBackoff returns the delay before the next attempt after the given
 	// number of failed attempts (1-based). Nil uses DefaultSideEffectBackoff.

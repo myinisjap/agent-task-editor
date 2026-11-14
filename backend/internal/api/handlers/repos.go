@@ -85,6 +85,8 @@ type repoResponse struct {
 	IssueWritebackEnabled         bool `json:"issue_writeback_enabled"`
 	PrReviewAutoTransitionEnabled bool `json:"pr_review_auto_transition_enabled"`
 	IssueCommentSyncEnabled       bool `json:"issue_comment_sync_enabled"`
+	ReviewReplyEnabled            bool `json:"review_reply_enabled"`
+	ReviewReplyResolveEnabled     bool `json:"review_reply_resolve_enabled"`
 }
 
 // newRepoResponse converts a stored repo row into its API representation.
@@ -95,6 +97,8 @@ func newRepoResponse(r gen.Repo) repoResponse {
 		IssueWritebackEnabled:         r.IssueWritebackEnabled != 0,
 		PrReviewAutoTransitionEnabled: r.PrReviewAutoTransitionEnabled != 0,
 		IssueCommentSyncEnabled:       r.IssueCommentSyncEnabled != 0,
+		ReviewReplyEnabled:            r.ReviewReplyEnabled != 0,
+		ReviewReplyResolveEnabled:     r.ReviewReplyResolveEnabled != 0,
 	}
 }
 
@@ -113,6 +117,8 @@ type createRepoBody struct {
 	IssueSyncGoneAction           string  `json:"issue_sync_gone_action"`
 	IssueSyncGoneLabel            string  `json:"issue_sync_gone_label"`
 	IssueCommentSyncEnabled       bool    `json:"issue_comment_sync_enabled"`
+	ReviewReplyEnabled            bool    `json:"review_reply_enabled"`
+	ReviewReplyResolveEnabled     bool    `json:"review_reply_resolve_enabled"`
 	// MaxConcurrentRuns is an optional per-repo cap on concurrent agent runs
 	// (nil/omitted = no repo-specific cap; the dispatcher falls back to the
 	// global MAX_WORKERS). See resolveMaxConcurrentRuns.
@@ -256,6 +262,19 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+
+	if body.ReviewReplyEnabled || body.ReviewReplyResolveEnabled {
+		if updated, err := h.q.SetRepoReviewReplySettings(r.Context(), gen.SetRepoReviewReplySettingsParams{
+			ReviewReplyEnabled:        boolToInt(body.ReviewReplyEnabled),
+			ReviewReplyResolveEnabled: boolToInt(body.ReviewReplyResolveEnabled),
+			ID:                        repo.ID,
+		}); err != nil {
+			Err(w, http.StatusInternalServerError, err.Error())
+			return
+		} else {
+			repo = updated
+		}
 	}
 
 	if isClone {
@@ -651,6 +670,8 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		IssueSyncGoneAction           *string `json:"issue_sync_gone_action"`
 		IssueSyncGoneLabel            *string `json:"issue_sync_gone_label"`
 		IssueCommentSyncEnabled       *bool   `json:"issue_comment_sync_enabled"`
+		ReviewReplyEnabled            *bool   `json:"review_reply_enabled"`
+		ReviewReplyResolveEnabled     *bool   `json:"review_reply_resolve_enabled"`
 		// MaxConcurrentRuns is decoded normally here (nil covers both
 		// "omitted" and "explicit null" — Go's encoding/json can't tell
 		// those apart even with a double pointer, since it never calls the
@@ -916,6 +937,25 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	reviewReply, reviewReplyResolve := existing.ReviewReplyEnabled, existing.ReviewReplyResolveEnabled
+	if body.ReviewReplyEnabled != nil {
+		reviewReply = boolToInt(*body.ReviewReplyEnabled)
+	}
+	if body.ReviewReplyResolveEnabled != nil {
+		reviewReplyResolve = boolToInt(*body.ReviewReplyResolveEnabled)
+	}
+	if reviewReply != existing.ReviewReplyEnabled || reviewReplyResolve != existing.ReviewReplyResolveEnabled {
+		if updated, err := h.q.SetRepoReviewReplySettings(r.Context(), gen.SetRepoReviewReplySettingsParams{
+			ReviewReplyEnabled:        reviewReply,
+			ReviewReplyResolveEnabled: reviewReplyResolve,
+			ID:                        id,
+		}); err != nil {
+			Err(w, http.StatusInternalServerError, err.Error())
+			return
+		} else {
+			repo = updated
+		}
+	}
 	setClaudeTrust(r.Context(), path)
 	if runtimeChanged && runtimeLanguages != "" {
 		h.prewarmRuntime(repo.ID, repo.Path, runtimeLanguages)
@@ -1137,4 +1177,11 @@ func resolvePreview(w http.ResponseWriter, cmd, routes, globs *string, cur previ
 		out.PathsGlob = strings.Join(lines, "\n")
 	}
 	return out, true
+}
+
+func boolToInt(b bool) int64 {
+	if b {
+		return 1
+	}
+	return 0
 }

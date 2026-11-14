@@ -58,6 +58,12 @@ func (fakeForge) CommentOnIssue(ctx context.Context, repoName string, issueNumbe
 func (fakeForge) CloseIssueWithComment(ctx context.Context, repoName string, issueNumber int, body string) error {
 	return nil
 }
+func (fakeForge) ReplyToReviewComment(ctx context.Context, repoName string, prNumber int, commentID, body string) (string, error) {
+	return "", nil
+}
+func (fakeForge) ResolveReviewThread(ctx context.Context, repoName string, prNumber int, commentID string) error {
+	return forge.ErrThreadResolveUnsupported
+}
 func (fakeForge) AuthStatus() (bool, string) { return true, "fake" }
 func (fakeForge) CompareURL(repoName, base, branch, title, body string) string {
 	return "https://example.invalid/" + repoName

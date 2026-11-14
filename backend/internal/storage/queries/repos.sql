@@ -44,3 +44,6 @@ DELETE FROM repos WHERE id = ?;
 
 -- name: CountTasksByRepo :one
 SELECT COUNT(*) FROM tasks WHERE repo_id = ?;
+
+-- name: SetRepoReviewReplySettings :one
+UPDATE repos SET review_reply_enabled = ?, review_reply_resolve_enabled = ? WHERE id = ? RETURNING *;

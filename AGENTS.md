@@ -60,6 +60,7 @@ agent-task-editor/
 │       ├── reviewbrief/      # Deterministic review brief for human-gate tasks: diff risk flags, verification/run summary (GET /tasks/{id}/review-brief, needs-me risk_flags); also owns the shared task-diff git logic
 │       ├── remotemcp/        # Remote MCP endpoint (/mcp, streamable HTTP) + Google-backed OAuth server for claude.ai connectors; off unless MCP_REMOTE_ENABLED=true
 │       ├── prflow/           # Push a task's branch and create/find its PR; shared by the CreatePR handler and the OnCreatePR hook (leaf: no api/handlers or workflow import)
+│       ├── reviewreply/      # Posts the agent's resolution of an ingested forge review comment onto its review thread (opt-in, after push; runs from the review_reply side effect)
 │       ├── scopedtoken/      # Short-lived, route-scoped bearer tokens minted for the MCP sidecars (instead of the admin API token)
 │       ├── schedule/         # Fires task_schedules on their cron interval, creating tasks from templates
 │       ├── storage/          # SQLite, golang-migrate, sqlc-generated code

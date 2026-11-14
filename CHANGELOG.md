@@ -23,6 +23,7 @@ triggers the "Release" workflow the same way.
 - **Go 1.27.4.** The CI toolchain and the backend Docker builder move from Go 1.27.3 to 1.27.4, which fixes GO-2026-6859 (an HTTP/1 server crash from a `MaxBytesReader` header race in `net/http`). govulncheck was failing on it.
 
 ### Added
+- **Reply on PR review threads when the agent resolves a comment.** Opt-in per repo (`review_reply_enabled`, off by default; optional `review_reply_resolve_enabled` also resolves the thread on GitHub). When an agent resolves a review comment ingested from the forge, ATE replies on that thread with the resolution note and the pushed short SHA, only after the branch is pushed. Delivered through the side-effect outbox (one reply per comment, retried on failure); Gitea has no thread-reply API, so it gets a PR conversation comment. ATE's own replies are never re-ingested as feedback.
 - **Route PR feedback to its own label.** New optional per-label `pr_feedback_label` (workflow YAML, `PUT /workflows/{id}`, and the workflow editor's "Send PR feedback (CI, conflicts) to"). When set, ghsync's PR-feedback auto-transition moves the task there instead of the failure path; it needs a human transition to that label. Empty keeps today's behaviour.
 
 ### Changed

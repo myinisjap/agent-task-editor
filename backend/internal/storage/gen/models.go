@@ -339,6 +339,8 @@ type Repo struct {
 	PreviewCommand                string    `json:"preview_command"`
 	PreviewRoutes                 string    `json:"preview_routes"`
 	PreviewPathsGlob              string    `json:"preview_paths_glob"`
+	ReviewReplyEnabled            int64     `json:"review_reply_enabled"`
+	ReviewReplyResolveEnabled     int64     `json:"review_reply_resolve_enabled"`
 }
 
 type RepoLesson struct {
@@ -538,21 +540,23 @@ type TaskPreviewImage struct {
 }
 
 type TaskReviewComment struct {
-	ID              string    `json:"id"`
-	TaskID          string    `json:"task_id"`
-	FilePath        string    `json:"file_path"`
-	Side            string    `json:"side"`
-	StartLine       int64     `json:"start_line"`
-	EndLine         int64     `json:"end_line"`
-	QuotedText      string    `json:"quoted_text"`
-	Body            string    `json:"body"`
-	Status          string    `json:"status"`
-	ResolutionNote  *string   `json:"resolution_note"`
-	ResolvedByRunID *string   `json:"resolved_by_run_id"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-	ExternalID      *string   `json:"external_id"`
-	Source          string    `json:"source"`
+	ID              string     `json:"id"`
+	TaskID          string     `json:"task_id"`
+	FilePath        string     `json:"file_path"`
+	Side            string     `json:"side"`
+	StartLine       int64      `json:"start_line"`
+	EndLine         int64      `json:"end_line"`
+	QuotedText      string     `json:"quoted_text"`
+	Body            string     `json:"body"`
+	Status          string     `json:"status"`
+	ResolutionNote  *string    `json:"resolution_note"`
+	ResolvedByRunID *string    `json:"resolved_by_run_id"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	ExternalID      *string    `json:"external_id"`
+	Source          string     `json:"source"`
+	ReplyExternalID *string    `json:"reply_external_id"`
+	ReplyPostedAt   *time.Time `json:"reply_posted_at"`
 }
 
 type TaskSchedule struct {

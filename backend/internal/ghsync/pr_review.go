@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
+	"github.com/myinisjap/agent-task-editor/backend/internal/reviewreply"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 )
@@ -317,6 +318,10 @@ func (s *Syncer) ingestReviewComments(ctx context.Context, task gen.Task, repo r
 	inserted := false
 	for _, c := range comments {
 		if c.Path == "" || c.ID == "" {
+			continue
+		}
+		// ATE's own thread replies (see internal/reviewreply) are never feedback.
+		if reviewreply.IsOwnReply(ctx, s.q, task.ID, c) {
 			continue
 		}
 		if !trustedAssociation(c.AuthorAssociation) {
