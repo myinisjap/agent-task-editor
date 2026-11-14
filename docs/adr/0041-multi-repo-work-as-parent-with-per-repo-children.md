@@ -2,7 +2,9 @@
 
 Status: Accepted (design; not yet implemented)
 
-The open questions at the end need a human decision before stage 1 ships.
+The nine design questions raised in the draft have been decided by the human;
+see *Decided questions* at the end. The Decision section and staged plan below
+reflect those answers.
 AGENTS.md links to this ADR land with stage 1, since nothing is built yet.
 
 ## Context
@@ -91,9 +93,17 @@ repo from its parent; a *home child* is in the same repo.
 All additive. No `tasks` rebuild.
 
 - A child's `tasks.repo_id` is simply another repo. No new column.
-- Foreign vs home is **derived** from the repo mismatch (ADR 0027, derived over
-  stored), through a helper `IsForeignChild(parent, child)`. Storing
-  `task_fanout.merge_mode` (`branch`|`pr`) is the alternative (open question 2).
+- Foreign vs home is **decided**: derived from the repo mismatch (ADR 0027,
+  derived over stored), through a helper `IsForeignChild(parent, child)`. No
+  `task_fanout.merge_mode` column is stored.
+- New agent-config column `agent_configs.cross_repo_subtasks_enabled INTEGER NOT
+  NULL DEFAULT 0` (off by default, additive migration). It must be included in
+  the agent-config version snapshot (migration 075 pattern) and exposed in the
+  agent-config API and UI.
+- `create_task`'s `related_repo_ids` hint is persisted in an additive side table
+  `task_related_repos(task_id, repo_id, PRIMARY KEY(task_id, repo_id))`, so the
+  planner prompt can read it on later runs. It is not a `tasks` column and needs
+  no `tasks` rebuild.
 - Merge order is the dependency edges between children (`task_dependencies`).
   No `task_change_set` table in stage 1.
 - The parent keeps a NOT NULL `repo_id`: its "primary" repo. It may have zero
@@ -106,14 +116,22 @@ Foreign children never merge into the parent branch.
 - On terminal, a foreign child pushes and opens its own PR via
   `prflow.CreateForTask`, the same path as a top-level task. The `IsSubtask`
   push skip must not apply to foreign children.
-- `OnChildTerminal` branches on foreign vs home before taking any lock. A
-  foreign child uses `RepoGitLock` of the child's repo path, never the parent's.
-  `cmd/server/main.go` currently passes the parent's `repo.Path`; stage 1 must
-  resolve the child's repo path.
+- `OnChildTerminal` branches on foreign vs home before taking any lock.
+  `cmd/server/main.go` already passes the child's repo path to it, which equals
+  the parent's today because children inherit `parent.RepoID`. The real problem
+  is that `mergeChild` and `evaluateParent` (and `AfterParentRun`, which gets the
+  parent's path and runs child worktree/branch cleanup with it) reuse that single
+  `repoPath` for both child and parent-branch operations. Stage 1 must split
+  child and parent repo paths. Child worktree/branch operations use the child
+  repo's `RepoGitLock`. Parent-branch operations use the parent repo's path and
+  lock. A foreign child never touches the parent's repo or lock, and
+  `AfterParentRun` skips foreign children (they have no branch to merge back).
 - `merge_status` for a foreign child follows its PR: `pending` until the PR
   exists, `pr_open`, then `merged` when `ghsync` sees `pr_merged`.
-- Parent readiness (open question 1): default is every foreign child has PR
-  open and verify pass. This lets the integration step review before merging.
+- Parent readiness is **decided**: the parent advances
+  (`workflow.TriggerSubtasksComplete`) when every foreign child's PR is open and
+  its verify passed. Merged is not required. Home children keep today's rule
+  (`merge_status=merged`). The integration step reviews before any merge.
 
 ### Dispatch and git locks (ADR 0001/0003/0009)
 
@@ -127,14 +145,14 @@ overlapping `file_scope` as today.
 
 - Writable: only its own worktree (`cmd.Dir`). The agent runs as a separate uid
   (`internal/agentuser`).
-- Read-only, stage 1: prompt only. The parent plan, sibling child titles,
+- Read-only in v1 (**decided**): prompt only. The parent plan, sibling child titles,
   descriptions and branch names, and the sibling repo map (`repomap`) text,
   fenced per ADR 0014.
-- Later: an optional read-only mount of the sibling checkout, for providers
+- Later, optional: a read-only mount of the sibling checkout, for providers
   with extra-dir support (ADR 0007). It must be read-only for the agent uid
   (r-x, not chowned). `.ate-worktrees` is writable by the agent user for its
-  own worktree, so the mount needs a separate read-only bind or ACL (open
-  question 5).
+  own worktree, so the mount needs a separate read-only bind or ACL. Which ref
+  to mount (base or the sibling branch) is decided when that stage is designed.
 
 Prompt sketch: "You are working in repo X (writable). This change is part of
 change set P, which also touches repo Y (task T, branch B). Do not edit Y.
@@ -143,8 +161,9 @@ Describe needed changes for Y in your summary, or ask via request_human."
 ### Verify and runtime pins
 
 Per child, from its own repo (ADR 0038, ADR 0006), with no change. The parent's
-integration run uses the primary repo's verify. A cross-repo integration test is
-out of scope for stage 1 (open question 9).
+integration run uses the primary repo's verify. A cross-repo integration test (a
+verify spanning both repos) is out of scope for v1 and listed under later
+stages.
 
 ### PRs, cross-linking, ordering, partial failure
 
@@ -156,7 +175,8 @@ out of scope for stage 1 (open question 9).
 - `internal/automerge` gains a block reason `change_set_order`: a child's PR is
   not auto-merged until its predecessors are `pr_merged`. Never auto-merge in a
   change set where a sibling's PR is closed-unmerged or failing checks.
-- One merges, another fails: ATE never reverts merged work. The parent goes to
+- One merges, another fails: ATE never reverts merged work, and there is no
+  revert-PR helper (**decided**: escalation only). The parent goes to
   needs-me with reason `change_set_partial`, showing which PRs merged and which
   did not. The human reruns the failed child through the usual feedback loop or
   closes it. This is accepted risk, mitigated by merging the backward-compatible
@@ -173,16 +193,23 @@ linking to each child's diff. No merged cross-repo diff.
 ### Cost (ADR 0013)
 
 Each child keeps its own `max_cost_usd` and agent-config budget. The parent
-shows a roll-up (sum of children's `SumTaskCost`). An optional parent cap
-checked by the pre-dispatch guard is a later stage (open question 7). Mid-run
-kill stays per run.
+shows a roll-up (sum of children's `SumTaskCost`, plus the parent's own
+runs). **Decided:** no parent-level cost cap in v1. A parent cap checked by the
+pre-dispatch guard is a later stage. Mid-run kill stays per run.
 
 ### Limits
 
-Depth limit 1 stays, so a foreign child cannot fan out. The cap and
-`subtasks_enabled` apply unchanged. `create_subtask` validates that `repo_id`
-exists, that the workflow is valid for that repo (open question 4), and that
-the child lands on `agent_ignore`.
+- Depth limit 1 stays, so a foreign child cannot fan out. The per-parent cap
+  stays.
+- A foreign `repo_id` on `create_subtask` additionally requires the creating
+  run's agent config to have `cross_repo_subtasks_enabled`. `subtasks_enabled`
+  alone permits only home children; otherwise 403 "this agent config is not
+  permitted to create cross-repo subtasks".
+- Workflow (**decided**): a foreign child uses the parent's workflow
+  (`workflow_id = parent.WorkflowID`). Its landing label is resolved from that
+  workflow (must be `agent_ignore`) exactly as today. The foreign repo's default
+  workflow is ignored for children. Verify and pins still come from the child's
+  own repo. `create_subtask` validates that `repo_id` exists.
 
 ### Board and Task Detail
 
@@ -191,18 +218,58 @@ Foreign children show a repo chip on board cards. The parent card shows an
 appears under its own repo with a link to the parent. `SubtasksPanel` groups
 children by repo and shows PR state per child.
 
-### Board MCP
+### Creating a multi-repo task (planner, human, REST/MCP)
 
-`create_task` (`internal/boardtools/tools.go`) is unchanged and stays
-single-repo. Multi-repo creation goes through planner fan-out: `create_subtask`
-(HTTP body and the MCP tool in `cmd/mcp-server/main.go`) gains an optional
-`repo_id`, defaulting to the parent's repo. A later optional `related_repo_ids`
-hint on `create_task` can inform the planner prompt.
+- **Planner fan-out**: `create_subtask` (HTTP body, openapi, MCP tool in
+  `cmd/mcp-server/main.go`) gains an optional `repo_id`, defaulting to the
+  parent's repo.
+- **Direct creation, v1** (changed from the draft): REST `POST /api/tasks` and
+  MCP `create_task` (`internal/boardtools/tools.go`) gain two optional fields:
+  - `related_repo_ids: [repo_id]`. Stored in `task_related_repos`. The planner
+    prompt says "this change spans repos X, Y; create one child per repo (via
+    `create_subtask` with `repo_id`)". The children are still created by the
+    planner's `create_subtask` calls, so the planner run's config opt-in also
+    applies at fan-out time.
+  - `children: [{repo_id, title, description}]`. Created in the **same
+    transaction** as the parent, each with `parent_task_id` = the new task, the
+    parent→child dependency edge, the parent's workflow and the parent
+    workflow's `agent_ignore` gate label. This is the same as `create_subtask`
+    output, so the coordinator treats them identically. Created children have no
+    creating run (`created_by_run` NULL).
+  - Both may be given together. Related repos without an explicit child are left
+    to the planner.
+  - Multipart requests carry `related_repo_ids` as repeated form fields and
+    `children` as a JSON-encoded form field. JSON requests carry them natively.
+- **Validation** (400/403/422, nothing written on failure):
+  - every repo id exists;
+  - `related_repo_ids` are distinct and exclude the task's own `repo_id`;
+  - each child has a non-empty title and an existing `repo_id`;
+  - number of children is at most the per-parent cap (`defaultSubtaskCap`, 10,
+    since there is no creating run's config);
+  - depth limit 1: the new task is top-level, and children cannot carry nested
+    `children` or a parent;
+  - the opt-in: when any related repo or child repo differs from the task's
+    repo, at least one enabled agent config that serves a label in the task's
+    workflow must have `cross_repo_subtasks_enabled`. Otherwise 403, so the
+    change set cannot stall with no agent allowed to handle it. This is the
+    chosen interpretation of "the opt-in" for human and MCP creation.
+- **New Task dialog** (`NewTaskModal.tsx`): an optional "Also touches"
+  multi-select repo picker, listing configured repos except the selected primary
+  repo and shown only when more than one repo exists. It sends
+  `related_repo_ids`. An optional "Create child tasks now" toggle expands one
+  title/description row per picked repo and sends `children` instead. Server
+  errors (opt-in missing, cap) are shown inline.
+- **Back-compat**: both fields are optional. Without them `create_task` behaves
+  exactly as today (single repo, no side-table rows). Existing MCP clients and
+  the stdio tool list are unaffected.
 
 ### Migration and back-compat
 
 Without `repo_id`, `create_subtask` behaves exactly as today. Existing children
-are all home children. No backfill, no data migration.
+are all home children. `cross_repo_subtasks_enabled` defaults to 0, so existing
+configs cannot fan out across repos. `task_related_repos` starts empty.
+`create_task` without the new fields is unchanged. No backfill, no data
+migration.
 
 ## Consequences
 
@@ -210,7 +277,9 @@ are all home children. No backfill, no data migration.
   branch, prflow cross-linking, an automerge reason and UI.
 - An agent cannot make an atomic cross-repo edit. Coupled changes rely on a plan
   plus ordering.
-- A partial merge is possible and is handled by escalation, not rollback.
+- A partial merge is possible and is handled by escalation only, not rollback
+  and not a revert helper.
+- A human can start a change set directly, without a planner deciding to fan out.
 - If read-only context proves insufficient, option 2 can be revisited in a new
   ADR.
 
@@ -218,40 +287,64 @@ are all home children. No backfill, no data migration.
 
 Each item is one independently shippable pipeline task.
 
-1. `create_subtask` accepts `repo_id` (HTTP, MCP tool schema, openapi) with
-   validation and `IsForeignChild`. The coordinator skips `--no-ff` merge-back
-   for foreign children, pushes and opens a PR on terminal, and `merge_status`
-   tracks the PR. Fix `main.go` to use the child's repo path. Behind an opt-in
-   (open question 3). Tests: extend `subtasks_e2e_test.go` with two temp repos.
-2. Parent readiness for foreign children (PR open and verify pass); the
-   integration prompt lists sibling PRs; `ghsync` `pr_merged` updates the
-   child's `merge_status`.
-3. Sibling prompt context: a fenced change-set section (repos, tasks, branches,
-   repo-map excerpt) in child and parent prompts; the planner prompt documents
-   `repo_id` and lists repos.
-4. PR cross-linking: "Part of change set" body section; update sibling PRs.
-5. Merge ordering in automerge (`change_set_order`) and the `change_set_partial`
-   escalation.
-6. UI: Task Detail change-set panel, board repo chips, `SubtasksPanel` grouped
-   by repo, parent "N repos" badge.
-7. Cost roll-up display and the optional parent cap in the pre-dispatch guard.
-8. Review-brief `cross_repo` flag and optional autonomy `ask_on` use.
-9. Optional, capability-gated: read-only sibling mount with agent-user
-   read-only permissions.
-10. Optional: `create_task` `related_repo_ids` hint.
+v1, in order:
 
-## Open questions
+1. `create_subtask` accepts `repo_id` (HTTP, MCP tool schema, openapi) with
+   validation, `IsForeignChild`, the `cross_repo_subtasks_enabled` opt-in
+   (migration, config version snapshot, config UI) and parent workflow
+   inheritance. Split child and parent repo paths in `OnChildTerminal`,
+   `mergeChild`, `evaluateParent` and `AfterParentRun`. The coordinator skips
+   `--no-ff` merge-back for foreign children; a foreign child pushes and opens
+   its own PR on terminal (no `IsSubtask` push skip), and `merge_status` tracks
+   the PR. Tests: extend `subtasks_e2e_test.go` with two temp repos.
+2. Parent readiness for foreign children: PR open and verify passed, not
+   merged. `ghsync` `pr_merged` updates the child's `merge_status`. The
+   integration prompt lists sibling PRs.
+3. Sibling prompt context: a fenced change-set section (repos, tasks, branches,
+   repo-map excerpt) in child and parent prompts. The planner prompt documents
+   `repo_id`, lists repos, and includes `related_repo_ids` when set.
+4. Human and MCP creation of multi-repo tasks: `create_task`
+   `related_repo_ids` + `children` (REST incl. multipart, MCP tool, openapi),
+   `task_related_repos`, same-transaction child creation, validation, and the
+   New Task dialog's "Also touches" picker.
+5. PR cross-linking: a "Part of change set" body section, plus updating sibling
+   PRs.
+6. Merge ordering in automerge (`change_set_order`) and `change_set_partial`
+   escalation to needs-me (no revert helper).
+7. UI: Task Detail change-set panel, board repo chips, `SubtasksPanel` grouped
+   by repo, parent "N repos" badge, rolled-up cost on the parent.
+
+Later:
+
+- Parent-level cost cap in the pre-dispatch guard.
+- Review-brief `cross_repo` flag and optional autonomy `ask_on` use.
+- Read-only sibling mount (capability-gated, agent-user read-only; ref to be
+  decided).
+- Cross-repo integration tests (verify spanning repos).
+
+## Decided questions
 
 1. Parent readiness: advance when foreign PRs are open, or merged?
+   **Decided:** open and verify passed, not merged.
 2. Derive foreign vs home from the repo mismatch, or store `merge_mode`?
+   **Decided:** derived from the repo mismatch; no stored `merge_mode`.
 3. A new opt-in for cross-repo fan-out, or reuse `subtasks_enabled`?
+   **Decided:** new `cross_repo_subtasks_enabled`, off by default;
+   `subtasks_enabled` alone does not allow cross-repo fan-out.
 4. Repos with different workflows: does a foreign child use the parent's
-   workflow or its repo's default?
+   workflow or its repo's default? **Decided:** the parent's workflow.
 5. Read-only sibling access: prompt-only, or a mounted checkout (which ref:
-   base or the sibling branch)?
-6. Partial merge: escalate only (proposed), or also offer a "revert PR" helper?
-7. Is a parent-level cost cap needed in v1?
+   base or the sibling branch)? **Decided:** prompt-only in v1; the read-only
+   mount is a later optional stage.
+6. Partial merge: escalate only, or also offer a "revert PR" helper?
+   **Decided:** escalate to needs-me only; no revert helper.
+7. Is a parent-level cost cap needed in v1? **Decided:** no cap in v1; show the
+   rolled-up cost on the parent.
 8. Can a human create a multi-repo parent directly (UI or `create_task`),
-   without a planner run?
+   without a planner run? **Decided (changed from draft):** yes. The New Task
+   dialog and REST/MCP `create_task` can create one directly in v1 via
+   `related_repo_ids` and/or explicit `children`; see "Creating a multi-repo
+   task".
 9. Cross-repo integration testing (verify spanning both repos): out of scope,
-   or a later stage?
+   or a later stage? **Decided:** out of scope for v1; listed under later
+   stages.
