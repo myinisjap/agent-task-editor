@@ -704,13 +704,15 @@ describe('task-mode scene', () => {
     const scene = new OfficeScene()
     scene.setStations(tstations({ A: [tk('t1', 0, { runStatus: 'running', rateLimited: true })] }))
     let worked = false
+    let dozed = false // the "z" only shows while the dozer is parked, so sample it across the loop
     for (let i = 0; i < 200; i++) {
       scene.step(0.05)
       if (scene.spriteStates().some((s) => s.atWork)) worked = true
+      if (scene.emoteStates().some((e) => e.kind === 5)) dozed = true
     }
     expect(worked).toBe(false)
     expect(spr(scene, 't1')!.mood).toBe(3)
-    expect(scene.emoteStates().some((e) => e.kind === 5)).toBe(true)
+    expect(dozed).toBe(true)
     scene.setStations(tstations({ A: [tk('t1', 0, { runStatus: 'running' })] }))
     expect(spr(scene, 't1')!.mood).toBe(0)
     scene.step(0.05)
@@ -758,9 +760,12 @@ describe('spriteAt', () => {
     scene.settle()
     const [a, b] = scene.spriteStates()
     const foot = (s: { x: number; y: number }) => [s.x + 24, s.y + 72]
-    const [fx, fy] = foot(a)
-    expect(scene.spriteAt(fx, fy - 5)!.taskId).toBe(a.taskId)
-    expect(scene.spriteAt(fx + 40, fy - 5)?.taskId).not.toBe(a.taskId)
+    // Aim at the front-most sprite (ties go to the earlier one, like spriteAt):
+    // the random settle can leave the two overlapping, and then the front one wins.
+    const target = a.y >= b.y ? a : b
+    const [fx, fy] = foot(target)
+    expect(scene.spriteAt(fx, fy - 5)!.taskId).toBe(target.taskId)
+    expect(scene.spriteAt(fx + 40, fy - 5)?.taskId).not.toBe(target.taskId)
     const solo = new OfficeScene()
     solo.setStations(tstations({ A: [tk('s1')] }))
     solo.settle()
