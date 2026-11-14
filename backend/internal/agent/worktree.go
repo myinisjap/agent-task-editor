@@ -392,3 +392,60 @@ func changedFilesAgainstBase(ctx context.Context, wtPath, baseRef, branch string
 	}
 	return files, nil
 }
+
+// provisionPRWorktree checks out the head of pull request prNumber into a
+// worktree on a local, never-pushed branch "pr-review-<N>-<id8>" (deliberately
+// without the "ate-" prefix). The PR head is fetched via refs/pull/<N>/head,
+// which GitHub and Gitea both expose, and the base is "origin/<baseRef>".
+// Called on every (re-)review so the worktree is reset to the current head.
+func provisionPRWorktree(ctx context.Context, repoPath, taskID string, prNumber int, baseRef string) (wtPath, branch, base, headSHA string, err error) {
+	if !safeIDSegment.MatchString(taskID) || taskID == "." || taskID == ".." {
+		return "", "", "", "", fmt.Errorf("invalid task id %q", taskID)
+	}
+	if prNumber <= 0 {
+		return "", "", "", "", fmt.Errorf("invalid PR number %d", prNumber)
+	}
+	short := taskID
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	branch = fmt.Sprintf("pr-review-%d-%s", prNumber, short)
+	wtPath = filepath.Join(repoPath, worktreeDir, taskID)
+	holdRef := "refs/ate-pr/" + taskID
+
+	if out, ferr := git(ctx, repoPath, "fetch", "origin", fmt.Sprintf("+refs/pull/%d/head:%s", prNumber, holdRef)); ferr != nil {
+		return "", "", "", "", fmt.Errorf("fetch PR head: %w: %s", ferr, strings.TrimSpace(string(out)))
+	}
+	base = defaultBaseFallback(ctx, repoPath, baseRef)
+	if baseRef != "" {
+		// Best-effort: refresh the base branch; fall back to whatever is local.
+		_, _ = git(ctx, repoPath, "fetch", "origin", baseRef)
+	}
+	excludeWorktreeDir(repoPath)
+
+	if fi, statErr := os.Stat(wtPath); statErr == nil && fi.IsDir() {
+		if out, e := git(ctx, wtPath, "checkout", "-f", "-B", branch, holdRef); e != nil {
+			return "", "", "", "", fmt.Errorf("git checkout PR head: %w: %s", e, strings.TrimSpace(string(out)))
+		}
+		_, _ = git(ctx, wtPath, "reset", "--hard", holdRef)
+	} else if out, e := git(ctx, repoPath, "worktree", "add", "-f", "-B", branch, wtPath, holdRef); e != nil {
+		return "", "", "", "", fmt.Errorf("git worktree add: %w: %s", e, strings.TrimSpace(string(out)))
+	}
+	if out, e := git(ctx, wtPath, "rev-parse", "HEAD"); e == nil {
+		headSHA = strings.TrimSpace(string(out))
+	}
+	return wtPath, branch, base, headSHA, nil
+}
+
+// defaultBaseFallback resolves "origin/<baseRef>" when it exists, else the
+// repo's default base ref.
+func defaultBaseFallback(ctx context.Context, repoPath, baseRef string) string {
+	if baseRef != "" {
+		cand := "origin/" + baseRef
+		if _, err := git(ctx, repoPath, "rev-parse", "--verify", cand); err == nil {
+			return cand
+		}
+	}
+	b, _ := defaultBaseRef(ctx, repoPath)
+	return b
+}

@@ -648,7 +648,9 @@ components:
           description: >
             Where the task was imported from ("github" for the GitHub Issues
             importer, "gitea" for the Gitea Issues importer against a
-            self-hosted instance, "webhook" for an intake webhook endpoint).
+            self-hosted instance, "webhook" for an intake webhook endpoint,
+            "github_pr"/"gitea_pr" for a review-only PR task, whose source_ref
+            is owner/repo#N).
             Empty for manually created tasks.
         source_ref:
           type: string
@@ -734,6 +736,22 @@ components:
           description: >
             A subtask's declared file globs (repo-relative); empty when unscoped.
             Used for the sibling overlap guard and a post-run out-of-scope warning.
+        pr_review:
+          type: object
+          nullable: true
+          description: >
+            Source PR state for a review-only PR task (source github_pr or
+            gitea_pr); null for every other task. Such tasks have no Create PR
+            action: they never push or open pull requests.
+          properties:
+            pr_url:        { type: string }
+            pr_number:     { type: integer }
+            pr_state:      { type: string, enum: [open, closed, merged] }
+            head_sha:      { type: string, description: "Current head commit of the PR as last seen" }
+            reviewed_sha:  { type: string, description: "Head commit covered by the last posted review; empty until one is posted" }
+            review_posted: { type: boolean, description: "A review has been posted on the PR" }
+            last_posted_at: { type: string, format: date-time, nullable: true }
+            stale:         { type: boolean, description: "head_sha differs from reviewed_sha (new commits since the review, or none posted yet)" }
         integration_status:
           type: string
           enum: ["", pending, done]
@@ -860,11 +878,13 @@ components:
       properties:
         kind:
           type: string
-          enum: [terminal, create_pr, leave_not_ready]
+          enum: [terminal, create_pr, leave_not_ready, pr_review_post]
           description: >
             terminal = push the branch and tear down the worktree (or merge a
             subtask back); create_pr = push and open a pull request;
-            leave_not_ready = apply the in-progress signal to the source issue.
+            leave_not_ready = apply the in-progress signal to the source issue;
+            pr_review_post = post the agent's review on the source pull request
+            (review-only PR tasks; idempotent via a hidden marker in the body).
         status:
           type: string
           enum: [pending, running, failed]
@@ -1722,6 +1742,38 @@ components:
             without a human having to click Reject. Requires remote_url.
             false = off (feedback is still ingested and surfaced in the prompt;
             a human must transition the task manually). See docs/task-sources.md.
+        pr_review_enabled:
+          type: boolean
+          description: >
+            Opt-in review-only PR path (default false; requires remote_url).
+            true = pull requests opened by people (or other tools) on this repo
+            get an agent review posted back on the PR as a comment-type review
+            (never an approval or a blocking request-changes). One review task
+            per PR; new commits re-run the review on the same task. See
+            docs/task-sources.md "Review any PR".
+        pr_review_author_assocs:
+          type: array
+          items: { type: string, enum: [OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, FIRST_TIMER, NONE] }
+          description: >
+            Author-association allowlist for PR review (default OWNER, MEMBER,
+            COLLABORATOR). A PR whose author association is not listed (or
+            unknown) is never reviewed.
+        pr_review_label:
+          type: string
+          description: Only review PRs carrying this forge label (case-insensitive). Empty = no label filter.
+        pr_review_skip_drafts:
+          type: boolean
+          description: Skip draft / work-in-progress PRs (default true).
+        pr_review_workflow_id:
+          type: string
+          nullable: true
+          description: Workflow the review tasks are created on. null = the seeded "PR review" workflow.
+        pr_review_target_label:
+          type: string
+          description: >
+            Label review tasks start on. Must be a non-terminal, non-agent_ignore
+            label of pr_review_workflow_id (400 otherwise). Empty = the
+            workflow's first such label ("pr-review" in the seeded workflow).
         issue_sync_update_policy:
           type: string
           enum: [gate, always, never]
@@ -2706,7 +2758,7 @@ components:
         or failed. A task.updated follows each one.
       properties:
         task_id:    { type: string }
-        kind:       { type: string, description: "Side-effect kind, e.g. create_pr, terminal, leave_not_ready." }
+        kind:       { type: string, description: "Side-effect kind, e.g. create_pr, terminal, leave_not_ready, pr_review_post." }
         status:     { type: string, enum: [done, pending, failed], description: "pending = the attempt failed and will be retried." }
         last_error: { type: string, description: "Empty string when there is no error." }
       required: [task_id, kind, status, last_error]
@@ -4144,6 +4196,7 @@ paths:
                   pr_url: { type: string }
                   git_state: { type: string, enum: ["", pushed, pr_open, pr_merged, pr_closed] }
         "400": { description: Task has no branch, or repo has no/invalid GitHub remote }
+        "409": { description: "Review-only PR task (source github_pr/gitea_pr): these never push or open pull requests" }
         "502": { description: gh pr create failed (e.g. not authenticated) }
 
   /tasks/{id}/side-effects/retry:
@@ -5639,6 +5692,7 @@ paths:
         The body also accepts verify_command (string) and
         verify_timeout_seconds (integer, 1-3600); see the Repo schema.
         It also accepts preview_command, preview_routes and preview_paths_glob (strings).
+        It also accepts the pr_review_* policy fields (see the Repo schema).
       responses:
         "201":
           content:
@@ -5679,6 +5733,15 @@ paths:
                 issue_writeback_enabled: { type: boolean }
                 issue_writeback_label: { type: string }
                 pr_review_auto_transition_enabled: { type: boolean }
+                pr_review_enabled: { type: boolean, description: "Enable the review-only PR path (requires remote_url). See Repo.pr_review_enabled." }
+                pr_review_author_assocs:
+                  type: array
+                  items: { type: string, enum: [OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, FIRST_TIMER, NONE] }
+                  description: Author-association allowlist; omit to leave unchanged, empty array resets to the default.
+                pr_review_label: { type: string }
+                pr_review_skip_drafts: { type: boolean }
+                pr_review_workflow_id: { type: string, nullable: true, description: "Empty string clears (use the seeded PR review workflow)." }
+                pr_review_target_label: { type: string }
                 issue_sync_update_policy:
                   type: string
                   enum: [gate, always, never]

@@ -339,6 +339,12 @@ type Repo struct {
 	PreviewCommand                string    `json:"preview_command"`
 	PreviewRoutes                 string    `json:"preview_routes"`
 	PreviewPathsGlob              string    `json:"preview_paths_glob"`
+	PrReviewEnabled               int64     `json:"pr_review_enabled"`
+	PrReviewAuthorAssocs          string    `json:"pr_review_author_assocs"`
+	PrReviewLabel                 string    `json:"pr_review_label"`
+	PrReviewSkipDrafts            int64     `json:"pr_review_skip_drafts"`
+	PrReviewWorkflowID            *string   `json:"pr_review_workflow_id"`
+	PrReviewTargetLabel           string    `json:"pr_review_target_label"`
 }
 
 type RepoLesson struct {
@@ -373,6 +379,11 @@ type RunVerification struct {
 	Truncated  int64     `json:"truncated"`
 	DurationMs int64     `json:"duration_ms"`
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+type SeedMarker struct {
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Skill struct {
@@ -504,6 +515,22 @@ type TaskLabelHistory struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type TaskPrReviewPost struct {
+	ID           string     `json:"id"`
+	TaskID       string     `json:"task_id"`
+	AgentRunID   *string    `json:"agent_run_id"`
+	HeadSha      string     `json:"head_sha"`
+	Summary      string     `json:"summary"`
+	CommentsJson string     `json:"comments_json"`
+	ResolvedJson string     `json:"resolved_json"`
+	Status       string     `json:"status"`
+	PostedMode   string     `json:"posted_mode"`
+	ForgeRef     string     `json:"forge_ref"`
+	Seq          int64      `json:"seq"`
+	CreatedAt    time.Time  `json:"created_at"`
+	PostedAt     *time.Time `json:"posted_at"`
+}
+
 type TaskPrReviewState struct {
 	TaskID                string    `json:"task_id"`
 	HeadSha               string    `json:"head_sha"`
@@ -513,6 +540,24 @@ type TaskPrReviewState struct {
 	LastConflictSha       *string   `json:"last_conflict_sha"`
 	LastPrUpdatedAt       *string   `json:"last_pr_updated_at"`
 	LastChecksPolledAt    *string   `json:"last_checks_polled_at"`
+}
+
+type TaskPrSource struct {
+	TaskID       string     `json:"task_id"`
+	RepoID       string     `json:"repo_id"`
+	PrNumber     int64      `json:"pr_number"`
+	PrUrl        string     `json:"pr_url"`
+	PrTitle      string     `json:"pr_title"`
+	PrBody       string     `json:"pr_body"`
+	PrAuthor     string     `json:"pr_author"`
+	HeadRef      string     `json:"head_ref"`
+	HeadSha      string     `json:"head_sha"`
+	BaseRef      string     `json:"base_ref"`
+	PrState      string     `json:"pr_state"`
+	ReviewedSha  string     `json:"reviewed_sha"`
+	LastPostedAt *time.Time `json:"last_posted_at"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 type TaskPreviewCapture struct {

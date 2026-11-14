@@ -11,6 +11,7 @@ import { errMessage } from '../../lib/errMessage'
 import { useReposStore } from '../../stores/repos'
 import { Badge, Icon } from '../ui'
 import GitStateBadge from './GitStateBadge'
+import { prReviewBadge } from '../../lib/prReview'
 import SideEffectBadge from '../shared/SideEffectBadge'
 import { PRIORITY_LEVELS, priorityLabel, toPriority, type PriorityValue } from '../../lib/priority'
 import { useNeedsMeStore } from '../../stores/needsMe'
@@ -408,6 +409,27 @@ function TaskCard({
               <Icon icon={CornerDownRight} size="xs" />subtask
             </button>
           )}
+          {(() => {
+            const b = prReviewBadge(task)
+            if (!b) return null
+            return (
+              <>
+                {task.pr_review?.pr_url && (
+                  <a
+                    href={task.pr_review.pr_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border border-line text-accent-fg hover:bg-surface-sunken"
+                    title="Open the pull request under review"
+                  >
+                    PR #{task.pr_review.pr_number} ↗
+                  </a>
+                )}
+                <Badge size="xs" tone={b.tone} title={b.title}>{b.label}</Badge>
+              </>
+            )
+          })()}
           {isChild && task.merge_status === 'merge_conflict' && (
             <Badge size="xs"
               tone="danger"

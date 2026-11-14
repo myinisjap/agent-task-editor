@@ -13,6 +13,7 @@ import { blockReasonLabel, isTransientBlockReason } from '../../lib/blockReason'
 import { formatRelativeCountdown } from '../../lib/format'
 import { canHumanMove } from '../../lib/humanMoves'
 import { Badge, Button, Field, controlClasses, Icon } from '../ui'
+import { isReviewSource, prReviewBadge } from '../../lib/prReview'
 
 export function Row({ label, children, wide = false }: { label: string; children: React.ReactNode; wide?: boolean }) {
   return (
@@ -444,6 +445,8 @@ export default function TaskHeader({
                 >
                   {task.pr_url.replace('https://github.com/', '')} ↗
                 </a>
+              ) : isReviewSource(task.source) ? (
+                <span className="text-xs text-fg-subtle">review-only: never opens a PR</span>
               ) : (
                 <button
                   onClick={onCreatePR}
@@ -475,6 +478,22 @@ export default function TaskHeader({
         )}
         {notesModalOpen && task.agent_notes && (
           <AgentNotesModal notes={task.agent_notes} onClose={() => setNotesModalOpen(false)} />
+        )}
+        {isReviewSource(task.source) && task.pr_review && (
+          <Row label="Source">
+            <a
+              href={task.pr_review.pr_url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-xs text-accent-fg transition-colors"
+            >
+              PR #{task.pr_review.pr_number} ↗
+            </a>
+            {(() => {
+              const b = prReviewBadge(task)
+              return b ? <Badge tone={b.tone} title={b.title}>{b.label}</Badge> : null
+            })()}
+          </Row>
         )}
         {task.source === 'github' && task.source_ref && (
           <Row label="Source">

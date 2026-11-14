@@ -2008,6 +2008,13 @@ export interface paths {
                     };
                     content?: never;
                 };
+                /** @description Review-only PR task (source github_pr/gitea_pr): these never push or open pull requests */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
                 /** @description gh pr create failed (e.g. not authenticated) */
                 502: {
                     headers: {
@@ -5446,7 +5453,7 @@ export interface paths {
         put?: never;
         /**
          * Register a repo
-         * @description The body also accepts verify_command (string) and verify_timeout_seconds (integer, 1-3600); see the Repo schema. It also accepts preview_command, preview_routes and preview_paths_glob (strings).
+         * @description The body also accepts verify_command (string) and verify_timeout_seconds (integer, 1-3600); see the Repo schema. It also accepts preview_command, preview_routes and preview_paths_glob (strings). It also accepts the pr_review_* policy fields (see the Repo schema).
          */
         post: {
             parameters: {
@@ -5554,6 +5561,15 @@ export interface paths {
                         issue_writeback_enabled?: boolean;
                         issue_writeback_label?: string;
                         pr_review_auto_transition_enabled?: boolean;
+                        /** @description Enable the review-only PR path (requires remote_url). See Repo.pr_review_enabled. */
+                        pr_review_enabled?: boolean;
+                        /** @description Author-association allowlist; omit to leave unchanged, empty array resets to the default. */
+                        pr_review_author_assocs?: ("OWNER" | "MEMBER" | "COLLABORATOR" | "CONTRIBUTOR" | "FIRST_TIME_CONTRIBUTOR" | "FIRST_TIMER" | "NONE")[];
+                        pr_review_label?: string;
+                        pr_review_skip_drafts?: boolean;
+                        /** @description Empty string clears (use the seeded PR review workflow). */
+                        pr_review_workflow_id?: string | null;
+                        pr_review_target_label?: string;
                         /** @enum {string} */
                         issue_sync_update_policy?: "gate" | "always" | "never";
                         /** @enum {string} */
@@ -7748,7 +7764,7 @@ export interface components {
              * @description If set, the task is in a backed-off auto-retry state and will not be picked up by the dispatcher again until this time.
              */
             next_retry_at?: string | null;
-            /** @description Where the task was imported from ("github" for the GitHub Issues importer, "gitea" for the Gitea Issues importer against a self-hosted instance, "webhook" for an intake webhook endpoint). Empty for manually created tasks. */
+            /** @description Where the task was imported from ("github" for the GitHub Issues importer, "gitea" for the Gitea Issues importer against a self-hosted instance, "webhook" for an intake webhook endpoint, "github_pr"/"gitea_pr" for a review-only PR task, whose source_ref is owner/repo#N). Empty for manually created tasks. */
             source?: string;
             /** @description External item the task was imported from, unique within source (e.g. "owner/repo#123"). Empty for manually created tasks. */
             source_ref?: string;
@@ -7787,6 +7803,23 @@ export interface components {
             subtask_conflicts?: number;
             /** @description A subtask's declared file globs (repo-relative); empty when unscoped. Used for the sibling overlap guard and a post-run out-of-scope warning. */
             file_scope?: string[];
+            /** @description Source PR state for a review-only PR task (source github_pr or gitea_pr); null for every other task. Such tasks have no Create PR action: they never push or open pull requests. */
+            pr_review?: {
+                pr_url?: string;
+                pr_number?: number;
+                /** @enum {string} */
+                pr_state?: "open" | "closed" | "merged";
+                /** @description Current head commit of the PR as last seen */
+                head_sha?: string;
+                /** @description Head commit covered by the last posted review; empty until one is posted */
+                reviewed_sha?: string;
+                /** @description A review has been posted on the PR */
+                review_posted?: boolean;
+                /** Format: date-time */
+                last_posted_at?: string | null;
+                /** @description head_sha differs from reviewed_sha (new commits since the review, or none posted yet) */
+                stale?: boolean;
+            } | null;
             /**
              * @description A parent's integration state: pending once every subtask finished and merged back (the parent's agent then runs an integration pass), done after that run succeeds. Empty otherwise.
              * @enum {string}
@@ -7841,10 +7874,10 @@ export interface components {
         /** @description One outstanding row of the side-effect outbox. A label transition records the work it owes (pushing the branch, opening a PR, updating the source issue) in the same transaction as the move; a background worker runs it with exponential backoff. Rows are deleted on success, so only unfinished work is listed. A pending row with attempts > 0 and a last_error is "failed, retrying"; status failed means the attempt budget is exhausted and it needs a manual retry. */
         TaskSideEffect: {
             /**
-             * @description terminal = push the branch and tear down the worktree (or merge a subtask back); create_pr = push and open a pull request; leave_not_ready = apply the in-progress signal to the source issue.
+             * @description terminal = push the branch and tear down the worktree (or merge a subtask back); create_pr = push and open a pull request; leave_not_ready = apply the in-progress signal to the source issue; pr_review_post = post the agent's review on the source pull request (review-only PR tasks; idempotent via a hidden marker in the body).
              * @enum {string}
              */
-            kind: "terminal" | "create_pr" | "leave_not_ready";
+            kind: "terminal" | "create_pr" | "leave_not_ready" | "pr_review_post";
             /** @enum {string} */
             status: "pending" | "running" | "failed";
             /** @description Failed attempts so far */
@@ -8435,6 +8468,18 @@ export interface components {
             issue_writeback_label?: string;
             /** @description true = when ghsync ingests new GitHub PR review/GHA feedback for one of this repo's tasks (a changes_requested review, a new inline review comment, or a failed check), the task is automatically transitioned along its workflow's "failure" human path (the same target as a manual Reject), so it lands back in front of an agent without a human having to click Reject. Requires remote_url. false = off (feedback is still ingested and surfaced in the prompt; a human must transition the task manually). See docs/task-sources.md. */
             pr_review_auto_transition_enabled?: boolean;
+            /** @description Opt-in review-only PR path (default false; requires remote_url). true = pull requests opened by people (or other tools) on this repo get an agent review posted back on the PR as a comment-type review (never an approval or a blocking request-changes). One review task per PR; new commits re-run the review on the same task. See docs/task-sources.md "Review any PR". */
+            pr_review_enabled?: boolean;
+            /** @description Author-association allowlist for PR review (default OWNER, MEMBER, COLLABORATOR). A PR whose author association is not listed (or unknown) is never reviewed. */
+            pr_review_author_assocs?: ("OWNER" | "MEMBER" | "COLLABORATOR" | "CONTRIBUTOR" | "FIRST_TIME_CONTRIBUTOR" | "FIRST_TIMER" | "NONE")[];
+            /** @description Only review PRs carrying this forge label (case-insensitive). Empty = no label filter. */
+            pr_review_label?: string;
+            /** @description Skip draft / work-in-progress PRs (default true). */
+            pr_review_skip_drafts?: boolean;
+            /** @description Workflow the review tasks are created on. null = the seeded "PR review" workflow. */
+            pr_review_workflow_id?: string | null;
+            /** @description Label review tasks start on. Must be a non-terminal, non-agent_ignore label of pr_review_workflow_id (400 otherwise). Empty = the workflow's first such label ("pr-review" in the seeded workflow). */
+            pr_review_target_label?: string;
             /**
              * @description Conflict policy for propagating upstream title/body/label drift (and, when issue_comment_sync_enabled is on, comment ingestion) to an already-imported task. 'gate' (default; empty string is treated the same as 'gate') applies updates only while the task is still on its workflow's human-gate label; 'always' applies them regardless of label; 'never' detects drift but never writes it to the task. See docs/task-sources.md.
              * @enum {string}
@@ -8979,7 +9024,7 @@ export interface components {
         /** @description A post-transition side effect (push, PR creation, issue write-back) ran or failed. A task.updated follows each one. */
         WsTaskSideEffectPayload: {
             task_id: string;
-            /** @description Side-effect kind, e.g. create_pr, terminal, leave_not_ready. */
+            /** @description Side-effect kind, e.g. create_pr, terminal, leave_not_ready, pr_review_post. */
             kind: string;
             /**
              * @description pending = the attempt failed and will be retried.

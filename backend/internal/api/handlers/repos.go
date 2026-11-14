@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
+	"github.com/myinisjap/agent-task-editor/backend/internal/prreview"
 	"io"
 	"log/slog"
 	"net/http"
@@ -81,10 +82,13 @@ func (h *ReposHandler) Get(w http.ResponseWriter, r *http.Request) {
 // the API emit real JSON true/false, matching what request bodies accept.
 type repoResponse struct {
 	gen.Repo
-	IssueSyncEnabled              bool `json:"issue_sync_enabled"`
-	IssueWritebackEnabled         bool `json:"issue_writeback_enabled"`
-	PrReviewAutoTransitionEnabled bool `json:"pr_review_auto_transition_enabled"`
-	IssueCommentSyncEnabled       bool `json:"issue_comment_sync_enabled"`
+	IssueSyncEnabled              bool     `json:"issue_sync_enabled"`
+	IssueWritebackEnabled         bool     `json:"issue_writeback_enabled"`
+	PrReviewAutoTransitionEnabled bool     `json:"pr_review_auto_transition_enabled"`
+	IssueCommentSyncEnabled       bool     `json:"issue_comment_sync_enabled"`
+	PrReviewEnabled               bool     `json:"pr_review_enabled"`
+	PrReviewSkipDrafts            bool     `json:"pr_review_skip_drafts"`
+	PrReviewAuthorAssocs          []string `json:"pr_review_author_assocs"`
 }
 
 // newRepoResponse converts a stored repo row into its API representation.
@@ -95,11 +99,15 @@ func newRepoResponse(r gen.Repo) repoResponse {
 		IssueWritebackEnabled:         r.IssueWritebackEnabled != 0,
 		PrReviewAutoTransitionEnabled: r.PrReviewAutoTransitionEnabled != 0,
 		IssueCommentSyncEnabled:       r.IssueCommentSyncEnabled != 0,
+		PrReviewEnabled:               r.PrReviewEnabled != 0,
+		PrReviewSkipDrafts:            r.PrReviewSkipDrafts != 0,
+		PrReviewAuthorAssocs:          prreview.ParseAssociations(r.PrReviewAuthorAssocs),
 	}
 }
 
 // createRepoBody is the decoded request payload for ReposHandler.Create.
 type createRepoBody struct {
+	prReviewBody
 	Name                          string  `json:"name"`
 	Path                          string  `json:"path"`
 	RemoteURL                     *string `json:"remote_url"`
@@ -230,6 +238,12 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	prCur := gen.Repo{PrReviewAuthorAssocs: `["OWNER","MEMBER","COLLABORATOR"]`, PrReviewSkipDrafts: 1}
+	prParams, ok := h.resolvePRReview(w, r, body.prReviewBody, prCur, remoteURL != "")
+	if !ok {
+		return
+	}
+
 	repo, err := h.q.CreateRepo(r.Context(), gen.CreateRepoParams{
 		ID:                            uuid.NewString(),
 		Name:                          body.Name,
@@ -258,6 +272,13 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if body.prReviewBody.any() {
+		prParams.ID = repo.ID
+		if repo, err = h.q.SetRepoPRReview(r.Context(), prParams); err != nil {
+			Err(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	if isClone {
 		h.startAsyncClone(r, &repo, remoteURL, body.Path)
 	} else {
@@ -638,6 +659,7 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
+		prReviewBody
 		Name                          *string `json:"name"`
 		Path                          *string `json:"path"`
 		RemoteURL                     *string `json:"remote_url"`
@@ -835,6 +857,11 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	prParams, ok := h.resolvePRReview(w, r, body.prReviewBody, existing, remoteURL != nil && *remoteURL != "")
+	if !ok {
+		return
+	}
+
 	if issueSyncEnabled != 0 {
 		if remoteURL == nil || *remoteURL == "" {
 			Err(w, http.StatusBadRequest, "issue sync requires a GitHub remote_url")
@@ -915,6 +942,13 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if body.prReviewBody.any() {
+		prParams.ID = repo.ID
+		if repo, err = h.q.SetRepoPRReview(r.Context(), prParams); err != nil {
+			Err(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	setClaudeTrust(r.Context(), path)
 	if runtimeChanged && runtimeLanguages != "" {

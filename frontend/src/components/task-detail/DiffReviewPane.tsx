@@ -28,6 +28,7 @@ export default function DiffReviewPane({
   briefRefreshKey,
   hideVerification,
   showPreview,
+  reviewOnly,
   previewRefreshKey,
 }: {
   taskId: string | undefined
@@ -44,6 +45,8 @@ export default function DiffReviewPane({
   // Review layout: verification lives in the rail; preview strip sits above the diff.
   hideVerification?: boolean
   showPreview?: boolean
+  // Review-only PR task: no Create PR action (it never pushes or opens PRs).
+  reviewOnly?: boolean
   previewRefreshKey?: string | number
 }) {
   const [diffFiles, setDiffFiles] = useState<FileDiff[]>([])
@@ -84,7 +87,7 @@ export default function DiffReviewPane({
             >
               View PR ↗
             </a>
-          ) : (
+          ) : reviewOnly ? null : (
             <button
               onClick={onCreatePR}
               disabled={creatingPR}

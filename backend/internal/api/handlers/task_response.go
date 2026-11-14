@@ -81,6 +81,9 @@ type taskResponse struct {
 	FileScope []string `json:"file_scope"`
 	// IntegrationStatus is a parent's integration state: "", "pending" or "done".
 	IntegrationStatus string `json:"integration_status"`
+	// PRReview is the source PR state of a review-only PR task (source
+	// github_pr/gitea_pr); nil for every other task.
+	PRReview *prReviewResponse `json:"pr_review"`
 }
 
 // sourcePendingResponse is the wire form of one task_source_pending row.
@@ -389,4 +392,45 @@ func splitScope(s string) []string {
 		}
 	}
 	return out
+}
+
+// prReviewResponse is the wire form of a task_pr_source row.
+type prReviewResponse struct {
+	PRURL        string     `json:"pr_url"`
+	PRNumber     int64      `json:"pr_number"`
+	PRState      string     `json:"pr_state"`
+	HeadSHA      string     `json:"head_sha"`
+	ReviewedSHA  string     `json:"reviewed_sha"`
+	ReviewPosted bool       `json:"review_posted"`
+	LastPostedAt *time.Time `json:"last_posted_at"`
+	// Stale is true when the PR head moved past the last posted review.
+	Stale bool `json:"stale"`
+}
+
+// prReviewMap fetches review-only PR metadata for the given task ids in one query.
+func (h *TasksHandler) prReviewMap(ctx context.Context, ids []string) map[string]prReviewResponse {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := h.q.ListTaskPRSourcesForTasks(ctx, ids)
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]prReviewResponse, len(rows))
+	for _, r := range rows {
+		m[r.TaskID] = prReviewResponse{
+			PRURL: r.PrUrl, PRNumber: r.PrNumber, PRState: r.PrState, HeadSHA: r.HeadSha,
+			ReviewedSHA: r.ReviewedSha, ReviewPosted: r.ReviewedSha != "", LastPostedAt: r.LastPostedAt,
+			Stale: r.HeadSha != r.ReviewedSha,
+		}
+	}
+	return m
+}
+
+// applyPRReview sets the review-only PR metadata on a response.
+func applyPRReview(resp taskResponse, m map[string]prReviewResponse) taskResponse {
+	if p, ok := m[resp.ID]; ok {
+		resp.PRReview = &p
+	}
+	return resp
 }

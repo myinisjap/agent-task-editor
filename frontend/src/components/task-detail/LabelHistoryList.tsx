@@ -16,7 +16,7 @@ function formatTimestamp(iso: string): string {
 // for waiting-on-agent-like activity, human = emerald for a completed human
 // action, subtasks_complete = slate as a neutral system trigger).
 const isPolicy = (e: TaskLabelHistoryEntry) => e.actor_id === 'policy'
-const isSync = (e: TaskLabelHistoryEntry) => e.actor_id === 'pr-feedback-sync'
+const isSync = (e: TaskLabelHistoryEntry) => e.actor_id === 'pr-feedback-sync' || e.actor_id === 'pr-review-sync'
 
 function triggerBadgeClass(trigger: string): string {
   switch (trigger) {

@@ -47,6 +47,9 @@ function validateRuntimeRows(rows: RuntimeRow[]): string | null {
   return null
 }
 
+export const PR_ASSOCS = ['OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'NONE'] as const
+const DEFAULT_PR_ASSOCS = ['OWNER', 'MEMBER', 'COLLABORATOR']
+
 type EditForm = {
   name: string
   path: string
@@ -72,6 +75,13 @@ type EditForm = {
   preview_command: string
   preview_routes: string
   preview_paths_glob: string
+  // Review-only PR path (opt-in).
+  pr_review_enabled: boolean
+  pr_review_author_assocs: string[]
+  pr_review_label: string
+  pr_review_skip_drafts: boolean
+  pr_review_workflow_id: string
+  pr_review_target_label: string
 }
 
 const BLANK_FORM: EditForm = {
@@ -95,6 +105,12 @@ const BLANK_FORM: EditForm = {
   preview_command: '',
   preview_routes: '',
   preview_paths_glob: '',
+  pr_review_enabled: false,
+  pr_review_author_assocs: [...DEFAULT_PR_ASSOCS],
+  pr_review_label: '',
+  pr_review_skip_drafts: true,
+  pr_review_workflow_id: '',
+  pr_review_target_label: '',
 }
 
 export default function ReposPage() {
@@ -231,6 +247,12 @@ export default function ReposPage() {
       preview_command: repo.preview_command ?? '',
       preview_routes: repo.preview_routes ?? '',
       preview_paths_glob: repo.preview_paths_glob ?? '',
+      pr_review_enabled: !!repo.pr_review_enabled,
+      pr_review_author_assocs: repo.pr_review_author_assocs?.length ? [...repo.pr_review_author_assocs] : [...DEFAULT_PR_ASSOCS],
+      pr_review_label: repo.pr_review_label ?? '',
+      pr_review_skip_drafts: repo.pr_review_skip_drafts ?? true,
+      pr_review_workflow_id: repo.pr_review_workflow_id ?? '',
+      pr_review_target_label: repo.pr_review_target_label ?? '',
     })
     setEditError('')
     setEditDetectNote('')
@@ -284,6 +306,12 @@ export default function ReposPage() {
         preview_command: editForm.preview_command.trim(),
         preview_routes: editForm.preview_routes,
         preview_paths_glob: editForm.preview_paths_glob,
+        pr_review_enabled: editForm.pr_review_enabled,
+        pr_review_author_assocs: editForm.pr_review_author_assocs,
+        pr_review_label: editForm.pr_review_label.trim(),
+        pr_review_skip_drafts: editForm.pr_review_skip_drafts,
+        pr_review_workflow_id: editForm.pr_review_workflow_id,
+        pr_review_target_label: editForm.pr_review_target_label,
       })
       setRepos((r) => r.map((x) => (x.id === editingId ? updated : x)))
       if (editSkillsLoaded) {
@@ -366,6 +394,120 @@ export default function ReposPage() {
   }
 
   const inputCls = controlClasses
+
+  // Review-only PR path: opt-in plus the filters, workflow and target label.
+  function renderPRReviewSection() {
+    const f = editForm
+    const wf = workflows.find((w) => w.id === f.pr_review_workflow_id)
+    const targets = (wf?.labels ?? []).filter((l) => !l.is_terminal && !l.agent_ignore)
+    const toggleAssoc = (a: string) =>
+      setEditForm((cur) => ({
+        ...cur,
+        pr_review_author_assocs: cur.pr_review_author_assocs.includes(a)
+          ? cur.pr_review_author_assocs.filter((x) => x !== a)
+          : [...cur.pr_review_author_assocs, a],
+      }))
+    return (
+      <fieldset className="sm:col-span-2 flex flex-col gap-2 rounded border border-line p-3" data-testid="pr-review-section">
+        <legend className="px-1 text-xs font-semibold text-fg-muted">PR review (review-only)</legend>
+        <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
+          <input
+            type="checkbox"
+            checked={f.pr_review_enabled}
+            onChange={(e) => setEditForm((cur) => ({ ...cur, pr_review_enabled: e.target.checked }))}
+            className="accent-indigo-500"
+          />
+          Review pull requests opened by others
+          <span className="text-fg-subtle">
+            (an agent posts a comment-only review on the PR; it never approves, requests changes, or pushes; requires remote URL)
+          </span>
+        </label>
+        {f.pr_review_enabled && (
+          <>
+            <div className="flex flex-col gap-1">
+              <span className="text-xs font-medium text-fg-muted">Author association allowlist</span>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {PR_ASSOCS.map((a) => (
+                  <label key={a} className="flex items-center gap-1.5 text-xs text-fg-muted cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={f.pr_review_author_assocs.includes(a)}
+                      onChange={() => toggleAssoc(a)}
+                      className="accent-indigo-500"
+                    />
+                    {a}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-fg-muted" htmlFor="pr-review-label">
+                Label filter <span className="text-fg-subtle">(blank = review every eligible PR)</span>
+              </label>
+              <input
+                id="pr-review-label"
+                value={f.pr_review_label}
+                onChange={(e) => setEditForm((cur) => ({ ...cur, pr_review_label: e.target.value }))}
+                placeholder="agent-review"
+                className={inputCls}
+              />
+            </div>
+            <label className="flex items-center gap-2 text-xs font-medium text-fg-muted cursor-pointer">
+              <input
+                type="checkbox"
+                checked={f.pr_review_skip_drafts}
+                onChange={(e) => setEditForm((cur) => ({ ...cur, pr_review_skip_drafts: e.target.checked }))}
+                className="accent-indigo-500"
+              />
+              Skip draft PRs
+            </label>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-fg-muted" htmlFor="pr-review-workflow">
+                Review workflow
+              </label>
+              <select
+                id="pr-review-workflow"
+                value={f.pr_review_workflow_id}
+                onChange={(e) => setEditForm((cur) => ({ ...cur, pr_review_workflow_id: e.target.value, pr_review_target_label: '' }))}
+                className={inputCls}
+              >
+                <option value="">Default ("PR review")</option>
+                {workflows.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {wf && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-fg-muted" htmlFor="pr-review-target">
+                  Starting label
+                </label>
+                <select
+                  id="pr-review-target"
+                  value={f.pr_review_target_label}
+                  onChange={(e) => setEditForm((cur) => ({ ...cur, pr_review_target_label: e.target.value }))}
+                  className={inputCls}
+                >
+                  <option value="">First agent label</option>
+                  {targets.map((l) => (
+                    <option key={l.name} value={l.name}>
+                      {l.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <span className="text-xs text-fg-subtle">
+              Review tasks only run once an enabled agent config lists the starting label (create an agent for
+              label <code className="font-mono">{f.pr_review_target_label || 'pr-review'}</code>).
+            </span>
+          </>
+        )}
+      </fieldset>
+    )
+  }
 
   // Renders the "Verification" section shared by the create and edit forms.
   function renderVerifySection(opts: {
@@ -1064,6 +1206,8 @@ export default function ReposPage() {
                       detectNote: editDetectNote,
                       onDetect: () => detectRuntime(repo.id, setEditForm, setEditDetecting, setEditDetectNote),
                     })}
+
+                    {renderPRReviewSection()}
 
                     {renderVerifySection({ command: editForm.verify_command, timeout: editForm.verify_timeout_seconds, setter: setEditForm })}
                     {renderPreviewSection({ command: editForm.preview_command, routes: editForm.preview_routes, globs: editForm.preview_paths_glob, setter: setEditForm })}

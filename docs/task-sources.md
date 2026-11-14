@@ -523,6 +523,32 @@ running is left where it is, the same as a manual move would be refused.
 Nothing moves if the task is already on a terminal label or the workflow has
 none.
 
+## Review any PR (review-only)
+
+An opt-in, per-repo path that gets an agent review posted on pull requests ATE
+did not write. Off by default (`pr_review_enabled`); set on the repo edit form.
+
+- **Filters.** Author association allowlist (default OWNER, MEMBER,
+  COLLABORATOR; empty or unknown is rejected), optional forge label, skip
+  drafts (default on). Bot authors and `ate-` head branches are always skipped.
+- **Trigger.** GitHub `pull_request` webhook (subscribe to *Pull requests*)
+  plus a polling sweep fallback. Gitea is polling only; draft comes from the
+  `draft` field or a `WIP:`/`Draft:` title prefix, association from
+  collaborator/owner checks.
+- **Dedupe and re-review.** One task per PR (`source=github_pr`/`gitea_pr`,
+  `source_ref=owner/repo#N`). A new head commit moves the finished task back to
+  `pr-review` and posts a new review listing resolved earlier findings.
+- **Workflow.** Seeded "PR review": `pr-review` (agent) -> `done`, plus
+  `needs-attention`. Create an agent config for label `pr-review` (not
+  `review`, which is the Default workflow's human gate).
+- **Comment-only, no push.** Reviews are COMMENT-type only. Review tasks never
+  push or create PRs, and ghsync and write-back skip them.
+- **Idempotent posting.** Via the outbox (`pr_review_post`) with a hidden
+  `<!-- ate-pr-review:ID -->` marker checked before posting. Inline anchor
+  failure falls back to a body-only review, then a single comment.
+- **Untrusted content.** Title, body and diff are fenced (ADR 0014). The agent
+  reports through the `submit_pr_review` MCP tool; otherwise run notes are used.
+
 ## PR review / GitHub Actions feedback ingestion
 
 This is the reverse direction of the loop above: instead of writing task

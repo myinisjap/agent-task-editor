@@ -823,3 +823,15 @@ func ParseGitHubName(remoteURL string) (string, bool) {
 
 	return "", false
 }
+
+func (GitHub) GetPR(ctx context.Context, repoName string, number int) (forge.PullRequest, error) {
+	return GetPR(ctx, repoName, number)
+}
+
+func (GitHub) ListOpenPRs(ctx context.Context, repoName string) ([]forge.PullRequest, error) {
+	return ListOpenPRs(ctx, repoName)
+}
+
+func (GitHub) PostCommentReview(ctx context.Context, repoName string, number int, r forge.ReviewSubmission) (string, error) {
+	return PostCommentReview(ctx, repoName, number, r)
+}

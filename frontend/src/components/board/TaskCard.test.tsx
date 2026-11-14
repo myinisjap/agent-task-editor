@@ -537,3 +537,28 @@ describe('TaskCard archive with Undo toast', () => {
     await vi.waitFor(() => expect(api.tasks.setArchived).toHaveBeenCalledWith('task-1', false))
   })
 })
+
+describe('TaskCard review-only PR tasks', () => {
+  it('shows the PR link chip and the review state', () => {
+    const task = baseTask({
+      source: 'github_pr',
+      pr_review: {
+        pr_url: 'https://github.com/o/r/pull/7',
+        pr_number: 7,
+        pr_state: 'open',
+        head_sha: 'a',
+        reviewed_sha: 'a',
+        review_posted: true,
+        last_posted_at: null,
+        stale: false,
+      },
+    })
+    render(
+      <MemoryRouter>
+        <TaskCard task={task} isEditable onDelete={() => {}} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('Review posted')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /PR #7/ })).toHaveAttribute('href', 'https://github.com/o/r/pull/7')
+  })
+})
