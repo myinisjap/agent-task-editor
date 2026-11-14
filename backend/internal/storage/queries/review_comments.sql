@@ -38,3 +38,20 @@ RETURNING *;
 
 -- name: DeleteTaskReviewComment :execrows
 DELETE FROM task_review_comments WHERE id = ? AND task_id = ?;
+
+-- name: ListUnrepliedAgentResolvedForgeReviewComments :many
+-- Forge-ingested comments an agent run resolved that have not yet had their
+-- thread reply posted (reply_posted_at is the once-per-comment marker).
+SELECT * FROM task_review_comments
+WHERE task_id = ? AND status = 'resolved' AND resolved_by_run_id IS NOT NULL
+  AND external_id IS NOT NULL AND source != 'local' AND reply_posted_at IS NULL
+ORDER BY created_at ASC;
+
+-- name: MarkTaskReviewCommentReplied :exec
+UPDATE task_review_comments
+SET reply_external_id = ?, reply_posted_at = CURRENT_TIMESTAMP
+WHERE id = ? AND task_id = ?;
+
+-- name: CountTaskReviewCommentReplyByExternalID :one
+-- Whether a forge comment id is a reply ATE itself posted.
+SELECT COUNT(*) FROM task_review_comments WHERE task_id = ? AND reply_external_id = ?;

@@ -2,12 +2,14 @@ package ghsync
 
 import (
 	"context"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
+	"github.com/myinisjap/agent-task-editor/backend/internal/reviewreply"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -615,3 +617,49 @@ func mustGetRepo(t *testing.T, q *gen.Queries, repoID string) gen.Repo {
 	}
 	return repo
 }
+
+// ATE's own thread replies (see internal/reviewreply) come back from the forge
+// as inline review comments from a trusted author; they must never be
+// re-ingested as new feedback.
+func TestIngestReviewComments_SkipsOwnReplies(t *testing.T) {
+	ctx := context.Background()
+	getComments := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.PRReviewComment, error) {
+		return []forge.PRReviewComment{
+			{ID: "c1", Path: "main.go", Line: 10, Side: "RIGHT", Body: "please fix", Author: "alice", AuthorAssociation: "OWNER"},
+			// Recorded reply id (no marker in the body, e.g. edited by a human).
+			{ID: "r1", Path: "main.go", Line: 10, Side: "RIGHT", Body: "Pushed in abc", Author: "bot", AuthorAssociation: "OWNER", InReplyToID: "c1"},
+			// Marker only (id never recorded, e.g. crash before the DB write).
+			{ID: "r2", Path: "main.go", Line: 10, Side: "RIGHT", Body: "x\n" + reviewreply.Marker, Author: "bot", AuthorAssociation: "OWNER", InReplyToID: "c1"},
+		}, nil
+	}
+	s, q, _ := newTestSyncerFull(t, nil, nil, getComments, nil, false)
+	wfID, label := mustCreateSimpleWorkflow(t, q)
+	repoID := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{ID: repoID, Name: "widgets", Path: t.TempDir(), RemoteUrl: ghURL(), WorkflowID: &wfID}); err != nil {
+		t.Fatal(err)
+	}
+	task := newTestTask(t, q, repoID, wfID, label, "feature-branch", "", "pushed", "")
+	// Seed the original comment as already replied to, recording reply id r1.
+	orig, err := q.CreateForgeTaskReviewComment(ctx, gen.CreateForgeTaskReviewCommentParams{
+		ID: uuid.NewString(), TaskID: task.ID, FilePath: "main.go", Side: "new", StartLine: 10, EndLine: 10, Body: "please fix",
+		ExternalID: strPtr("c1"), Source: "github",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := q.MarkTaskReviewCommentReplied(ctx, gen.MarkTaskReviewCommentRepliedParams{ReplyExternalID: strPtr("r1"), ID: orig.ID, TaskID: task.ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.ingestReviewComments(ctx, task, repoInfo{ghName: "acme/widgets", repo: mustGetRepo(t, q, repoID)}, 1, slog.Default())
+
+	all, err := q.ListTaskReviewComments(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("got %d comments, want only the original (own replies must not be ingested)", len(all))
+	}
+}
+
+func strPtr(s string) *string { return &s }

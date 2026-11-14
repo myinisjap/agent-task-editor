@@ -7,6 +7,7 @@ const NOUN: Record<string, string> = {
   terminal: 'Branch push',
   leave_not_ready: 'Issue update',
   auto_merge: 'Auto-merge',
+  review_reply: 'Review reply',
 }
 
 /** Short human text for one outstanding outbox row. */

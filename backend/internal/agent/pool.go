@@ -958,6 +958,11 @@ func (p *Pool) persistRunResult(ctx context.Context, job Job, result *Result, st
 			}
 			applied++
 		}
+		if applied > 0 && p.engine != nil {
+			if err := p.engine.EnqueueReviewReply(ctx, job.Input.Task.ID); err != nil {
+				log.Warn("pool: enqueue review reply", "err", err)
+			}
+		}
 		if applied > 0 && p.pub != nil {
 			p.pub.Publish(wsevent.TypeTaskReviewCommentsChange, wsevent.TaskReviewCommentsChanged{
 				TaskID:   job.Input.Task.ID,

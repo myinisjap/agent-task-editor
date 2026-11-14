@@ -6238,6 +6238,8 @@ export interface paths {
                         /** @description Empty string clears (use the seeded PR review workflow). */
                         pr_review_workflow_id?: string | null;
                         pr_review_target_label?: string;
+                        review_reply_enabled?: boolean;
+                        review_reply_resolve_enabled?: boolean;
                         /** @enum {string} */
                         issue_sync_update_policy?: "gate" | "always" | "never";
                         /** @enum {string} */
@@ -8782,10 +8784,10 @@ export interface components {
         /** @description One outstanding row of the side-effect outbox. A label transition records the work it owes (pushing the branch, opening a PR, updating the source issue) in the same transaction as the move; a background worker runs it with exponential backoff. Rows are deleted on success, so only unfinished work is listed. A pending row with attempts > 0 and a last_error is "failed, retrying"; status failed means the attempt budget is exhausted and it needs a manual retry. */
         TaskSideEffect: {
             /**
-             * @description auto_merge = merge the task's PR through the forge (repo auto-merge policy; a forge refusal fails it at once, no retries); terminal = push the branch and tear down the worktree (or merge a subtask back); create_pr = push and open a pull request; leave_not_ready = apply the in-progress signal to the source issue; pr_review_post = post the agent's review on the source pull request (review-only PR tasks; idempotent via a hidden marker in the body).
+             * @description auto_merge = merge the task's PR through the forge (repo auto-merge policy; a forge refusal fails it at once, no retries); terminal = push the branch and tear down the worktree (or merge a subtask back); create_pr = push and open a pull request; leave_not_ready = apply the in-progress signal to the source issue; pr_review_post = post the agent's review on the source pull request (review-only PR tasks; idempotent via a hidden marker in the body). review_reply = reply on the forge review thread of an ingested comment the agent resolved.
              * @enum {string}
              */
-            kind: "terminal" | "create_pr" | "leave_not_ready" | "auto_merge" | "pr_review_post";
+            kind: "terminal" | "create_pr" | "leave_not_ready" | "auto_merge" | "pr_review_post" | "review_reply";
             /** @enum {string} */
             status: "pending" | "running" | "failed";
             /** @description Failed attempts so far */
@@ -9526,6 +9528,10 @@ export interface components {
             pr_review_workflow_id?: string | null;
             /** @description Label review tasks start on. Must be a non-terminal, non-agent_ignore label of pr_review_workflow_id (400 otherwise). Empty = the workflow's first such label ("pr-review" in the seeded workflow). */
             pr_review_target_label?: string;
+            /** @description true = when an agent resolves a review comment ingested from the forge (resolve_comment), reply on that comment's review thread with the resolution text and pushed short SHA, once the branch is pushed. Default false. Gitea has no thread-reply API, so the reply is a PR conversation comment. See docs/task-sources.md. */
+            review_reply_enabled?: boolean;
+            /** @description true = also mark the thread resolved after replying (GitHub only; ignored on Gitea). Requires review_reply_enabled. Default false. */
+            review_reply_resolve_enabled?: boolean;
             /**
              * @description Conflict policy for propagating upstream title/body/label drift (and, when issue_comment_sync_enabled is on, comment ingestion) to an already-imported task. 'gate' (default; empty string is treated the same as 'gate') applies updates only while the task is still on its workflow's human-gate label; 'always' applies them regardless of label; 'never' detects drift but never writes it to the task. See docs/task-sources.md.
              * @enum {string}

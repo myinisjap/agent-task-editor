@@ -402,6 +402,30 @@ func TestSideEffects_DismissDeletesOnlyFailed(t *testing.T) {
 	}
 }
 
+func TestSideEffects_ReviewReplyEnqueueIsIdempotentAndRuns(t *testing.T) {
+	engine, db, task, _, _ := createPREngine(t, &noopPublisher{})
+	ctx := context.Background()
+	ran := 0
+	engine.OnReviewReply = func(_ context.Context, got gen.Task) error {
+		if got.ID != task.ID {
+			t.Errorf("hook task = %s", got.ID)
+		}
+		ran++
+		return nil
+	}
+	for i := 0; i < 3; i++ {
+		if err := engine.EnqueueReviewReply(ctx, task.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rows := sideEffectRows(t, db, task.ID); len(rows) != 1 || rows[0].Kind != workflow.SideEffectReviewReply {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if n := engine.DrainSideEffects(ctx); n != 1 || ran != 1 {
+		t.Fatalf("drained %d, ran %d", n, ran)
+	}
+}
+
 func TestSideEffects_PRReviewPost(t *testing.T) {
 	db := setupTestDB(t)
 	wfID := defaultWorkflowID(t, db)

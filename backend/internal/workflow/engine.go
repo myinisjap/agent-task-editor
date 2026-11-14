@@ -162,6 +162,10 @@ type Engine struct {
 	// EnqueueAutoMerge: merge the task's PR through the forge. Wrap errors in
 	// Permanent when a retry cannot help (e.g. branch protection refused).
 	OnAutoMerge func(ctx context.Context, task gen.Task) error
+	// OnReviewReply, if set, runs the "review_reply" side effect enqueued by
+	// EnqueueReviewReply: it posts the agent's resolutions of ingested forge
+	// review comments onto their threads (see internal/reviewreply).
+	OnReviewReply func(ctx context.Context, task gen.Task) error
 
 	// SideEffectBackoff returns the delay before the next attempt after the given
 	// number of failed attempts (1-based). Nil uses DefaultSideEffectBackoff.

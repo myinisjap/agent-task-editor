@@ -33,6 +33,9 @@ const (
 	// SideEffectAutoMerge merges the task's open PR through the forge once the
 	// repo's auto-merge policy found it safe (see EnqueueAutoMerge).
 	SideEffectAutoMerge = "auto_merge"
+	// SideEffectReviewReply posts the agent's resolution of ingested forge review
+	// comments onto their review threads once the branch is pushed.
+	SideEffectReviewReply = "review_reply"
 )
 
 // Side effect statuses. A finished effect has no row, so "done" is absent.
@@ -277,6 +280,11 @@ func (e *Engine) execSideEffect(ctx context.Context, se gen.TaskSideEffect) erro
 			return nil
 		}
 		return e.OnCreatePR(ctx, task)
+	case SideEffectReviewReply:
+		if e.OnReviewReply == nil {
+			return nil
+		}
+		return e.OnReviewReply(ctx, task)
 	case SideEffectLeaveNotReady:
 		if e.OnLeaveNotReady == nil {
 			return nil
@@ -332,4 +340,20 @@ func (e *Engine) DismissSideEffects(ctx context.Context, taskID string) (int64, 
 		e.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: taskID})
 	}
 	return n, nil
+}
+
+// EnqueueReviewReply records that review-thread replies are owed for a task
+// (idempotent while one is pending) and wakes the worker. No-op when
+// OnReviewReply is not wired.
+func (e *Engine) EnqueueReviewReply(ctx context.Context, taskID string) error {
+	if e.OnReviewReply == nil {
+		return nil
+	}
+	if err := e.sq.EnqueueTaskSideEffect(ctx, gen.EnqueueTaskSideEffectParams{
+		ID: uuid.NewString(), TaskID: taskID, Kind: SideEffectReviewReply,
+	}); err != nil {
+		return fmt.Errorf("enqueue %s side effect: %w", SideEffectReviewReply, err)
+	}
+	e.nudgeWorker()
+	return nil
 }

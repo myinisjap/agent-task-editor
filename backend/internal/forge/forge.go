@@ -19,6 +19,11 @@ import (
 	"errors"
 )
 
+// ErrThreadResolveUnsupported is returned by Forge.ResolveReviewThread on a
+// forge that has no way to mark a review thread resolved. Callers treat it as
+// "nothing to do", not as a failure.
+var ErrThreadResolveUnsupported = errors.New("forge cannot resolve review threads")
+
 // Mergeability is a forge's verdict on whether a PR/MR can be merged into its
 // base branch without conflicts. Forges typically compute this asynchronously
 // after each push to either branch, so MergeableUnknown is a normal
@@ -105,6 +110,9 @@ type PRReviewComment struct {
 	// IssueComment.AuthorAssociation). See Review.AuthorAssociation for the
 	// trust contract implementations must follow.
 	AuthorAssociation string
+	// InReplyToID is the id of the comment this one replies to; "" for a
+	// thread's top-level comment or when the forge does not report threading.
+	InReplyToID string
 }
 
 // Check is a single CI/status check result on a PR/MR.
@@ -279,6 +287,15 @@ type Forge interface {
 	// wraps ErrInlineAnchor so the caller can retry without inline comments.
 	// Returns an opaque reference (e.g. review id) for the posted review.
 	PostCommentReview(ctx context.Context, repoName string, number int, r ReviewSubmission) (ref string, err error)
+	// ReplyToReviewComment posts body as a reply in the review thread that
+	// commentID (a PRReviewComment.ID) belongs to, and returns the new
+	// comment's id. A forge with no reply-in-thread API posts a plain PR
+	// conversation comment instead (still returning its id).
+	ReplyToReviewComment(ctx context.Context, repoName string, prNumber int, commentID, body string) (replyID string, err error)
+
+	// ResolveReviewThread marks the review thread containing commentID as
+	// resolved. A forge that cannot returns ErrThreadResolveUnsupported.
+	ResolveReviewThread(ctx context.Context, repoName string, prNumber int, commentID string) error
 
 	// AuthStatus reports whether this forge's client is authenticated, plus a
 	// short human-readable note about how (or why not).

@@ -486,6 +486,44 @@ func TestGitHubCompareURL(t *testing.T) {
 	}
 }
 
+func TestReplyToReviewComment(t *testing.T) {
+	reqs := fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) { jsonOK(w, `{"id":777}`) })
+	id, err := ReplyToReviewComment(context.Background(), "acme/widgets", 3, "55", "done")
+	if err != nil || id != "777" {
+		t.Fatalf("got %q %v", id, err)
+	}
+	r := (*reqs)[0]
+	if r.Method != "POST" || r.Path != "/repos/acme/widgets/pulls/3/comments/55/replies" || !strings.Contains(r.Body, `"done"`) {
+		t.Errorf("request = %+v", r)
+	}
+}
+
+func TestResolveReviewThread(t *testing.T) {
+	var mutated bool
+	reqs := fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) {
+		if strings.Contains(r.Body, "resolveReviewThread") {
+			mutated = true
+			if !strings.Contains(r.Body, "T_2") {
+				t.Errorf("mutation targeted wrong thread: %s", r.Body)
+			}
+			jsonOK(w, `{"data":{}}`)
+			return
+		}
+		jsonOK(w, `{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":false,"endCursor":""},"nodes":[
+			{"id":"T_1","isResolved":false,"comments":{"nodes":[{"databaseId":1}]}},
+			{"id":"T_2","isResolved":false,"comments":{"nodes":[{"databaseId":55},{"databaseId":56}]}}]}}}}}`)
+	})
+	if err := ResolveReviewThread(context.Background(), "acme/widgets", 3, "55"); err != nil {
+		t.Fatal(err)
+	}
+	if !mutated || (*reqs)[0].Path != "/graphql" {
+		t.Errorf("mutated=%v reqs=%+v", mutated, *reqs)
+	}
+	if err := ResolveReviewThread(context.Background(), "acme/widgets", 3, "999"); err == nil {
+		t.Error("expected error for a comment in no thread")
+	}
+}
+
 func TestGetPRChecks_AllBuckets(t *testing.T) {
 	fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) {
 		switch {

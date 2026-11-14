@@ -65,6 +65,7 @@ agent-task-editor/
 │       ├── remotemcp/        # Remote MCP endpoint (/mcp, streamable HTTP) + Google-backed OAuth server for claude.ai connectors; off unless MCP_REMOTE_ENABLED=true
 │       ├── prreview/         # Review-only PR path: filters, webhook/poll ingest, idempotent posting
 │       ├── prflow/           # Push a task's branch and create/find its PR; shared by the CreatePR handler and the OnCreatePR hook (leaf: no api/handlers or workflow import)
+│       ├── reviewreply/      # Posts the agent's resolution of an ingested forge review comment onto its review thread (opt-in, after push; runs from the review_reply side effect)
 │       ├── scopedtoken/      # Short-lived, route-scoped bearer tokens minted for the MCP sidecars (instead of the admin API token)
 │       ├── schedule/         # Fires task_schedules on their cron interval, creating tasks from templates
 │       ├── storage/          # SQLite, golang-migrate, sqlc-generated code

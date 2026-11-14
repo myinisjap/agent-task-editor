@@ -650,6 +650,27 @@ func TestNew_BaseURLOverride(t *testing.T) {
 	}
 }
 
+func TestReplyToReviewComment_FallsBackToPRConversationComment(t *testing.T) {
+	g, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/repos/owner/repo/issues/7/comments") {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]string
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if !strings.Contains(body["body"], "#99") || !strings.Contains(body["body"], "fixed it") {
+			t.Errorf("body = %q", body["body"])
+		}
+		writeJSON(t, w, 201, map[string]any{"id": 1234})
+	})
+	id, err := g.ReplyToReviewComment(t.Context(), "owner/repo", 7, "99", "fixed it")
+	if err != nil || id != "1234" {
+		t.Fatalf("got %q, %v", id, err)
+	}
+	if err := g.ResolveReviewThread(t.Context(), "owner/repo", 7, "99"); !errors.Is(err, forge.ErrThreadResolveUnsupported) {
+		t.Errorf("ResolveReviewThread err = %v, want ErrThreadResolveUnsupported", err)
+	}
+}
+
 func TestPRChecks_LatestPerContext(t *testing.T) {
 	g, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		switch {

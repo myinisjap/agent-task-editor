@@ -955,7 +955,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [terminal, create_pr, leave_not_ready, auto_merge, pr_review_post]
+          enum: [terminal, create_pr, leave_not_ready, auto_merge, pr_review_post, review_reply]
           description: >
             auto_merge = merge the task's PR through the forge (repo auto-merge
             policy; a forge refusal fails it at once, no retries); terminal = push the branch and tear down the worktree (or merge a
@@ -963,6 +963,8 @@ components:
             leave_not_ready = apply the in-progress signal to the source issue;
             pr_review_post = post the agent's review on the source pull request
             (review-only PR tasks; idempotent via a hidden marker in the body).
+            review_reply = reply on the forge review thread of an ingested
+            comment the agent resolved.
         status:
           type: string
           enum: [pending, running, failed]
@@ -1996,6 +1998,19 @@ components:
             Label review tasks start on. Must be a non-terminal, non-agent_ignore
             label of pr_review_workflow_id (400 otherwise). Empty = the
             workflow's first such label ("pr-review" in the seeded workflow).
+        review_reply_enabled:
+          type: boolean
+          description: >
+            true = when an agent resolves a review comment ingested from the
+            forge (resolve_comment), reply on that comment's review thread with
+            the resolution text and pushed short SHA, once the branch is
+            pushed. Default false. Gitea has no thread-reply API, so the reply
+            is a PR conversation comment. See docs/task-sources.md.
+        review_reply_resolve_enabled:
+          type: boolean
+          description: >
+            true = also mark the thread resolved after replying (GitHub only;
+            ignored on Gitea). Requires review_reply_enabled. Default false.
         issue_sync_update_policy:
           type: string
           enum: [gate, always, never]
@@ -6204,6 +6219,8 @@ paths:
                 pr_review_skip_drafts: { type: boolean }
                 pr_review_workflow_id: { type: string, nullable: true, description: "Empty string clears (use the seeded PR review workflow)." }
                 pr_review_target_label: { type: string }
+                review_reply_enabled: { type: boolean }
+                review_reply_resolve_enabled: { type: boolean }
                 issue_sync_update_policy:
                   type: string
                   enum: [gate, always, never]

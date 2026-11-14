@@ -35,6 +35,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/prflow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/remotemcp"
 	"github.com/myinisjap/agent-task-editor/backend/internal/repomap"
+	"github.com/myinisjap/agent-task-editor/backend/internal/reviewreply"
 	"github.com/myinisjap/agent-task-editor/backend/internal/schedule"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -297,6 +298,11 @@ func main() {
 		}
 		return automerge.Merge(ctx, termQ, pub, f, name, task, repo)
 	}
+	// Opt-in per repo (review_reply_enabled): after an agent resolves an
+	// ingested forge review comment, reply on its thread once the branch is
+	// pushed (see internal/reviewreply).
+	reviewReplier := reviewreply.New(termQ)
+	engine.OnReviewReply = reviewReplier.Run
 
 	// Backend base URL the create_subtask MCP sidecar posts to (same container).
 	backendURL := "http://localhost:" + cfg.Port
