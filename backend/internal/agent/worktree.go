@@ -392,3 +392,10 @@ func changedFilesAgainstBase(ctx context.Context, wtPath, baseRef, branch string
 	}
 	return files, nil
 }
+
+// DefaultBaseRef is defaultBaseRef for packages outside agent (the repo map
+// generator checks out the repo's default branch the same way tasks branch
+// from it).
+func DefaultBaseRef(ctx context.Context, repoPath string) (string, error) {
+	return defaultBaseRef(ctx, repoPath)
+}

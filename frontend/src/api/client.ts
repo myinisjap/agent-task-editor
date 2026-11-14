@@ -18,6 +18,11 @@ export type Skill = Schemas['Skill']
 export type RepoLesson = Schemas['RepoLesson']
 export type RepoLessonCreate = Schemas['RepoLessonCreate']
 export type RepoLessonUpdate = Schemas['RepoLessonUpdate']
+export type RepoMap = Schemas['RepoMap']
+export type RepoMapConfig = Schemas['RepoMapConfig']
+export type RepoMapConfigUpdate = Schemas['RepoMapConfigUpdate']
+export type RepoMapRun = Schemas['RepoMapRun']
+export type RepoMapSettings = Schemas['RepoMapSettings']
 export type TaskHumanDecision = Schemas['TaskHumanDecision']
 export type LessonStatus = RepoLesson['status']
 export type LessonKind = RepoLesson['kind']
@@ -488,6 +493,12 @@ export const api = {
     delete: (id: string) => request<void>(`/repos/${id}`, { method: 'DELETE' }),
     lessons: (id: string, status?: LessonStatus) =>
       request<RepoLesson[]>(`/repos/${id}/lessons${status ? `?status=${status}` : ''}`),
+    // Repo map (docs/repo-map.md): generated codebase guide per repo.
+    map: (id: string) => request<RepoMap>(`/repos/${id}/map`),
+    setMapConfig: (id: string, body: RepoMapConfigUpdate) =>
+      request<RepoMapConfig>(`/repos/${id}/map/config`, { method: 'PUT', body: JSON.stringify(body) }),
+    generateMap: (id: string) => request<RepoMapRun>(`/repos/${id}/map/generate`, { method: 'POST', body: '{}' }),
+    mapRuns: (id: string, limit = 10) => request<RepoMapRun[]>(`/repos/${id}/map/runs?limit=${limit}`),
     skills: (id: string) => request<Skill[]>(`/repos/${id}/skills`),
     setSkills: (id: string, skill_ids: string[]) =>
       request<Skill[]>(`/repos/${id}/skills`, { method: 'PUT', body: JSON.stringify({ skill_ids }) }),

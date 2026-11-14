@@ -10,7 +10,7 @@ import (
 const ReadInstructions = "Tools for the Agent Task Editor kanban board. Tasks move between labels (columns); " +
 	"a task on an agent-triggerable label such as \"work\" is picked up by an AI agent automatically. " +
 	"Use list_tasks/get_task to see state and list_runs/get_run_logs/get_diff to inspect agent work; " +
-	"list_workflows/get_workflow, list_agents, list_repos/get_repo and list_templates/list_schedules show how the board is set up, and get_costs reports what agents have spent. " +
+	"list_workflows/get_workflow, list_agents, list_repos/get_repo, get_repo_map (generated codebase guide) and list_templates/list_schedules show how the board is set up, and get_costs reports what agents have spent. " +
 	"Start with list_needs_me to see what is waiting on a human. "
 
 // AdminInstructions is added for the admin profile.

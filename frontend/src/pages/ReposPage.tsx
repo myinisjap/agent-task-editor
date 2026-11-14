@@ -3,6 +3,7 @@ import { Button, PageFrame, controlClasses } from '../components/ui'
 import { api, type Repo, type Skill, type RuntimeLanguagePin, type Workflow } from '../api/client'
 import SkillPicker from '../components/skills/SkillPicker'
 import LessonsPanel from '../components/lessons/LessonsPanel'
+import RepoMapPanel from '../components/repomap/RepoMapPanel'
 import ConfirmDialog from '../components/shared/ConfirmDialog'
 import HelpModal from '../components/shared/HelpModal'
 import { ReposHelp } from '../components/shared/pageHelp'
@@ -107,6 +108,7 @@ export default function ReposPage() {
   const [error, setError] = useState('')
   const [showHelp, setShowHelp] = useState(false)
   const [repoToRemove, setRepoToRemove] = useState<Repo | null>(null)
+  const [mapOpenId, setMapOpenId] = useState<string | null>(null)
 
   // Inline edit state
   const [lessonsOpenId, setLessonsOpenId] = useState<string | null>(null)
@@ -838,6 +840,13 @@ export default function ReposPage() {
                     {editingId === repo.id ? 'Cancel' : 'Edit'}
                   </button>
                   <button
+                    onClick={() => setMapOpenId(mapOpenId === repo.id ? null : repo.id)}
+                    aria-expanded={mapOpenId === repo.id}
+                    className="text-xs text-fg-subtle hover:text-accent-fg transition-colors shrink-0"
+                  >
+                    {mapOpenId === repo.id ? 'Hide map' : 'Map'}
+                  </button>
+                  <button
                     onClick={() => setLessonsOpenId(lessonsOpenId === repo.id ? null : repo.id)}
                     aria-expanded={lessonsOpenId === repo.id}
                     className="text-xs text-fg-subtle hover:text-accent-fg transition-colors shrink-0"
@@ -852,6 +861,12 @@ export default function ReposPage() {
                   </button>
                 </div>
               </div>
+
+              {mapOpenId === repo.id && (
+                <div className="border-t border-border px-4 py-4 sm:px-5">
+                  <RepoMapPanel repoId={repo.id} />
+                </div>
+              )}
 
               {lessonsOpenId === repo.id && (
                 <div className="border-t border-border px-4 py-4 sm:px-5">

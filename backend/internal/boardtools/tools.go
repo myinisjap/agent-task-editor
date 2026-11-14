@@ -82,7 +82,7 @@ var StdioTools = []string{"list_repos", "list_workflows", "create_task"}
 // is attacker-influenced, so nothing reachable from it may change state.
 var ReadOnlyRemoteTools = []string{
 	"list_repos", "list_workflows", "list_tasks", "get_task", "list_runs", "get_run_logs", "get_diff",
-	"get_workflow", "list_agents", "get_repo", "detect_repo_runtime",
+	"get_workflow", "list_agents", "get_repo", "get_repo_map", "detect_repo_runtime",
 	"list_needs_me", "get_costs", "list_provider_configs", "get_agent", "list_templates", "list_schedules",
 }
 

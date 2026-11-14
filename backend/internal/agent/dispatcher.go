@@ -46,6 +46,9 @@ type Dispatcher struct {
 	// subtask branching model). Used here to branch a child off its parent's
 	// branch and to inject merge-conflict context into a parent's run.
 	Subtasks *SubtaskCoordinator
+	// RepoMap supplies the generated REPO MAP prompt section (optional - nil
+	// disables it). See repomap.Service.PromptSection and docs/repo-map.md.
+	RepoMap RepoMapSource
 	// Publisher broadcasts WS events (optional — no-op when nil). Used by the
 	// cost-budget guard (see checkCostBudget) to publish task.needs_human
 	// when a sweep-dispatch is skipped for budget-exhaustion, mirroring how
@@ -1102,6 +1105,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			CostSpentUSD:         costSpentUSD,
 			CostWarnRatio:        d.resolveCostWarnRatio(ctx),
 			Runtime:              runtimeSpec,
+			RepoMap:              d.repoMapSection(ctx, t, matched.ID),
 		},
 	})
 	if !enqueued {

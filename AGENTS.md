@@ -23,6 +23,7 @@ agent-task-editor/
 │   ├── task-sources.md
 │   ├── task-templates.md
 │   ├── lessons.md
+│   ├── repo-map.md           # Repo map: generated, refreshed codebase guide (planner orientation)
 │   ├── websocket.md
 │   ├── mcp-tools.md
 │   ├── board-mcp.md
@@ -58,6 +59,7 @@ agent-task-editor/
 │       │   ├── policy/       # Async event subscriber that records autonomy decisions on gate landing and acts on approvals (hold-window sweeper, approves as actor "policy")
 │       │   └── propose/      # Offline model-proposed ask rules from a gate's escapes/rejections (ADR 0040); proposals are inert until accepted
 │       ├── reviewbrief/      # Deterministic review brief for human-gate tasks: diff risk flags, verification/run summary (GET /tasks/{id}/review-brief, needs-me risk_flags); also owns the shared task-diff git logic
+│       ├── repomap/          # Repo map (docs/repo-map.md): read-only scratch checkout of the default branch -> provider CLI -> capped markdown pages + runs/cost; staleness rule, scheduler, REPO MAP prompt section
 │       ├── remotemcp/        # Remote MCP endpoint (/mcp, streamable HTTP) + Google-backed OAuth server for claude.ai connectors; off unless MCP_REMOTE_ENABLED=true
 │       ├── prflow/           # Push a task's branch and create/find its PR; shared by the CreatePR handler and the OnCreatePR hook (leaf: no api/handlers or workflow import)
 │       ├── scopedtoken/      # Short-lived, route-scoped bearer tokens minted for the MCP sidecars (instead of the admin API token)

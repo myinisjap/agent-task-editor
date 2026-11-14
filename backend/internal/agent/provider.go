@@ -130,6 +130,10 @@ type RunInput struct {
 	// RepoLessons are curated per-repo/global lessons, already selected and
 	// within budget. Rendered only by buildPrompt (not the resume prompt).
 	RepoLessons []RepoLesson
+	// RepoMap is the already-rendered, bounded and fenced REPO MAP section
+	// (generated orientation; background only). Empty when the repo, label or
+	// agent config is not opted in. Rendered only by buildPrompt.
+	RepoMap string
 	// Absolute paths of attachment images on the server filesystem
 	AttachmentAbsPaths []string
 	// ResumeSessionID, if non-empty, asks the provider to resume this prior

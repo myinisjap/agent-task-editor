@@ -29,6 +29,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/notify"
 	"github.com/myinisjap/agent-task-editor/backend/internal/prflow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/remotemcp"
+	"github.com/myinisjap/agent-task-editor/backend/internal/repomap"
 	"github.com/myinisjap/agent-task-editor/backend/internal/schedule"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -315,6 +316,18 @@ func main() {
 		return propose.ProviderModel{Provider: p, Config: ac}
 	})
 
+	// Repo map generation (docs/repo-map.md): a provider CLI in a read-only
+	// scratch checkout, opt-in per repo. Cost ceiling wired below once the
+	// dispatcher exists.
+	repoMaps := repomap.New(db.SQL(), termQ, func(pc gen.ProviderConfig) repomap.Generator {
+		ac := repomap.AgentConfigFor(pc)
+		p := newProvider(ac, false)
+		if p == nil {
+			return nil
+		}
+		return repomap.ProviderGenerator{Provider: p, Config: ac}
+	})
+
 	maxWorkers := cfg.MaxWorkers
 	if maxWorkers <= 0 {
 		maxWorkers = 5
@@ -354,6 +367,8 @@ func main() {
 	dispatcher.SetUploadDir(uploadDir)
 	dispatcher.SetSkillsDir(skillsDir)
 	dispatcher.Subtasks = subtaskCoord
+	dispatcher.RepoMap = repoMaps
+	repoMaps.CostTripped = func() bool { return dispatcher.GlobalCostStatus().Tripped }
 	dispatcher.Publisher = pub
 	dispatcher.MaxDailyCostUSD = cfg.MaxDailyCostUSD
 	dispatcher.MaxMonthlyCostUSD = cfg.MaxMonthlyCostUSD
@@ -414,6 +429,7 @@ func main() {
 		EventPublisher:      pub,
 		EscapeRecorder:      escapeRec,
 		Proposals:           proposals,
+		RepoMap:             repoMaps,
 		DB:                  db,
 		Engine:              engine,
 		Hub:                 hub,
@@ -611,6 +627,7 @@ func main() {
 	go notifier.Run(ctx)
 	go policyRec.Run(ctx)
 	go proposals.Run(ctx)
+	go repoMaps.Run(ctx)
 	if cfg.ChatIdleTimeout > 0 {
 		go terminal.ReapLoop(ctx)
 	}

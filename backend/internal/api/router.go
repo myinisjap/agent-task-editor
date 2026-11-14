@@ -13,6 +13,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/propose"
 	"github.com/myinisjap/agent-task-editor/backend/internal/intakehook"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
+	"github.com/myinisjap/agent-task-editor/backend/internal/repomap"
 	"github.com/myinisjap/agent-task-editor/backend/internal/reviewbrief"
 	"github.com/myinisjap/agent-task-editor/backend/internal/skills"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
@@ -89,6 +90,9 @@ type RouterDeps struct {
 	// Proposals runs model-proposed ask rules (ADR 0040). Optional; the router
 	// builds one with no model (runs fail to start) when nil.
 	Proposals *propose.Service
+	// RepoMap generates and serves per-repo maps (docs/repo-map.md). Optional;
+	// the router builds one with no generator (runs fail to start) when nil.
+	RepoMap *repomap.Service
 }
 
 // NewRouter builds and returns the application router.
@@ -123,6 +127,11 @@ func NewRouter(deps RouterDeps) http.Handler {
 		proposals = propose.New(db.SQL(), q, nil)
 	}
 	autonomyProposalsH := handlers.NewAutonomyProposalsHandler(q, proposals)
+	repoMapSvc := deps.RepoMap
+	if repoMapSvc == nil {
+		repoMapSvc = repomap.New(db.SQL(), q, nil)
+	}
+	repoMapH := handlers.NewRepoMapHandler(q, repoMapSvc)
 	depsH := handlers.NewDependenciesHandler(q, db.SQL(), hub)
 	subtasksH := handlers.NewSubtasksHandler(q, db.SQL(), hub)
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
@@ -464,6 +473,14 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Delete("/repos/{id}", reposH.Delete)
 			r.Get("/repos/{id}/tree", reposH.Tree)
 			r.Post("/repos/{id}/runtime/detect", reposH.Detect)
+
+			// Repo map: generated codebase guide (docs/repo-map.md)
+			r.Get("/repos/{id}/map", repoMapH.Get)
+			r.Put("/repos/{id}/map/config", repoMapH.UpdateConfig)
+			r.Post("/repos/{id}/map/generate", repoMapH.Generate)
+			r.Get("/repos/{id}/map/runs", repoMapH.ListRuns)
+			r.Get("/settings/repo-map", repoMapH.GetSettings)
+			r.Put("/settings/repo-map", repoMapH.UpdateSettings)
 
 			// Skills library (admin config; deliberately absent from scopedtoken routes)
 			r.Get("/skills", skillsH.List)
