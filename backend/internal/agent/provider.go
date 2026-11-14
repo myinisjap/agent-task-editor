@@ -49,6 +49,9 @@ type Result struct {
 	// (via the MCP sidecar's resolve_comment tool). The pool marks them resolved
 	// in the database only when the run completes successfully.
 	ResolvedComments []ResolvedComment
+	// PRReview is the structured review the agent submitted via the MCP
+	// submit_pr_review tool (review-only PR tasks). Nil when not called.
+	PRReview *PRReviewResult
 	// verify is set by the pool (never by providers) when the repo verify
 	// command did not pass; see verify.go.
 	verify *verifyVerdict
@@ -130,6 +133,10 @@ type RunInput struct {
 	// RepoLessons are curated per-repo/global lessons, already selected and
 	// within budget. Rendered only by buildPrompt (not the resume prompt).
 	RepoLessons []RepoLesson
+	// RepoMap is the already-rendered, bounded and fenced REPO MAP section
+	// (generated orientation; background only). Empty when the repo, label or
+	// agent config is not opted in. Rendered only by buildPrompt.
+	RepoMap string
 	// Absolute paths of attachment images on the server filesystem
 	AttachmentAbsPaths []string
 	// ResumeSessionID, if non-empty, asks the provider to resume this prior
@@ -179,6 +186,9 @@ type RunInput struct {
 	// every provider's spawn must be byte-identical to before this field
 	// existed in that case. See providers.applyRuntime.
 	Runtime *RuntimeSpec
+	// PRReview is set for review-only PR tasks (source github_pr/gitea_pr):
+	// the untrusted PR content, diff and prior findings the prompt fences.
+	PRReview *PRReviewInput
 }
 
 // RuntimeSpec carries a repo's resolved toolchain pins into a provider's
@@ -249,6 +259,9 @@ type Task struct {
 	RepoPath string
 	// Attachments is a JSON array of relative paths (e.g. ["<task_id>/abc.png"])
 	Attachments []string
+	// Source is the task source ("github_pr"/"gitea_pr" for review-only PR
+	// tasks, which must never push or open a PR).
+	Source string
 }
 
 // AgentConfig is a minimal copy of storage.AgentConfig.
@@ -352,4 +365,41 @@ type RepoLesson struct {
 	ID   string
 	Kind string
 	Body string
+}
+
+// PRReviewInput is the pull request content for a review-only run. Title,
+// Body and Author are untrusted third-party text; PriorFindings are ATE's own
+// earlier review comments on this PR.
+type PRReviewInput struct {
+	Title         string
+	Body          string
+	Author        string
+	URL           string
+	BaseRef       string
+	HeadSHA       string
+	Diff          string
+	PriorFindings []PriorFinding
+}
+
+// PriorFinding is a finding from an earlier posted review on the same PR.
+type PriorFinding struct {
+	ID   string `json:"id"`
+	Path string `json:"path"`
+	Line int    `json:"line"`
+	Body string `json:"body"`
+}
+
+// PRReviewResult is the review submitted via the submit_pr_review MCP tool.
+type PRReviewResult struct {
+	Summary       string            `json:"summary"`
+	Comments      []PRReviewComment `json:"comments"`
+	ResolvedPrior []string          `json:"resolved_prior"`
+}
+
+// PRReviewComment is one inline finding (head-side line numbers).
+type PRReviewComment struct {
+	Path      string `json:"path"`
+	Line      int    `json:"line"`
+	StartLine int    `json:"start_line,omitempty"`
+	Body      string `json:"body"`
 }

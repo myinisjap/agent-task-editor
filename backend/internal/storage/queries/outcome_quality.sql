@@ -25,6 +25,7 @@ LEFT JOIN workflow_labels wl ON wl.workflow_id = t.workflow_id AND wl.name = t.l
 -- this affordable as the table grows.
 SELECT id, task_id, from_label, to_label, trigger, created_at
 FROM task_label_history
+WHERE actor_id IS NULL OR actor_id != 'auto-merge'
 ORDER BY task_id, created_at ASC, id ASC;
 
 -- name: ListOutcomeQualityRuns :many

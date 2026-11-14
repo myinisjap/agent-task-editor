@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { api, type LessonStatus, type RepoLesson } from '../../api/client'
 import { LESSON_STATUSES, formatList } from '../../lib/lessons'
 import LessonForm, { type LessonFormValues } from './LessonForm'
+import SuggestedLessons from './SuggestedLessons'
 
 type Filter = LessonStatus | 'all'
 
@@ -111,6 +112,8 @@ export default function LessonsPanel({ repoId, title = 'Lessons' }: { repoId: st
         </div>
       </div>
 
+      {repoId && <SuggestedLessons repoId={repoId} onAccepted={load} />}
+
       {error && <p role="alert" className="text-xs text-red-400 break-words">{error}</p>}
 
       {adding && (
@@ -124,7 +127,7 @@ export default function LessonsPanel({ repoId, title = 'Lessons' }: { repoId: st
       )}
 
       <ul className="flex flex-col gap-2">
-        {lessons.map((l) => (
+        {lessons.filter((l) => !(l.status === 'proposed' && l.source === 'distiller')).map((l) => (
           <li key={l.id} className="border border-slate-700 rounded-lg p-3 flex flex-col gap-1 break-words">
             {editingId === l.id ? (
               <LessonForm

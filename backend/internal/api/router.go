@@ -11,8 +11,11 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/escape"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/propose"
+	"github.com/myinisjap/agent-task-editor/backend/internal/intakecheck"
 	"github.com/myinisjap/agent-task-editor/backend/internal/intakehook"
+	"github.com/myinisjap/agent-task-editor/backend/internal/lessons/distill"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
+	"github.com/myinisjap/agent-task-editor/backend/internal/repomap"
 	"github.com/myinisjap/agent-task-editor/backend/internal/reviewbrief"
 	"github.com/myinisjap/agent-task-editor/backend/internal/skills"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
@@ -52,6 +55,8 @@ type RouterDeps struct {
 	GitHubWebhookSecret string
 	// PRRefresher receives matched webhook events (the ghsync Syncer).
 	PRRefresher handlers.PRRefresher
+	// PRReview triggers the review-only PR path from pull_request webhooks (optional).
+	PRReview handlers.PRReviewTrigger
 
 	RepoBaseDir string
 	// ListenAddr is the HTTP server's bind address (e.g. ":8080"); used only
@@ -89,6 +94,14 @@ type RouterDeps struct {
 	// Proposals runs model-proposed ask rules (ADR 0040). Optional; the router
 	// builds one with no model (runs fail to start) when nil.
 	Proposals *propose.Service
+	// Intake backs possible_duplicates and the optional intake assistant.
+	// Optional; the router builds one with no model when nil.
+	Intake *intakecheck.Service
+	// RepoMap generates and serves per-repo maps (docs/repo-map.md). Optional;
+	// the router builds one with no generator (runs fail to start) when nil.
+	RepoMap *repomap.Service
+	// LessonDistill drafts proposed repo lessons. Optional; built with no model when nil.
+	LessonDistill *distill.Service
 }
 
 // NewRouter builds and returns the application router.
@@ -123,6 +136,22 @@ func NewRouter(deps RouterDeps) http.Handler {
 		proposals = propose.New(db.SQL(), q, nil)
 	}
 	autonomyProposalsH := handlers.NewAutonomyProposalsHandler(q, proposals)
+	intakeSvc := deps.Intake
+	if intakeSvc == nil {
+		intakeSvc = intakecheck.New(db.SQL(), q, nil)
+	}
+	tasksH.SetIntake(intakeSvc)
+	intakeH := handlers.NewIntakeCheckHandler(intakeSvc)
+	repoMapSvc := deps.RepoMap
+	if repoMapSvc == nil {
+		repoMapSvc = repomap.New(db.SQL(), q, nil)
+	}
+	repoMapH := handlers.NewRepoMapHandler(q, repoMapSvc)
+	distillSvc := deps.LessonDistill
+	if distillSvc == nil {
+		distillSvc = distill.New(db.SQL(), q, nil)
+	}
+	lessonDistillH := handlers.NewLessonDistillHandler(q, distillSvc)
 	depsH := handlers.NewDependenciesHandler(q, db.SQL(), hub)
 	subtasksH := handlers.NewSubtasksHandler(q, db.SQL(), hub)
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
@@ -135,6 +164,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	schedulesH := handlers.NewSchedulesHandler(q)
 	intakeRulesH := handlers.NewIntakeRulesHandler(q)
 	intakeEndpointsH := handlers.NewIntakeEndpointsHandler(q, intakehook.NewService(db.SQL(), q, hub))
+	recipesH := handlers.NewRecipesHandler(db.SQL(), q)
 	skillsH := handlers.NewSkillsHandler(q, db.SQL(), skills.Store{Dir: deps.SkillsDir})
 	// dispatcherLiveness may also implement GlobalCostReporter (as
 	// *agent.Dispatcher does) to supply the dashboard's global spend-ceiling
@@ -192,6 +222,9 @@ func NewRouter(deps RouterDeps) http.Handler {
 	// against GITHUB_WEBHOOK_SECRET (404 when unset). It sits on a literal path
 	// so it wins over the /api/v1 mount below.
 	webhookH := handlers.NewGitHubWebhookHandler(deps.GitHubWebhookSecret, deps.PRRefresher)
+	if deps.PRReview != nil {
+		webhookH.SetPRReviewTrigger(deps.PRReview)
+	}
 	r.Post("/api/v1/github/webhook", webhookH.Handle)
 
 	// Intake webhook receiver - outside BearerAuth for the same reason: the
@@ -244,6 +277,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			})
 			// Tasks
 			r.Get("/tasks", tasksH.List)
+			r.Get("/tasks/similar", intakeH.Similar)
 			r.Post("/tasks", tasksH.Create)
 			r.Post("/tasks/bulk", tasksH.Bulk)
 
@@ -275,6 +309,10 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Post("/workflows/{id}/labels/{label}/autonomy/proposals/run", autonomyProposalsH.StartRun)
 			r.Get("/workflows/{id}/labels/{label}/autonomy/proposal-runs", autonomyProposalsH.ListRuns)
 			r.Get("/settings/autonomy", autonomySettingsH.Get)
+			r.Get("/settings/intake-assistant", intakeH.GetSettings)
+			r.Put("/settings/intake-assistant", intakeH.UpdateSettings)
+			r.Get("/tasks/{id}/intake-check", intakeH.Get)
+			r.Post("/tasks/{id}/intake-check", intakeH.Start)
 			r.Put("/settings/autonomy", autonomySettingsH.Update)
 			r.Get("/tasks/{id}/pr-url", tasksH.PRURL)
 			r.Post("/tasks/{id}/pr", tasksH.CreatePR)
@@ -309,6 +347,9 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Get("/lessons", lessonsH.ListGlobal)
 			r.Post("/lessons", lessonsH.CreateGlobal)
 			r.Patch("/lessons/{id}", lessonsH.Update)
+			r.Post("/lessons/{id}/dismiss", lessonDistillH.Dismiss)
+			r.Post("/repos/{id}/lessons/distill", lessonDistillH.StartRun)
+			r.Get("/repos/{id}/lessons/distill-runs", lessonDistillH.ListRuns)
 			r.Delete("/lessons/{id}", lessonsH.Delete)
 
 			// Task schedules — fire a template on a cron expression against a repo
@@ -327,6 +368,12 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Get("/intake-rules/{id}", intakeRulesH.Get)
 			r.Put("/intake-rules/{id}", intakeRulesH.Update)
 			r.Delete("/intake-rules/{id}", intakeRulesH.Delete)
+
+			// Automation recipes: one-click presets expanding into templates,
+			// schedules and intake endpoints/rules (see internal/recipes)
+			r.Get("/automation-recipes", recipesH.List)
+			r.Post("/automation-recipes/{id}/install", recipesH.Install)
+			r.Delete("/automation-recipes/{id}", recipesH.Remove)
 
 			// Intake webhook endpoints CRUD (the receiver is mounted outside
 			// BearerAuth above).
@@ -464,6 +511,14 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Delete("/repos/{id}", reposH.Delete)
 			r.Get("/repos/{id}/tree", reposH.Tree)
 			r.Post("/repos/{id}/runtime/detect", reposH.Detect)
+
+			// Repo map: generated codebase guide (docs/repo-map.md)
+			r.Get("/repos/{id}/map", repoMapH.Get)
+			r.Put("/repos/{id}/map/config", repoMapH.UpdateConfig)
+			r.Post("/repos/{id}/map/generate", repoMapH.Generate)
+			r.Get("/repos/{id}/map/runs", repoMapH.ListRuns)
+			r.Get("/settings/repo-map", repoMapH.GetSettings)
+			r.Put("/settings/repo-map", repoMapH.UpdateSettings)
 
 			// Skills library (admin config; deliberately absent from scopedtoken routes)
 			r.Get("/skills", skillsH.List)

@@ -13,7 +13,7 @@ import (
 const createTaskSchedule = `-- name: CreateTaskSchedule :one
 INSERT INTO task_schedules (id, template_id, repo_id, cron_expr, target_label, enabled)
 VALUES (?, ?, ?, ?, ?, ?)
-RETURNING id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at
+RETURNING id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at, recipe_id
 `
 
 type CreateTaskScheduleParams struct {
@@ -45,6 +45,7 @@ func (q *Queries) CreateTaskSchedule(ctx context.Context, arg CreateTaskSchedule
 		&i.LastRunAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RecipeID,
 	)
 	return i, err
 }
@@ -59,7 +60,7 @@ func (q *Queries) DeleteTaskSchedule(ctx context.Context, id string) error {
 }
 
 const getTaskSchedule = `-- name: GetTaskSchedule :one
-SELECT id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at FROM task_schedules WHERE id = ?
+SELECT id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at, recipe_id FROM task_schedules WHERE id = ?
 `
 
 func (q *Queries) GetTaskSchedule(ctx context.Context, id string) (TaskSchedule, error) {
@@ -75,6 +76,7 @@ func (q *Queries) GetTaskSchedule(ctx context.Context, id string) (TaskSchedule,
 		&i.LastRunAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RecipeID,
 	)
 	return i, err
 }
@@ -106,7 +108,7 @@ func (q *Queries) HasOpenTaskForSchedule(ctx context.Context, scheduleIDPrefix *
 }
 
 const listEnabledTaskSchedules = `-- name: ListEnabledTaskSchedules :many
-SELECT id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at FROM task_schedules WHERE enabled != 0 ORDER BY created_at ASC
+SELECT id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at, recipe_id FROM task_schedules WHERE enabled != 0 ORDER BY created_at ASC
 `
 
 func (q *Queries) ListEnabledTaskSchedules(ctx context.Context) ([]TaskSchedule, error) {
@@ -128,6 +130,7 @@ func (q *Queries) ListEnabledTaskSchedules(ctx context.Context) ([]TaskSchedule,
 			&i.LastRunAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RecipeID,
 		); err != nil {
 			return nil, err
 		}
@@ -144,7 +147,7 @@ func (q *Queries) ListEnabledTaskSchedules(ctx context.Context) ([]TaskSchedule,
 
 const listTaskSchedules = `-- name: ListTaskSchedules :many
 
-SELECT id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at FROM task_schedules ORDER BY created_at DESC
+SELECT id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at, recipe_id FROM task_schedules ORDER BY created_at DESC
 `
 
 // Recurring task schedules: fire a task_template on a cron schedule against a
@@ -175,6 +178,7 @@ func (q *Queries) ListTaskSchedules(ctx context.Context) ([]TaskSchedule, error)
 			&i.LastRunAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RecipeID,
 		); err != nil {
 			return nil, err
 		}
@@ -207,7 +211,7 @@ const updateTaskSchedule = `-- name: UpdateTaskSchedule :one
 UPDATE task_schedules
 SET cron_expr = ?, target_label = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at
+RETURNING id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at, recipe_id
 `
 
 type UpdateTaskScheduleParams struct {
@@ -235,6 +239,7 @@ func (q *Queries) UpdateTaskSchedule(ctx context.Context, arg UpdateTaskSchedule
 		&i.LastRunAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.RecipeID,
 	)
 	return i, err
 }

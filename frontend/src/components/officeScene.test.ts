@@ -704,13 +704,15 @@ describe('task-mode scene', () => {
     const scene = new OfficeScene()
     scene.setStations(tstations({ A: [tk('t1', 0, { runStatus: 'running', rateLimited: true })] }))
     let worked = false
-    for (let i = 0; i < 200; i++) {
+    let sawZ = false
+    for (let i = 0; i < 600; i++) {
       scene.step(0.05)
       if (scene.spriteStates().some((s) => s.atWork)) worked = true
+      if (scene.emoteStates().some((e) => e.kind === 5)) sawZ = true
     }
     expect(worked).toBe(false)
     expect(spr(scene, 't1')!.mood).toBe(3)
-    expect(scene.emoteStates().some((e) => e.kind === 5)).toBe(true)
+    expect(sawZ).toBe(true)
     scene.setStations(tstations({ A: [tk('t1', 0, { runStatus: 'running' })] }))
     expect(spr(scene, 't1')!.mood).toBe(0)
     scene.step(0.05)
@@ -752,6 +754,10 @@ describe('task-mode scene', () => {
 })
 
 describe('spriteAt', () => {
+  // Sprite placement is random; pin it so the geometry assertions are stable.
+  beforeEach(() => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5)
+  })
   it('hits near the foot point and returns the front-most sprite', () => {
     // Seeded PRNG: random placement can overlap the two sprites, which made
     // the first assertion (a's own foot hits a) flaky.

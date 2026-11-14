@@ -221,3 +221,32 @@ func TestGitHubSourcedTask_AlwaysUsesDefaultFunctions(t *testing.T) {
 		t.Errorf("expected the unrelated registered forge to NOT be called, got %v", fake.labelCalls)
 	}
 }
+
+func (f *fakeOtherForge) GetPR(ctx context.Context, repoName string, number int) (forge.PullRequest, error) {
+	return forge.PullRequest{}, nil
+}
+
+func (f *fakeOtherForge) ListOpenPRs(ctx context.Context, repoName string) ([]forge.PullRequest, error) {
+	return nil, nil
+}
+
+func (f *fakeOtherForge) PostCommentReview(ctx context.Context, repoName string, number int, r forge.ReviewSubmission) (string, error) {
+	return "", nil
+}
+
+// Review-only PR tasks must never be written back to (no comments on the PR).
+func TestEligible_ReviewSourcesNeverWriteBack(t *testing.T) {
+	repo := gen.Repo{IssueWritebackEnabled: 1}
+	for _, src := range []string{"github_pr", "gitea_pr"} {
+		if _, _, ok := eligible(gen.Task{Source: src, SourceRef: "o/r#1"}, repo); ok {
+			t.Errorf("source %q must not be write-back eligible", src)
+		}
+	}
+}
+
+func (f *fakeOtherForge) PRChecks(ctx context.Context, repoName string, prNumber int) ([]forge.Check, error) {
+	return nil, nil
+}
+func (f *fakeOtherForge) MergePullRequest(ctx context.Context, repoName string, prNumber int, method forge.MergeMethod, expectedHeadSHA string) error {
+	return nil
+}

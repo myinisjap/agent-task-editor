@@ -6,6 +6,7 @@ const NOUN: Record<string, string> = {
   create_pr: 'PR creation',
   terminal: 'Branch push',
   leave_not_ready: 'Issue update',
+  auto_merge: 'Auto-merge',
   review_reply: 'Review reply',
 }
 

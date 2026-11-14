@@ -230,3 +230,50 @@ describe('ReposPage — Skills', () => {
     await waitFor(() => expect(setSkillsMock).toHaveBeenCalledWith('repo-1', ['s1', 's2']))
   })
 })
+
+describe('ReposPage — PR review', () => {
+  async function openEdit(r: Repo) {
+    listMock.mockReset().mockResolvedValue([r])
+    workflowsListMock.mockReset().mockResolvedValue([
+      workflow(),
+      workflow({
+        id: 'wf-pr',
+        name: 'PR review',
+        labels: [
+          { name: 'pr-review', is_terminal: false, agent_ignore: false },
+          { name: 'done', is_terminal: true, agent_ignore: false },
+        ] as unknown as Workflow['labels'],
+      }),
+    ])
+    skillsListMock.mockReset().mockResolvedValue([])
+    repoSkillsMock.mockReset().mockResolvedValue([])
+    updateMock.mockReset().mockResolvedValue(r)
+    render(<ReposPage />)
+    await screen.findByText('acme/widgets')
+    await userEvent.click(screen.getByText('Edit'))
+    return screen.findByTestId('pr-review-section')
+  }
+
+  it('hides the filters until enabled, then saves the policy', async () => {
+    const section = await openEdit(repo({ remote_url: 'https://github.com/acme/widgets' }))
+    expect(within(section).queryByLabelText(/label filter/i)).toBeNull()
+    await userEvent.click(within(section).getByRole('checkbox', { name: /review pull requests/i }))
+    // Defaults: OWNER, MEMBER, COLLABORATOR checked.
+    expect(within(section).getByRole('checkbox', { name: 'OWNER' })).toBeChecked()
+    expect(within(section).getByRole('checkbox', { name: 'CONTRIBUTOR' })).not.toBeChecked()
+    await userEvent.type(within(section).getByLabelText(/label filter/i), 'agent-review')
+    await userEvent.click(within(section).getByRole('checkbox', { name: 'CONTRIBUTOR' }))
+    await userEvent.selectOptions(within(section).getByLabelText(/review workflow/i), 'wf-pr')
+    await userEvent.selectOptions(within(section).getByLabelText(/starting label/i), 'pr-review')
+    await userEvent.click(screen.getByRole('button', { name: /^save/i }))
+    await waitFor(() => expect(updateMock).toHaveBeenCalled())
+    expect(updateMock.mock.calls[0][1]).toMatchObject({
+      pr_review_enabled: true,
+      pr_review_label: 'agent-review',
+      pr_review_skip_drafts: true,
+      pr_review_workflow_id: 'wf-pr',
+      pr_review_target_label: 'pr-review',
+      pr_review_author_assocs: ['OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR'],
+    })
+  })
+})

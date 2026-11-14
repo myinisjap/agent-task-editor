@@ -530,8 +530,9 @@ func splitList(v string) []string {
 }
 
 // reservedActors are actor ids written by the system itself. "pr-feedback-sync"
-// must match workflow.ActorPRFeedbackSync (config has no internal imports).
-var reservedActors = []string{"policy", "pr-feedback-sync"}
+// must match workflow.ActorPRFeedbackSync, ActorPRReviewSync ("pr-review-sync") and
+// ActorAutoMerge ("auto-merge") (config has no internal imports).
+var reservedActors = []string{"policy", "pr-feedback-sync", "pr-review-sync", "auto-merge"}
 
 func isReservedActor(name string) bool {
 	for _, r := range reservedActors {

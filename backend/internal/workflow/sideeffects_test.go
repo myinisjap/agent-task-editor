@@ -425,3 +425,69 @@ func TestSideEffects_ReviewReplyEnqueueIsIdempotentAndRuns(t *testing.T) {
 		t.Fatalf("drained %d, ran %d", n, ran)
 	}
 }
+
+func TestSideEffects_PRReviewPost(t *testing.T) {
+	db := setupTestDB(t)
+	wfID := defaultWorkflowID(t, db)
+	engine := workflow.New(db.SQL(), &noopPublisher{})
+	var posts, terminals, createPRs int
+	failFirst := true
+	engine.SideEffectBackoff = func(int) time.Duration { return 0 }
+	engine.OnTerminal = func(context.Context, gen.Task) error { terminals++; return nil }
+	engine.OnCreatePR = func(context.Context, gen.Task) error { createPRs++; return nil }
+	engine.OnPRReviewPost = func(context.Context, gen.Task) error {
+		posts++
+		if failFirst {
+			failFirst = false
+			return errors.New("forge down")
+		}
+		return nil
+	}
+	ctx := context.Background()
+	q := gen.New(db.SQL())
+
+	// A review-source task reaching a terminal label enqueues the post.
+	rt := createTestTask(t, db, "review", wfID)
+	src, err := q.CreateSourcedTask(ctx, gen.CreateSourcedTaskParams{
+		ID: "pr-task-1", Title: "PR review", Type: "chore", Label: "review", RepoID: rt.RepoID,
+		WorkflowID: wfID, Attachments: "[]", Source: "github_pr", SourceRef: "o/r#1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Transition(ctx, src.ID, "done", workflow.TriggerHuman, "h", ""); err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]bool{}
+	for _, r := range sideEffectRows(t, db, src.ID) {
+		kinds[r.Kind] = true
+	}
+	if !kinds[workflow.SideEffectPRReviewPost] || !kinds[workflow.SideEffectTerminal] {
+		t.Fatalf("want terminal + pr_review_post, got %v", kinds)
+	}
+	engine.DrainSideEffects(ctx)
+	if posts != 1 {
+		t.Fatalf("first attempt should have run once, got %d", posts)
+	}
+	engine.DrainSideEffects(ctx) // retry after the failure
+	if posts != 2 {
+		t.Fatalf("expected a retry, posts=%d", posts)
+	}
+	if rows := sideEffectRows(t, db, src.ID); len(rows) != 0 {
+		t.Fatalf("rows should be cleared, got %+v", rows)
+	}
+	if createPRs != 0 {
+		t.Fatalf("create_pr must never run for review tasks")
+	}
+
+	// A normal task does not get a post.
+	normal := createTestTask(t, db, "review", wfID)
+	if err := engine.Transition(ctx, normal.ID, "done", workflow.TriggerHuman, "h", ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range sideEffectRows(t, db, normal.ID) {
+		if r.Kind == workflow.SideEffectPRReviewPost {
+			t.Fatal("normal task must not get pr_review_post")
+		}
+	}
+}

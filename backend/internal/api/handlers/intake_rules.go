@@ -47,6 +47,7 @@ type intakeRuleResponse struct {
 	ApplyMaxCostUsd   *float64  `json:"apply_max_cost_usd"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
+	RecipeID          string    `json:"recipe_id"`
 }
 
 func toIntakeRuleResponse(r gen.IntakeRule) intakeRuleResponse {
@@ -68,6 +69,7 @@ func toIntakeRuleResponse(r gen.IntakeRule) intakeRuleResponse {
 		ApplyMaxCostUsd:   r.ApplyMaxCostUsd,
 		CreatedAt:         r.CreatedAt,
 		UpdatedAt:         r.UpdatedAt,
+		RecipeID:          r.RecipeID,
 	}
 }
 

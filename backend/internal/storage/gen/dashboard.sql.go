@@ -36,6 +36,7 @@ JOIN tasks t ON t.id = h.task_id
 JOIN workflow_labels wl ON wl.workflow_id = t.workflow_id AND wl.name = h.to_label
 WHERE t.archived = 0
   AND wl.is_terminal != 0
+  AND (h.actor_id IS NULL OR h.actor_id != 'auto-merge')
   AND h.created_at >= CAST(?1 AS TEXT)
   AND h.created_at <  CAST(?2 AS TEXT)
 `

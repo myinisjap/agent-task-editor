@@ -86,7 +86,13 @@ sql:
       - "internal/storage/migrations/084_autonomy_rules.up.sql"
       - "internal/storage/migrations/085_autonomy_rule_proposals.up.sql"
       - "internal/storage/migrations/087_label_pr_feedback_label.up.sql"
-      - "internal/storage/migrations/088_review_thread_reply.up.sql"
+      - "internal/storage/migrations/090_automation_recipes.up.sql"
+      - "internal/storage/migrations/088_lesson_distiller.up.sql"
+      - "internal/storage/migrations/093_intake_assistant.up.sql"
+      - "internal/storage/migrations/089_repo_auto_merge.up.sql"
+      - "internal/storage/migrations/091_pr_review.up.sql"
+      - "internal/storage/migrations/092_repo_map.up.sql"
+      - "internal/storage/migrations/094_review_thread_reply.up.sql"
     gen:
       go:
         package: "gen"
