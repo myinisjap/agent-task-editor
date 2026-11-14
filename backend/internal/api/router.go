@@ -12,6 +12,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/escape"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/propose"
 	"github.com/myinisjap/agent-task-editor/backend/internal/intakehook"
+	"github.com/myinisjap/agent-task-editor/backend/internal/lessons/distill"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/reviewbrief"
 	"github.com/myinisjap/agent-task-editor/backend/internal/skills"
@@ -89,6 +90,8 @@ type RouterDeps struct {
 	// Proposals runs model-proposed ask rules (ADR 0040). Optional; the router
 	// builds one with no model (runs fail to start) when nil.
 	Proposals *propose.Service
+	// LessonDistill drafts proposed repo lessons. Optional; built with no model when nil.
+	LessonDistill *distill.Service
 }
 
 // NewRouter builds and returns the application router.
@@ -123,6 +126,11 @@ func NewRouter(deps RouterDeps) http.Handler {
 		proposals = propose.New(db.SQL(), q, nil)
 	}
 	autonomyProposalsH := handlers.NewAutonomyProposalsHandler(q, proposals)
+	distillSvc := deps.LessonDistill
+	if distillSvc == nil {
+		distillSvc = distill.New(db.SQL(), q, nil)
+	}
+	lessonDistillH := handlers.NewLessonDistillHandler(q, distillSvc)
 	depsH := handlers.NewDependenciesHandler(q, db.SQL(), hub)
 	subtasksH := handlers.NewSubtasksHandler(q, db.SQL(), hub)
 	workflowsH := handlers.NewWorkflowsHandler(q, db.SQL())
@@ -309,6 +317,9 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Get("/lessons", lessonsH.ListGlobal)
 			r.Post("/lessons", lessonsH.CreateGlobal)
 			r.Patch("/lessons/{id}", lessonsH.Update)
+			r.Post("/lessons/{id}/dismiss", lessonDistillH.Dismiss)
+			r.Post("/repos/{id}/lessons/distill", lessonDistillH.StartRun)
+			r.Get("/repos/{id}/lessons/distill-runs", lessonDistillH.ListRuns)
 			r.Delete("/lessons/{id}", lessonsH.Delete)
 
 			// Task schedules — fire a template on a cron expression against a repo

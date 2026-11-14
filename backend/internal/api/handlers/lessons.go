@@ -7,19 +7,19 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/lessons"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
 // MaxLessonBodyLen is the maximum lesson body length in characters.
-const MaxLessonBodyLen = 300
+const MaxLessonBodyLen = lessons.MaxBodyLen
 
 var (
-	lessonKinds    = map[string]bool{"convention": true, "trap": true, "command": true, "decision": true, "preference": true}
+	lessonKinds    = lessons.Kinds
 	lessonStatuses = map[string]bool{"proposed": true, "active": true, "stale": true, "retired": true}
 	lessonSources  = map[string]bool{"human": true, "agent": true, "distiller": true}
 )
@@ -82,26 +82,6 @@ type lessonBody struct {
 	SourceTaskID *string          `json:"source_task_id"`
 }
 
-// normList trims, dedupes and rejects entries containing separators.
-func normList(in []string) ([]string, bool) {
-	seen := map[string]bool{}
-	out := []string{}
-	for _, s := range in {
-		s = strings.TrimSpace(s)
-		if s == "" {
-			continue
-		}
-		if strings.ContainsAny(s, "\n\r,") {
-			return nil, false
-		}
-		if !seen[s] {
-			seen[s] = true
-			out = append(out, s)
-		}
-	}
-	return out, true
-}
-
 // apply validates b and merges it onto p. Returns an error message or "".
 func (b lessonBody) apply(p *gen.UpdateRepoLessonParams) string {
 	if b.Kind != nil {
@@ -123,24 +103,21 @@ func (b lessonBody) apply(p *gen.UpdateRepoLessonParams) string {
 		p.Source = *b.Source
 	}
 	if b.Body != nil {
-		body := strings.TrimSpace(*b.Body)
-		if body == "" {
-			return "body is required"
-		}
-		if utf8.RuneCountInString(body) > MaxLessonBodyLen {
-			return "body must be at most 300 characters"
+		body, msg := lessons.CheckBody(*b.Body)
+		if msg != "" {
+			return msg
 		}
 		p.Body = body
 	}
 	if b.PathGlobs != nil {
-		l, ok := normList(*b.PathGlobs)
+		l, ok := lessons.NormList(*b.PathGlobs)
 		if !ok {
 			return "path_globs entries must not contain commas or newlines"
 		}
 		p.PathGlobs = strings.Join(l, "\n")
 	}
 	if b.Stages != nil {
-		l, ok := normList(*b.Stages)
+		l, ok := lessons.NormList(*b.Stages)
 		if !ok {
 			return "stages entries must not contain commas or newlines"
 		}

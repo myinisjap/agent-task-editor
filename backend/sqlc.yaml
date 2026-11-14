@@ -86,6 +86,7 @@ sql:
       - "internal/storage/migrations/084_autonomy_rules.up.sql"
       - "internal/storage/migrations/085_autonomy_rule_proposals.up.sql"
       - "internal/storage/migrations/087_label_pr_feedback_label.up.sql"
+      - "internal/storage/migrations/088_lesson_distiller.up.sql"
     gen:
       go:
         package: "gen"
