@@ -235,3 +235,10 @@ func TestIngestReviewComments_TagsSourceWithResolvedForgeName(t *testing.T) {
 		t.Errorf("comment source = %q, want %q (the resolved forge's Name())", comments[0].Source, fake.Name())
 	}
 }
+
+func (f *fakeSecondForge) PRChecks(ctx context.Context, repoName string, prNumber int) ([]forge.Check, error) {
+	return nil, nil
+}
+func (f *fakeSecondForge) MergePullRequest(ctx context.Context, repoName string, prNumber int, method forge.MergeMethod, expectedHeadSHA string) error {
+	return nil
+}

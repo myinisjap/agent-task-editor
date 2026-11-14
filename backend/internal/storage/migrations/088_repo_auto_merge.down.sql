@@ -1,3 +1,4 @@
+DROP TABLE task_auto_merge;
 DELETE FROM task_side_effects WHERE kind = 'auto_merge';
 CREATE TABLE task_side_effects_old (
     id            TEXT PRIMARY KEY,

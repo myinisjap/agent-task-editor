@@ -115,7 +115,6 @@ type Check struct {
 	Bucket string
 }
 
-
 // MergeMethod is how a PR/MR is merged.
 type MergeMethod string
 
@@ -140,6 +139,7 @@ var (
 	// on the merge attempt). The caller should re-evaluate on the next refresh.
 	ErrHeadMoved = errors.New("pull request head changed since it was evaluated")
 )
+
 // Issue is an open issue/ticket as returned by a forge's issue-list API.
 type Issue struct {
 	Number int

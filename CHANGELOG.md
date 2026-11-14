@@ -23,6 +23,7 @@ triggers the "Release" workflow the same way.
 - **Go 1.27.4.** The CI toolchain and the backend Docker builder move from Go 1.27.3 to 1.27.4, which fixes GO-2026-6859 (an HTTP/1 server crash from a `MaxBytesReader` header race in `net/http`). govulncheck was failing on it.
 
 ### Added
+- **Auto-merge when green (opt-in).** New per-repo `auto_merge_mode` (`off` | `when_green`) and `auto_merge_method` (`squash` | `merge` | `rebase`). On each PR refresh ghsync merges a task's PR once checks pass, it is not draft/conflicting, has no changes-requested review and the task is idle (no live run, not paused, not `always_ask`). The merge runs through the side-effect outbox pinned to the head SHA; a forge refusal fails at once and surfaces in Needs you. Recorded in label history as actor `auto-merge` (reserved, excluded from human-decision counts). New `forge.Forge` methods `PRChecks` and `MergePullRequest` (GitHub and Gitea). Repo form, board card and Task Detail show the state; board MCP `add_repo`/`update_repo` take the fields.
 - **Route PR feedback to its own label.** New optional per-label `pr_feedback_label` (workflow YAML, `PUT /workflows/{id}`, and the workflow editor's "Send PR feedback (CI, conflicts) to"). When set, ghsync's PR-feedback auto-transition moves the task there instead of the failure path; it needs a human transition to that label. Empty keeps today's behaviour.
 
 ### Changed

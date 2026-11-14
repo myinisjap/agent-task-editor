@@ -428,6 +428,15 @@ type Task struct {
 	AlwaysAsk               int64      `json:"always_ask"`
 }
 
+type TaskAutoMerge struct {
+	TaskID    string    `json:"task_id"`
+	State     string    `json:"state"`
+	Reason    string    `json:"reason"`
+	Message   string    `json:"message"`
+	HeadSha   string    `json:"head_sha"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type TaskBase struct {
 	ID                      string     `json:"id"`
 	Title                   string     `json:"title"`

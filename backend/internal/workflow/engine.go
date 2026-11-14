@@ -147,6 +147,10 @@ type Engine struct {
 	// enqueue a "create_pr" side effect, regardless of who triggered the move.
 	// Used to push the task's branch and open a pull request.
 	OnCreatePR func(ctx context.Context, task gen.Task) error
+	// OnAutoMerge runs the "auto_merge" side effect enqueued by
+	// EnqueueAutoMerge: merge the task's PR through the forge. Wrap errors in
+	// Permanent when a retry cannot help (e.g. branch protection refused).
+	OnAutoMerge func(ctx context.Context, task gen.Task) error
 
 	// SideEffectBackoff returns the delay before the next attempt after the given
 	// number of failed attempts (1-based). Nil uses DefaultSideEffectBackoff.

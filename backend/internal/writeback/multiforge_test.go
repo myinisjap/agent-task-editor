@@ -213,3 +213,10 @@ func TestGitHubSourcedTask_AlwaysUsesDefaultFunctions(t *testing.T) {
 		t.Errorf("expected the unrelated registered forge to NOT be called, got %v", fake.labelCalls)
 	}
 }
+
+func (f *fakeOtherForge) PRChecks(ctx context.Context, repoName string, prNumber int) ([]forge.Check, error) {
+	return nil, nil
+}
+func (f *fakeOtherForge) MergePullRequest(ctx context.Context, repoName string, prNumber int, method forge.MergeMethod, expectedHeadSHA string) error {
+	return nil
+}

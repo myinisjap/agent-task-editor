@@ -24,3 +24,16 @@ ALTER TABLE task_side_effects_new RENAME TO task_side_effects;
 CREATE UNIQUE INDEX idx_task_side_effects_pending ON task_side_effects(kind, task_id) WHERE status = 'pending';
 CREATE INDEX idx_task_side_effects_due ON task_side_effects(status, next_at);
 CREATE INDEX idx_task_side_effects_task ON task_side_effects(task_id);
+
+-- Latest auto-merge evaluation per task, written by ghsync on each PR refresh
+-- so the UI can show "Auto-merge when green" and why a PR is not mergeable yet.
+-- state: 'waiting' (blocked; reason/message say why) | 'merging' (merge queued
+-- in the outbox). No row = auto-merge does not apply to the task.
+CREATE TABLE task_auto_merge (
+    task_id    TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    state      TEXT NOT NULL,
+    reason     TEXT NOT NULL DEFAULT '',
+    message    TEXT NOT NULL DEFAULT '',
+    head_sha   TEXT NOT NULL DEFAULT '',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

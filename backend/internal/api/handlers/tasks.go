@@ -172,11 +172,13 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		blockReasons := h.blockReasonMap(r.Context(), children)
 		runStatuses := h.activeRunStatusMap(r.Context(), ids)
 		effects := h.sideEffectMap(r.Context(), ids)
+		autoMerges := h.autoMergeMap(r.Context(), ids)
 		pendings := h.sourcePendingMap(r.Context(), ids)
 		fanouts := h.fanoutMap(r.Context(), ids)
 		resp := toTaskResponses(children)
 		for i := range resp {
 			resp[i] = applySideEffects(resp[i], effects)
+			resp[i] = applyAutoMerge(resp[i], autoMerges)
 			resp[i] = applySourcePending(resp[i], pendings)
 			resp[i] = applyFanout(resp[i], fanouts)
 			resp[i] = applyActiveRunStatus(applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons), runStatuses)
@@ -212,11 +214,13 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	blockReasons := h.blockReasonMap(r.Context(), tasks)
 	runStatuses := h.activeRunStatusMap(r.Context(), ids)
 	effects := h.sideEffectMap(r.Context(), ids)
+	autoMerges := h.autoMergeMap(r.Context(), ids)
 	fanouts := h.fanoutMap(r.Context(), ids)
 	pendings := h.sourcePendingMap(r.Context(), ids)
 	resp := toTaskResponses(tasks)
 	for i := range resp {
 		resp[i] = applySideEffects(resp[i], effects)
+		resp[i] = applyAutoMerge(resp[i], autoMerges)
 		resp[i] = applySourcePending(resp[i], pendings)
 		resp[i] = applyFanout(resp[i], fanouts)
 		resp[i] = applyActiveRunStatus(applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons), runStatuses)
@@ -447,6 +451,7 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	resp = applyBlockReason(resp, h.blockReasonMap(r.Context(), []gen.Task{task}))
 	resp = applyActiveRunStatus(resp, h.activeRunStatusMap(r.Context(), ids))
 	resp = applySideEffects(resp, h.sideEffectMap(r.Context(), ids))
+	resp = applyAutoMerge(resp, h.autoMergeMap(r.Context(), ids))
 	resp = applySourcePending(resp, h.sourcePendingMap(r.Context(), ids))
 	if cost, cerr := h.q.SumTaskCost(r.Context(), task.ID); cerr == nil {
 		resp.CumulativeCostUsd = cost

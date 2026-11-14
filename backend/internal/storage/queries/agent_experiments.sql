@@ -68,6 +68,7 @@ ORDER BY ar.task_id, ar.created_at ASC, ar.id ASC;
 SELECT task_id, to_label, trigger
 FROM task_label_history
 WHERE task_id IN (SELECT x.task_id FROM agent_experiment_assignments x WHERE x.experiment_id = ?)
+  AND (actor_id IS NULL OR actor_id != 'auto-merge')
 ORDER BY task_id, created_at ASC, id ASC;
 
 -- name: BackfillExperimentCandidateVersion :exec
