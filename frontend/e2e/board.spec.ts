@@ -11,17 +11,12 @@ test.describe('board and task-detail smoke flow', () => {
   test('load board, create a task, open its detail page, and mount the log pane', async ({ page }) => {
     const taskTitle = `E2E smoke task ${Date.now()}`
 
-    // 1. Load board. Register the wait for the workflow list response (the
-    // source of the columns) before navigating, so it can't be missed.
-    const workflowsLoaded = page.waitForResponse(
-      (r) => new URL(r.url()).pathname.endsWith('/api/v1/workflows') && r.ok(),
-    )
+    // 1. Load board.
+    // Columns appear only after the workflow list loads, so wait on the
+    // first column itself with a budget sized for a cold compose stack.
     await page.goto('board')
-    await workflowsLoaded
     await expect(page.getByRole('button', { name: 'About the board' })).toBeVisible()
-    // Columns render only after BoardPage's "Loading…" indicator clears.
-    await expect(page.getByText('Loading…')).toBeHidden()
-    await expect(page.getByText('Not ready', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText('Not ready', { exact: true }).first()).toBeVisible({ timeout: 20_000 })
 
     // 2. Create a task
     const addTaskButton = page.getByRole('button', { name: '+ Add task' })
