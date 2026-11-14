@@ -19,6 +19,9 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+- **Task intake assistant.** New tasks get a deterministic `possible_duplicates` list (token-overlap similarity, computed on read, never blocks creation; also `GET /tasks/similar` for the New Task modal and the board MCP `create_task` result). An optional, off-by-default model check (`POST /tasks/{id}/intake-check`, settings at `/settings/intake-assistant`, auto-run for tasks on a parked label) returns a clarity verdict with up to 3 questions, a suggested type/workflow and which duplicates are real, shown in an Intake card on Task Detail and a "needs detail" board chip. Advisory only; see `docs/task-sources.md`.
+
 ### Security
 - **Go 1.27.4.** The CI toolchain and the backend Docker builder move from Go 1.27.3 to 1.27.4, which fixes GO-2026-6859 (an HTTP/1 server crash from a `MaxBytesReader` header race in `net/http`). govulncheck was failing on it.
 

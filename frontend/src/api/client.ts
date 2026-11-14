@@ -81,6 +81,9 @@ export type AutonomyHistory = Schemas['AutonomyHistory']
 export type AutonomyChange = Schemas['AutonomyChange']
 export type AutonomyEscape = Schemas['AutonomyEscape']
 export type AutonomySettings = Schemas['AutonomySettings']
+export type IntakeCheck = Schemas['IntakeCheck']
+export type IntakeAssistantSettings = Schemas['IntakeAssistantSettings']
+export type PossibleDuplicate = Schemas['PossibleDuplicate']
 export type RuleProposal = Schemas['RuleProposal']
 export type RuleProposalRun = Schemas['RuleProposalRun']
 export type LessonDistillRun = Schemas['LessonDistillRun']
@@ -252,6 +255,10 @@ async function listAllPages<T>(path: string): Promise<T[]> {
 
 export const api = {
   tasks: {
+    similar: (repoId: string, q: string, signal?: AbortSignal) =>
+      request<PossibleDuplicate[]>(`/tasks/similar?repo_id=${encodeURIComponent(repoId)}&q=${encodeURIComponent(q)}`, { signal }),
+    intakeCheck: (id: string) => request<IntakeCheck>(`/tasks/${id}/intake-check`),
+    runIntakeCheck: (id: string) => request<IntakeCheck>(`/tasks/${id}/intake-check`, { method: 'POST' }),
     // list returns a single page of tasks (newest first). Pass `after` (a
     // cursor from a previous page's nextCursor) and `limit` to page through.
     // The nextCursor is read from the X-Next-Cursor response header; it is null
@@ -589,6 +596,11 @@ export const api = {
       request<{ secret: string }>(`/intake-endpoints/${id}/rotate-secret`, { method: 'POST', body: '{}' }),
     test: (id: string, body: IntakeEndpointTestRequest) =>
       request<IntakeEndpointTestResponse>(`/intake-endpoints/${id}/test`, { method: 'POST', body: JSON.stringify(body) }),
+  },
+  intakeAssistant: {
+    get: () => request<IntakeAssistantSettings>('/settings/intake-assistant'),
+    update: (body: IntakeAssistantSettings) =>
+      request<IntakeAssistantSettings>('/settings/intake-assistant', { method: 'PUT', body: JSON.stringify(body) }),
   },
   needsMe: {
     list: () => request<Schemas['NeedsMeResponse']>('/needs-me').then((r) => r.items),

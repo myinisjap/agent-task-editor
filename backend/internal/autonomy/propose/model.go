@@ -38,6 +38,12 @@ func AgentConfigFor(pc gen.ProviderConfig) agent.AgentConfig {
 type ProviderModel struct {
 	Provider agent.Provider
 	Config   agent.AgentConfig
+	// SystemPrompt, AnswerEnd and Purpose let another advisory job (the task
+	// intake assistant) reuse the same sandboxed run. Empty means rule
+	// proposals.
+	SystemPrompt string
+	AnswerEnd    string
+	Purpose      string
 	// System overrides SystemPrompt (the lesson distiller reuses this runner).
 	System string
 }
@@ -48,7 +54,18 @@ func (m ProviderModel) Complete(ctx context.Context, prompt string) (Completion,
 	if m.Provider == nil {
 		return Completion{}, errors.New("provider unavailable")
 	}
-	dir, err := os.MkdirTemp("", "ate-autonomy-propose-")
+	purpose := m.Purpose
+	if purpose == "" {
+		purpose = "autonomy-propose"
+	}
+	sysPrompt, answerEnd := m.SystemPrompt, m.AnswerEnd
+	if sysPrompt == "" {
+		sysPrompt = SystemPrompt
+	}
+	if answerEnd == "" {
+		answerEnd = outputEnd
+	}
+	dir, err := os.MkdirTemp("", "ate-"+purpose+"-")
 	if err != nil {
 		return Completion{}, err
 	}
@@ -58,7 +75,7 @@ func (m ProviderModel) Complete(ctx context.Context, prompt string) (Completion,
 		return Completion{}, err
 	}
 	cfg := m.Config
-	cfg.SystemPrompt = SystemPrompt
+	cfg.SystemPrompt = sysPrompt
 	if m.System != "" {
 		cfg.SystemPrompt = m.System
 	}
@@ -85,8 +102,8 @@ func (m ProviderModel) Complete(ctx context.Context, prompt string) (Completion,
 		close(drained)
 	}()
 	res, err := m.Provider.Run(ctx, agent.RunInput{
-		RunID:       "autonomy-propose-" + id,
-		Task:        agent.Task{ID: "autonomy-propose-" + id, Title: "Propose ask rules", Description: prompt},
+		RunID:       purpose + "-" + id,
+		Task:        agent.Task{ID: purpose + "-" + id, Title: "Advisory check", Description: prompt},
 		AgentConfig: cfg,
 		RepoPath:    dir,
 	}, logCh)
@@ -96,7 +113,7 @@ func (m ProviderModel) Complete(ctx context.Context, prompt string) (Completion,
 	if err != nil {
 		return comp, err
 	}
-	if res.Status == "failed" && !strings.Contains(comp.Text, outputEnd) {
+	if res.Status == "failed" && !strings.Contains(comp.Text, answerEnd) {
 		return comp, errors.New("provider run failed")
 	}
 	return comp, nil

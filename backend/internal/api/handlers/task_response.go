@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/intakecheck"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -81,6 +82,13 @@ type taskResponse struct {
 	// because a human had already approved the task. Nil when none is pending.
 	// Applied or discarded via /tasks/{id}/source-update.
 	SourcePendingUpdate *sourcePendingResponse `json:"source_pending_update"`
+	// PossibleDuplicates are open, non-archived tasks in the same repo with a
+	// similar title/description (deterministic, computed on read, never stored).
+	// Populated on the single-task GET and create; an empty array elsewhere.
+	PossibleDuplicates []intakecheck.Match `json:"possible_duplicates"`
+	// IntakeVerdict is the latest finished assistant verdict (ready |
+	// needs_detail), "" when there is none. Advisory; not part of needs-you.
+	IntakeVerdict string `json:"intake_verdict"`
 	// FileScope is the subtask's declared file globs (always an array).
 	FileScope []string `json:"file_scope"`
 	// IntegrationStatus is a parent's integration state: "", "pending" or "done".
@@ -202,7 +210,7 @@ func toTaskResponse(t gen.Task) taskResponse {
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		raw = json.RawMessage("[]")
 	}
-	return taskResponse{Task: t, Attachments: raw, Paused: t.Paused != 0, Archived: t.Archived != 0, AlwaysAsk: t.AlwaysAsk != 0, SideEffects: []sideEffectResponse{}, FileScope: []string{}}
+	return taskResponse{Task: t, Attachments: raw, Paused: t.Paused != 0, Archived: t.Archived != 0, AlwaysAsk: t.AlwaysAsk != 0, SideEffects: []sideEffectResponse{}, FileScope: []string{}, PossibleDuplicates: []intakecheck.Match{}}
 }
 
 // toTaskResponses converts a slice of gen.Task values.

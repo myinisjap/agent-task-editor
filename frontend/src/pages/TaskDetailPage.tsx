@@ -29,6 +29,7 @@ import ShouldHaveAskedDialog from '../components/shared/ShouldHaveAskedDialog'
 import { lastGateExitByPolicy } from '../lib/shouldHaveAsked'
 import LabelHistoryList from '../components/task-detail/LabelHistoryList'
 import SourceUpdateNotice from '../components/task-detail/SourceUpdateNotice'
+import IntakeCard from '../components/task-detail/IntakeCard'
 import SourceCommentsList from '../components/task-detail/SourceCommentsList'
 import RunLogPane from '../components/task-detail/RunLogPane'
 import DiffReviewPane from '../components/task-detail/DiffReviewPane'
@@ -685,6 +686,8 @@ export default function TaskDetailPage() {
             )}
 
             <SourceUpdateNotice task={task} onChanged={setTask} />
+
+            <IntakeCard task={task} workflow={workflow} onChanged={setTask} />
 
             <HumanDecisionsList decisions={humanDecisions} onRemember={canRemember ? setRememberText : undefined} />
 

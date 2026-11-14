@@ -844,6 +844,14 @@ the gate label: webhook events have no author association, so the auto-start
 check always fails closed. Rules may still set priority, cost budget,
 template (type) and workflow.
 
+## Task intake assistant
+
+Whatever the source (UI, API, board MCP, issue import, intake webhook or schedule), new tasks get two layers of triage before an agent spends a planning run on them. Neither blocks creation, moves a task, edits it or archives it.
+
+**1. Possible duplicates (deterministic, no model call).** `possible_duplicates` on `GET /tasks/{id}` and on the create response lists open, non-archived tasks in the same repo with a similar title/description. The measure is the Jaccard index of normalised token sets (lower-cased, filler words dropped, light plural/`-ing`/`-ed` stemming; a title alone or title plus the first 400 characters of the description): a match needs a score of at least 0.5 and at least 2 shared tokens. It is computed on read and never stored. The New Task modal shows "Possibly the same as: ..." links via the debounced `GET /tasks/similar?repo_id=&q=`; the board MCP `create_task` result lists them too.
+
+**2. Assistant check (optional, off by default).** Choose a provider config under Settings > Intake rules > Task intake assistant (`PUT /settings/intake-assistant`) and enable it. Run it from the Intake card on a parked task ("Check task") or `POST /tasks/{id}/intake-check`; with "auto check" on, tasks that sit on a parked (`agent_ignore`) label such as `not_ready` are checked automatically within about a minute of creation. The model reads the task (fenced as untrusted data, ADR 0014) plus the repo's active lessons in a scratch directory with shell commands denied, like rule proposals, and returns a verdict (`ready` or `needs_detail`), up to 3 questions, a suggested type, a suggested workflow (only when several exist) and which duplicate candidates really are duplicates. The latest result and its cost are stored per task (`GET /tasks/{id}/intake-check`). The Intake card offers an inline answer box per question (appends to the description), one-click Apply for the suggested type and "Archive as duplicate"; the board card shows a "needs detail" chip, which is not part of the needs-you count.
+
 ### Recipe webhooks
 
 The `ci-red-main` and `error-tracker-alert` [automation recipes](task-templates.md#automation-recipes)

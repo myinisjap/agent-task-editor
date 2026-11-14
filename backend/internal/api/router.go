@@ -11,6 +11,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/escape"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/propose"
+	"github.com/myinisjap/agent-task-editor/backend/internal/intakecheck"
 	"github.com/myinisjap/agent-task-editor/backend/internal/intakehook"
 	"github.com/myinisjap/agent-task-editor/backend/internal/lessons/distill"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
@@ -93,6 +94,9 @@ type RouterDeps struct {
 	// Proposals runs model-proposed ask rules (ADR 0040). Optional; the router
 	// builds one with no model (runs fail to start) when nil.
 	Proposals *propose.Service
+	// Intake backs possible_duplicates and the optional intake assistant.
+	// Optional; the router builds one with no model when nil.
+	Intake *intakecheck.Service
 	// RepoMap generates and serves per-repo maps (docs/repo-map.md). Optional;
 	// the router builds one with no generator (runs fail to start) when nil.
 	RepoMap *repomap.Service
@@ -132,6 +136,12 @@ func NewRouter(deps RouterDeps) http.Handler {
 		proposals = propose.New(db.SQL(), q, nil)
 	}
 	autonomyProposalsH := handlers.NewAutonomyProposalsHandler(q, proposals)
+	intakeSvc := deps.Intake
+	if intakeSvc == nil {
+		intakeSvc = intakecheck.New(db.SQL(), q, nil)
+	}
+	tasksH.SetIntake(intakeSvc)
+	intakeH := handlers.NewIntakeCheckHandler(intakeSvc)
 	repoMapSvc := deps.RepoMap
 	if repoMapSvc == nil {
 		repoMapSvc = repomap.New(db.SQL(), q, nil)
@@ -267,6 +277,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			})
 			// Tasks
 			r.Get("/tasks", tasksH.List)
+			r.Get("/tasks/similar", intakeH.Similar)
 			r.Post("/tasks", tasksH.Create)
 			r.Post("/tasks/bulk", tasksH.Bulk)
 
@@ -298,6 +309,10 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Post("/workflows/{id}/labels/{label}/autonomy/proposals/run", autonomyProposalsH.StartRun)
 			r.Get("/workflows/{id}/labels/{label}/autonomy/proposal-runs", autonomyProposalsH.ListRuns)
 			r.Get("/settings/autonomy", autonomySettingsH.Get)
+			r.Get("/settings/intake-assistant", intakeH.GetSettings)
+			r.Put("/settings/intake-assistant", intakeH.UpdateSettings)
+			r.Get("/tasks/{id}/intake-check", intakeH.Get)
+			r.Post("/tasks/{id}/intake-check", intakeH.Start)
 			r.Put("/settings/autonomy", autonomySettingsH.Update)
 			r.Get("/tasks/{id}/pr-url", tasksH.PRURL)
 			r.Post("/tasks/{id}/pr", tasksH.CreatePR)
