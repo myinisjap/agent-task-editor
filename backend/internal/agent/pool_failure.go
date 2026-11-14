@@ -238,7 +238,7 @@ func (p *Pool) handleCancelled(job Job, result Result, startedAt time.Time, reas
 
 	note := reason.note()
 	status := "cancelled"
-	if reason == CancelReasonShutdown {
+	if reason == CancelReasonShutdown || reason == CancelReasonSteer {
 		status = "interrupted"
 	}
 	costUnknown := int64(0)
@@ -292,7 +292,13 @@ func (p *Pool) handleCancelled(job Job, result Result, startedAt time.Time, reas
 			log.Warn("pool: pause task after cancel", "err", err)
 		}
 	}
-	p.releaseLock(bg, job.Input.Task.ID, job.RunID)
+	var steerReq *SteerRequest
+	if reason == CancelReasonSteer {
+		steerReq = p.steerRequest(job.RunID)
+	}
+	if steerReq == nil {
+		p.releaseLock(bg, job.Input.Task.ID, job.RunID)
+	}
 
 	if p.pub != nil {
 		p.pub.Publish(wsevent.TypeTaskAgentDone, wsevent.TaskAgentDone{
@@ -312,6 +318,15 @@ func (p *Pool) handleCancelled(job Job, result Result, startedAt time.Time, reas
 	// clobbered.
 	if p.RateLimits != nil && reason != CancelReasonShutdown {
 		p.RateLimits.UnblockIfNotBlockedSince(job.Input.AgentConfig.usagePool(), startedAt)
+	}
+
+	// Steering: hand the still-held dispatch lock to the follow-up run. Only on
+	// failure to start it is the lock released (owner-scoped).
+	if steerReq != nil {
+		if err := p.OnSteer(bg, job, *steerReq); err != nil {
+			log.Warn("pool: start steer follow-up run", "err", err)
+			p.releaseLock(bg, job.Input.Task.ID, job.RunID)
+		}
 	}
 
 	log.Info("pool: agent run cancelled", "reason", reason, "status", status)

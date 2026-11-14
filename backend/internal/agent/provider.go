@@ -153,6 +153,10 @@ type RunInput struct {
 	// question, injected into the prompt (and, when combined with
 	// ResumeSessionID, delivered as the next message of the resumed session).
 	HumanReply *string
+	// SteeringNote is a human note sent to a live run that was interrupted to
+	// deliver it; rendered as STEERING NOTE FROM HUMAN in both the cold and
+	// resume prompts.
+	SteeringNote *string
 	// SubtaskConflicts, when set, is a rendered description of subtask branches
 	// that failed to merge back into this (parent) task's branch. It is injected
 	// into the prompt so the parent's work agent resolves the conflicts.

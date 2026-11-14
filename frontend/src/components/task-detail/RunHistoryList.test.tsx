@@ -50,3 +50,27 @@ describe('RunHistoryList status words', () => {
     expect(screen.getByText('Waiting on you')).toHaveAttribute('title', 'waiting_human')
   })
 })
+
+describe('RunHistoryList steer box', () => {
+  const base = {
+    runs: [
+      { id: 'run-live', agent_config_id: 'a1', status: 'running' },
+      { id: 'run-old', agent_config_id: 'a1', status: 'interrupted' },
+    ] as unknown as AgentRun[],
+    agentConfigs: [agent],
+    providerConfigs: pcs,
+    onSelectRun: vi.fn(),
+    canRerun: false,
+    onStop: vi.fn(),
+    onRerun: vi.fn(),
+    actionPending: false,
+  }
+  it('is offered while the task has a live run even when an older run is selected', () => {
+    render(<RunHistoryList {...base} selectedRun="run-old" isRunning={false} onSteer={vi.fn()} />)
+    expect(screen.getByLabelText('Steering note')).toBeInTheDocument()
+  })
+  it('is hidden when there is no live run to steer', () => {
+    render(<RunHistoryList {...base} selectedRun="run-live" isRunning={true} />)
+    expect(screen.queryByLabelText('Steering note')).not.toBeInTheDocument()
+  })
+})

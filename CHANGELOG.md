@@ -20,6 +20,7 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Steer a running agent.** `POST /tasks/{id}/runs/{run_id}/steer` (a Steer box on Task Detail, a command-palette entry, and the board MCP `steer_run` tool in the `full` profile) interrupts a `running` run and starts a follow-up run that resumes the session with your note (`STEERING NOTE FROM HUMAN`). The interrupted run ends `interrupted`, not failed: no retry budget, escalation or pause, and the dispatch lock is handed over without a gap. The note and actor are stored with the task's human decisions.
 - **Task intake assistant.** New tasks get a deterministic `possible_duplicates` list (token-overlap similarity, computed on read, never blocks creation; also `GET /tasks/similar` for the New Task modal and the board MCP `create_task` result). An optional, off-by-default model check (`POST /tasks/{id}/intake-check`, settings at `/settings/intake-assistant`, auto-run for tasks on a parked label) returns a clarity verdict with up to 3 questions, a suggested type/workflow and which duplicates are real, shown in an Intake card on Task Detail and a "needs detail" board chip. Advisory only; see `docs/task-sources.md`.
 
 ### Security

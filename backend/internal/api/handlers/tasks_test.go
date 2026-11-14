@@ -236,6 +236,7 @@ func setupCancelRouter(t *testing.T, canceller handlers.RunCanceller) (http.Hand
 
 	h := handlers.NewTasksHandler(q, engine, t.TempDir(), canceller, nil, nil)
 	r := chi.NewRouter()
+	r.Post("/tasks/{id}/runs/{run_id}/steer", h.SteerRun)
 	r.Post("/tasks/{id}/runs/{run_id}/cancel", h.CancelRun)
 	return r, q, wfID, repoID
 }

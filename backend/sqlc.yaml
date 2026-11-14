@@ -93,6 +93,7 @@ sql:
       - "internal/storage/migrations/091_pr_review.up.sql"
       - "internal/storage/migrations/092_repo_map.up.sql"
       - "internal/storage/migrations/094_review_thread_reply.up.sql"
+      - "internal/storage/migrations/095_human_decision_steer.up.sql"
     gen:
       go:
         package: "gen"

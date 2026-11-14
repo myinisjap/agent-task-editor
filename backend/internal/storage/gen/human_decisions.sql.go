@@ -92,6 +92,35 @@ func (q *Queries) RecordHumanReply(ctx context.Context, arg RecordHumanReplyPara
 	return err
 }
 
+const recordHumanSteer = `-- name: RecordHumanSteer :exec
+INSERT INTO task_human_decisions (run_id, task_id, label, escalation_reason, question, reply, reply_run_id, replied_at, kind, actor)
+VALUES (?1, ?2, ?3, 'steer', ?4, ?5, ?6, CURRENT_TIMESTAMP, 'steer', ?7)
+ON CONFLICT(run_id) DO UPDATE SET reply = excluded.reply, reply_run_id = excluded.reply_run_id, replied_at = CURRENT_TIMESTAMP, kind = 'steer', actor = excluded.actor
+`
+
+type RecordHumanSteerParams struct {
+	RunID      string  `json:"run_id"`
+	TaskID     string  `json:"task_id"`
+	Label      string  `json:"label"`
+	Question   string  `json:"question"`
+	Reply      *string `json:"reply"`
+	ReplyRunID *string `json:"reply_run_id"`
+	Actor      string  `json:"actor"`
+}
+
+func (q *Queries) RecordHumanSteer(ctx context.Context, arg RecordHumanSteerParams) error {
+	_, err := q.db.ExecContext(ctx, recordHumanSteer,
+		arg.RunID,
+		arg.TaskID,
+		arg.Label,
+		arg.Question,
+		arg.Reply,
+		arg.ReplyRunID,
+		arg.Actor,
+	)
+	return err
+}
+
 const upsertHumanQuestion = `-- name: UpsertHumanQuestion :exec
 INSERT INTO task_human_decisions (run_id, task_id, label, escalation_reason, question)
 VALUES (?1, ?2, (SELECT label FROM tasks WHERE id = ?2), ?3, ?4)

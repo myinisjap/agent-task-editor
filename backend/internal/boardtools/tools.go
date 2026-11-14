@@ -89,7 +89,7 @@ var ReadOnlyRemoteTools = []string{
 // RemoteTools is the "full" remote MCP profile: ticket creation plus
 // reading tasks/runs and unblocking agents that wait on a human.
 var RemoteTools = append(slices.Clone(ReadOnlyRemoteTools),
-	"create_task", "reply_to_run", "approve_task", "reject_task", "move_task", "archive_task",
+	"create_task", "reply_to_run", "steer_run", "approve_task", "reject_task", "move_task", "archive_task",
 	"cancel_run", "rerun_task", "create_pr",
 )
 
@@ -249,6 +249,16 @@ func init() {
 			"run_id":  str("The waiting run's ID; defaults to the task's active run"),
 		}, "task_id", "message"),
 		call: (*Client).replyToRun,
+	})
+	register(Tool{
+		Name:        "steer_run",
+		Description: "Send a steering note to an agent run that is currently running (status \"running\"): the run is interrupted gracefully and a follow-up run on the same task resumes the session with your note. Not a failure; use reply_to_run for a run that is waiting_human.",
+		InputSchema: obj(map[string]any{
+			"task_id": str("Task ID"),
+			"message": str("The steering note for the agent"),
+			"run_id":  str("The running run's ID; defaults to the task's active run"),
+		}, "task_id", "message"),
+		call: (*Client).steerRun,
 	})
 	register(Tool{
 		Name:        "approve_task",
@@ -541,6 +551,39 @@ func (c *Client) replyToRun(args json.RawMessage) (string, bool) {
 		return fmt.Sprintf("reply_to_run failed (%d): %s", status, err.Error()), true
 	}
 	return fmt.Sprintf("Reply sent; the agent continues in run %s.", res.RunID), false
+}
+
+func (c *Client) steerRun(args json.RawMessage) (string, bool) {
+	var a struct {
+		TaskID  string `json:"task_id"`
+		RunID   string `json:"run_id"`
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal(args, &a)
+	if a.TaskID == "" || strings.TrimSpace(a.Message) == "" {
+		return "task_id and message are required", true
+	}
+	if a.RunID == "" {
+		var task struct {
+			ActiveAgentRunID *string `json:"active_agent_run_id"`
+		}
+		if _, err := c.do(http.MethodGet, "/api/v1/tasks/"+url.PathEscape(a.TaskID), nil, &task); err != nil {
+			return "failed to load task: " + err.Error(), true
+		}
+		if task.ActiveAgentRunID == nil {
+			return "task has no active run to steer", true
+		}
+		a.RunID = *task.ActiveAgentRunID
+	}
+	var res struct {
+		Status string `json:"status"`
+		RunID  string `json:"run_id"`
+	}
+	path := fmt.Sprintf("/api/v1/tasks/%s/runs/%s/steer", url.PathEscape(a.TaskID), url.PathEscape(a.RunID))
+	if status, err := c.do(http.MethodPost, path, map[string]any{"message": a.Message}, &res); err != nil {
+		return fmt.Sprintf("steer_run failed (%d): %s", status, err.Error()), true
+	}
+	return fmt.Sprintf("Steering note sent; run %s is being interrupted and a follow-up run will continue with it.", a.RunID), false
 }
 
 // transition drives approve/reject, which share a body shape.

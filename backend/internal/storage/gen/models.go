@@ -596,6 +596,8 @@ type TaskHumanDecision struct {
 	Reply            *string    `json:"reply"`
 	ReplyRunID       *string    `json:"reply_run_id"`
 	RepliedAt        *time.Time `json:"replied_at"`
+	Kind             string     `json:"kind"`
+	Actor            string     `json:"actor"`
 }
 
 type TaskIntakeCheck struct {
