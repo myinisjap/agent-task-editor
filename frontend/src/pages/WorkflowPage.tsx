@@ -5,6 +5,7 @@ import { api, authedRawFetch, type Workflow } from '../api/client'
 import { useWorkflowStore } from '../stores/workflow'
 import WorkflowFlowchart from '../components/shared/WorkflowFlowchart'
 import { parseWorkflowYaml } from '../lib/parseWorkflowYaml'
+import { defaultWorkflow } from '../lib/defaultWorkflow'
 import { validateWorkflow, type WorkflowValidationError } from '../lib/validateWorkflow'
 import HelpModal from '../components/shared/HelpModal'
 import { WorkflowHelp } from '../components/shared/pageHelp'
@@ -175,7 +176,7 @@ export default function WorkflowPage() {
     fetchWorkflows().then(() => {
       // fetchWorkflows sets selectedId in the store; use that
       const { workflows: wfs, selectedId } = useWorkflowStore.getState()
-      const id = selectedId ?? wfs[0]?.id ?? null
+      const id = selectedId ?? defaultWorkflow(wfs)?.id ?? null
       if (id) loadWorkflow(id)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -186,7 +187,7 @@ export default function WorkflowPage() {
     if (selectedWorkflowId && workflows.length > 0) {
       const still = workflows.find((w) => w.id === selectedWorkflowId)
       if (!still) {
-        const fallback = workflows[0]
+        const fallback = defaultWorkflow(workflows)
         if (fallback) loadWorkflow(fallback.id)
       }
     }
@@ -267,7 +268,7 @@ export default function WorkflowPage() {
       await fetchWorkflows()
       // Navigate away from the deleted workflow
       const remaining = useWorkflowStore.getState().workflows
-      const next = remaining[0]
+      const next = defaultWorkflow(remaining)
       if (next) {
         loadWorkflow(next.id)
       } else {

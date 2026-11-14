@@ -2,6 +2,7 @@ import { X } from 'lucide-react'
 import Icon from '../ui/Icon'
 import { useEffect, useRef, useState } from 'react'
 import { errMessage } from '../../lib/errMessage'
+import { defaultWorkflow } from '../../lib/defaultWorkflow'
 import { api } from '../../api/client'
 import type { PossibleDuplicate, Repo, Task, TaskTemplate, Workflow } from '../../api/client'
 import { useTasksStore } from '../../stores/tasks'
@@ -34,13 +35,11 @@ function sortWorkflowsAlphabetically(list: Workflow[]): Workflow[] {
 }
 
 // pickDefaultWorkflowId chooses the initial workflow selection: the hinted
-// workflow id if still present, else the one named "Default", else the
-// alphabetically-first workflow.
+// workflow id if still present, else the server-flagged default
+// workflow (see lib/defaultWorkflow).
 function pickDefaultWorkflowId(sorted: Workflow[], hintId?: string): string {
   if (hintId && sorted.some((w) => w.id === hintId)) return hintId
-  const named = sorted.find((w) => w.name === 'Default')
-  if (named) return named.id
-  return sorted[0]?.id ?? ''
+  return defaultWorkflow(sorted)?.id ?? ''
 }
 
 // toSafePreviewSrc guards the attachment-preview <img src>: every value in

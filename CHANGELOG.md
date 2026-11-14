@@ -20,6 +20,7 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Fixed
+- A fresh install could open the board (and default new tasks, the E2E setup, and the agent-config label picker) on the seeded "PR review" workflow instead of "Default". The default workflow is now chosen by one server-side rule, exposed as `is_default` on `GET /workflows`, and the PR review workflow never becomes the implicit default while another workflow exists.
 - **Board no longer stays empty after a transient workflow-list failure.** The workflow store now retries the initial fetch a few times instead of swallowing the first error.
 
 ### Added

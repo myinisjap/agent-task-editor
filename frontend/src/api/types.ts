@@ -9380,6 +9380,8 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+            /** @description True for the board default workflow: the one named "Default", else the alphabetically-first workflow other than the seeded "PR review" workflow. Exactly one workflow is default when any exist. */
+            is_default?: boolean;
         };
         /** @description Behaviour-relevant fields of an agent config at one version. name, labels, enabled and priority are not versioned. */
         AgentConfigSnapshot: {

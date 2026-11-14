@@ -1,4 +1,5 @@
 import { labelDisplayName } from '../lib/labelDisplay'
+import { resolveSelectedWorkflow } from '../lib/defaultWorkflow'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, type AgentConfig, type Workflow } from '../api/client'
@@ -65,7 +66,7 @@ export default function PipelineOverviewPage() {
     void fetchAgents()
   }, [fetchWorkflows, fetchAgents])
 
-  const workflow = workflows.find((w) => w.id === selectedId) ?? workflows[0]
+  const workflow = resolveSelectedWorkflow(workflows, selectedId)
   const staffing = useMemo(
     () => (workflow ? workflowStaffing(workflow, agents) : undefined),
     [workflow, agents],

@@ -93,6 +93,8 @@ A task can only move to labels that have a matching transition from its current 
 
 ## Default Workflow
 
+Two workflows are seeded on first start: "Default" and "PR review". The board's default workflow (used when nothing is selected, for task creation without `workflow_id`, and flagged `is_default: true` by `GET /workflows`) is the one named "Default", else the alphabetically-first workflow other than "PR review". A user's explicit board selection is remembered and takes precedence.
+
 Seeded automatically on first startup:
 
 ```

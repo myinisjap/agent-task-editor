@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy"
+	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -60,6 +61,7 @@ type workflowResponse struct {
 	gen.Workflow
 	Labels      []workflowLabelResponse  `json:"labels"`
 	Transitions []gen.WorkflowTransition `json:"transitions"`
+	IsDefault   bool                     `json:"is_default"`
 }
 
 func (h *WorkflowsHandler) buildResponse(r *http.Request, wf gen.Workflow) (workflowResponse, error) {
@@ -75,7 +77,8 @@ func (h *WorkflowsHandler) buildResponse(r *http.Request, wf gen.Workflow) (work
 	for i, l := range labels {
 		out[i] = workflowLabelResponse{WorkflowLabel: l, Autonomy: autonomyJSON(l)}
 	}
-	return workflowResponse{Workflow: wf, Labels: out, Transitions: transitions}, nil
+	defaultID, _ := storage.DefaultWorkflowID(r.Context(), h.q) // best-effort
+	return workflowResponse{Workflow: wf, Labels: out, Transitions: transitions, IsDefault: defaultID != "" && wf.ID == defaultID}, nil
 }
 
 // List returns a page of workflows, newest first, each with its labels and

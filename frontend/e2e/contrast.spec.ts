@@ -60,8 +60,8 @@ test.beforeAll(async () => {
   }
   let workflowId = process.env.E2E_WORKFLOW_ID
   if (!workflowId) {
-    const wfs = (await (await fetch(`${API_BASE}/workflows`)).json()) as Array<{ id: string }>
-    workflowId = wfs[0]?.id
+    const wfs = (await (await fetch(`${API_BASE}/workflows`)).json()) as Array<{ id: string; is_default?: boolean }>
+    workflowId = (wfs.find((w) => w.is_default) ?? wfs[0])?.id
   }
   const res = await fetch(`${API_BASE}/tasks`, {
     method: 'POST',
