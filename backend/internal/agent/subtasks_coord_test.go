@@ -101,7 +101,7 @@ func TestCoordinator_CleanMergeAndAutoAdvance(t *testing.T) {
 	gitIn(t, child.WorktreePath, "add", "-A")
 	gitIn(t, child.WorktreePath, "-c", "user.name=test", "-c", "user.email=t@example.com", "commit", "-m", "child work")
 
-	coord.OnChildTerminal(ctx, child, gen.Repo{Path: repo})
+	_ = coord.OnChildTerminal(ctx, child, gen.Repo{Path: repo})
 
 	// Child marked merged.
 	child, _ = q.GetTask(ctx, child.ID)
@@ -144,7 +144,7 @@ func TestCoordinator_ConflictFlagsChildNoAdvance(t *testing.T) {
 	gitIn(t, child.WorktreePath, "add", "-A")
 	gitIn(t, child.WorktreePath, "-c", "user.name=test", "-c", "user.email=t@example.com", "commit", "-m", "child change")
 
-	coord.OnChildTerminal(ctx, child, gen.Repo{Path: repo})
+	_ = coord.OnChildTerminal(ctx, child, gen.Repo{Path: repo})
 
 	child, _ = q.GetTask(ctx, child.ID)
 	if child.MergeStatus != "merge_conflict" {
@@ -189,7 +189,7 @@ func TestCoordinator_DeferredMergeFlushedAfterParentRun(t *testing.T) {
 		t.Fatalf("set parent active run: %v", err)
 	}
 
-	coord.OnChildTerminal(ctx, child, gen.Repo{Path: repo})
+	_ = coord.OnChildTerminal(ctx, child, gen.Repo{Path: repo})
 
 	// Merge-back deferred: child pending, nothing landed on the parent branch.
 	child, _ = q.GetTask(ctx, child.ID)
@@ -249,7 +249,7 @@ func TestCoordinator_AfterParentRunResolvesConflict(t *testing.T) {
 	gitIn(t, child.WorktreePath, "add", "-A")
 	gitIn(t, child.WorktreePath, "-c", "user.name=test", "-c", "user.email=t@example.com", "commit", "-m", "child change")
 
-	coord.OnChildTerminal(ctx, child, gen.Repo{Path: repo})
+	_ = coord.OnChildTerminal(ctx, child, gen.Repo{Path: repo})
 
 	child, _ = q.GetTask(ctx, child.ID)
 	if child.MergeStatus != "merge_conflict" {
