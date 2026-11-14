@@ -140,7 +140,7 @@ type SetTaskTemplateRecipeParams struct {
 }
 
 // Automation recipes: tag/untag the objects a recipe install creates. See
-// migration 088 and internal/recipes. recipe_id ” = not from a recipe.
+// migration 089 and internal/recipes. recipe_id ” = not from a recipe.
 func (q *Queries) SetTaskTemplateRecipe(ctx context.Context, arg SetTaskTemplateRecipeParams) error {
 	_, err := q.db.ExecContext(ctx, setTaskTemplateRecipe, arg.RecipeID, arg.ID)
 	return err

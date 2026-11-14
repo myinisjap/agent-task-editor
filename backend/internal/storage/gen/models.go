@@ -290,6 +290,31 @@ type IntakeRule struct {
 	RecipeID          string    `json:"recipe_id"`
 }
 
+type LessonDismissal struct {
+	ID          string    `json:"id"`
+	RepoID      string    `json:"repo_id"`
+	Body        string    `json:"body"`
+	DismissedBy string    `json:"dismissed_by"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type LessonDistillRun struct {
+	ID               string     `json:"id"`
+	RepoID           string     `json:"repo_id"`
+	Trigger          string     `json:"trigger"`
+	Actor            string     `json:"actor"`
+	Status           string     `json:"status"`
+	ProviderConfigID *string    `json:"provider_config_id"`
+	EvidenceCount    int64      `json:"evidence_count"`
+	ProposalCount    int64      `json:"proposal_count"`
+	Error            string     `json:"error"`
+	CostUsd          float64    `json:"cost_usd"`
+	InputTokens      int64      `json:"input_tokens"`
+	OutputTokens     int64      `json:"output_tokens"`
+	StartedAt        time.Time  `json:"started_at"`
+	FinishedAt       *time.Time `json:"finished_at"`
+}
+
 type LogRetentionSetting struct {
 	ID              int64     `json:"id"`
 	Days            int64     `json:"days"`
