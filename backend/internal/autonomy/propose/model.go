@@ -44,6 +44,8 @@ type ProviderModel struct {
 	SystemPrompt string
 	AnswerEnd    string
 	Purpose      string
+	// System overrides SystemPrompt (the lesson distiller reuses this runner).
+	System string
 }
 
 // Complete runs the CLI once and returns every string it printed, so the
@@ -74,6 +76,9 @@ func (m ProviderModel) Complete(ctx context.Context, prompt string) (Completion,
 	}
 	cfg := m.Config
 	cfg.SystemPrompt = sysPrompt
+	if m.System != "" {
+		cfg.SystemPrompt = m.System
+	}
 	cfg.MaxTurns = 3
 	cfg.TimeoutSecs = int64(ModelTimeout / time.Second)
 	cfg.MaxCostUSD = 0

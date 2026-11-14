@@ -41,6 +41,7 @@ import HelpButton from '../components/shared/HelpButton'
 import { TaskDetailHelp } from '../components/shared/pageHelp'
 import { useCommandPaletteStore } from '../stores/commandPalette'
 import { buildTaskCommands, type TaskCommandHandlers } from '../lib/taskCommands'
+import { isReviewSource } from '../lib/prReview'
 
 type Tab = 'overview' | 'logs' | 'diff'
 
@@ -830,7 +831,8 @@ export default function TaskDetailPage() {
         {activeTab === 'diff' && (
           <DiffReviewPane
             taskId={task?.id}
-            prUrl={task?.pr_url}
+            prUrl={isReviewSource(task?.source) ? task?.pr_review?.pr_url : task?.pr_url}
+            reviewOnly={isReviewSource(task?.source)}
             onCreatePR={handleCreatePR}
             creatingPR={creatingPR}
             diffComments={diffComments}

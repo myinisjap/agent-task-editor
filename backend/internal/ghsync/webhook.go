@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"log/slog"
 	"slices"
 	"strconv"
@@ -154,7 +155,7 @@ func (s *Syncer) refreshTask(taskID string) {
 		log.Warn("ghsync: webhook refresh get task", "err", err)
 		return
 	}
-	if task.Branch == "" || task.Archived != 0 || task.GitState == "pr_merged" || task.GitState == "pr_closed" {
+	if task.Branch == "" || task.Archived != 0 || task.GitState == "pr_merged" || task.GitState == "pr_closed" || forge.IsReviewSource(task.Source) {
 		return
 	}
 	info := s.resolveRepoInfo(ctx, task.RepoID)

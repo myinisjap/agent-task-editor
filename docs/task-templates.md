@@ -119,3 +119,41 @@ Unlike issue import, a matched rule's `apply_target_label` is **not** subject
 to the [auto-start safety gate](task-sources.md#the-auto-start-safety-gate):
 a schedule's target label is operator-authored configuration, not untrusted
 imported content, so the mitigation that gate exists for doesn't apply here.
+
+## Automation recipes
+
+Settings → Intake rules → **Recipes** is a gallery of one-click presets that create the
+right template, schedule and/or webhook endpoint in one step. Recipes are declarative
+definitions bundled in the backend (`backend/internal/recipes`) and versioned with the
+app. They expand into ordinary objects — nothing here runs agents differently.
+
+| Recipe id | Creates |
+| --- | --- |
+| `ci-red-main` | endpoint + rule + template "Fix failing CI on main" (CI webhook, deduped while main stays red) |
+| `error-tracker-alert` | endpoint + rule + template for a Sentry-style issue webhook |
+| `weekly-dependency-updates` | schedule + template (default `0 9 * * 1`) |
+| `stale-todo-flaky-sweep` | schedule + template (default `0 9 * * 3`) |
+| `docs-drift-check` | schedule + template (default `0 9 * * 5`) |
+
+API: `GET /api/v1/automation-recipes` lists recipes, their parameters (`repo_id`,
+`workflow_id`, `target_label`, `cron_expr`, `branch`) and installed state;
+`POST /api/v1/automation-recipes/{id}/install` with `{"params": {...}, "confirm_auto_start": false}`
+creates everything in one transaction; `DELETE /api/v1/automation-recipes/{id}` removes the
+recipe. The Board MCP `admin` profile has `list_recipes` / `install_recipe` (no remove tool).
+
+- **Tagged objects.** Every created template, schedule, endpoint and rule carries
+  `recipe_id`; the UI shows "from recipe" and **Remove recipe** deletes exactly the tagged
+  objects (tasks already created are kept). A recipe can be installed once at a time; a
+  template with the same name that you made yourself blocks the install (409).
+- **Parked by default.** An empty `target_label` means tasks land on the workflow's
+  human-review (gate) label for you to promote — for schedule recipes that is the same default
+  as the schedules API. Picking an agent-triggerable label is rejected with
+  `auto_start_confirmation_required` unless `confirm_auto_start` is true, and the result
+  carries the same warning schedules and intake rules show.
+- **Existing limits apply.** Webhook recipes use ordinary intake endpoints: signature check,
+  256 KB body cap, 30 events/minute/endpoint, and dedupe via the endpoint's dedupe key.
+- **Webhook recipes** return the endpoint URL and secret **once**, plus a paste-ready sender
+  snippet (the snippet never contains the secret; store it as `ATE_INTAKE_SECRET`).
+
+See [task-sources.md](task-sources.md#recipe-webhooks) for the payload shapes and the GitHub
+Actions step.

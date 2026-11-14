@@ -160,3 +160,33 @@ func TestWebhookRecent(t *testing.T) {
 		t.Error("past quiet window: want not recent")
 	}
 }
+
+// Review-only PR tasks carry a local, never-pushed branch; polling it would
+// ask the forge about a branch that does not exist on the remote.
+func TestRefreshMatching_ExcludesReviewSourceTasks(t *testing.T) {
+	f := newWebhookFixture(t)
+	ctx := context.Background()
+	if _, err := f.q.CreateSourcedTask(ctx, gen.CreateSourcedTaskParams{
+		ID: "pr-1", Title: "PR review", Type: "chore", Label: f.t7.Label, RepoID: f.t7.RepoID, WorkflowID: f.t7.WorkflowID,
+		Attachments: "[]", Source: "github_pr", SourceRef: "acme/widgets#3",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{ID: "pr-1", Branch: "pr-review-3-pr-1", BaseRef: "origin/main"}); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := f.q.ListGhSyncEligibleTasks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tk := range tasks {
+		if tk.ID == "pr-1" {
+			t.Fatal("review-source task must not be poll-eligible")
+		}
+	}
+	if n := f.s.RefreshMatching(ctx, PRRef{Repo: "acme/widgets", Numbers: []int{3}, Branches: []string{"pr-review-3-pr-1"}}); n != 0 {
+		t.Fatalf("matched %d", n)
+	}
+	f.s.refreshTask("pr-1")
+	f.expectNoRefresh(t)
+}

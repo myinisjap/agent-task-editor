@@ -42,6 +42,7 @@ type GitHubWebhookHandler struct {
 	secret    []byte
 	refresher PRRefresher
 	seen      *deliveryLRU
+	prReview  PRReviewTrigger
 }
 
 // NewGitHubWebhookHandler returns a handler. An empty secret disables it
@@ -250,7 +251,31 @@ func (h *GitHubWebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusBadRequest, "invalid JSON payload")
 		return
 	}
+	// Review-only PR path: a PR opened/updated/labelled on a repo with PR
+	// review enabled is (re)considered. Payload fields only pick the PR; the
+	// ingester re-fetches it from the forge and applies the repo's filters.
+	reviewTriggered := false
+	if h.prReview != nil && event == "pull_request" {
+		switch p.Action {
+		case "opened", "reopened", "synchronize", "ready_for_review", "labeled", "edited", "closed":
+			n := p.PullRequest.Number
+			if n == 0 {
+				n = p.Number
+			}
+			if n > 0 && p.Repository.FullName != "" {
+				reviewTriggered = true
+				repoName := p.Repository.FullName
+				rctx := context.WithoutCancel(r.Context())
+				go h.prReview.ConsiderPR(rctx, repoName, n)
+			}
+		}
+	}
 	ref, ok := refFor(event, p)
+	if !ok && reviewTriggered {
+		webhookMetric(label, "review_considered")
+		JSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+		return
+	}
 	if !ok {
 		webhookMetric(label, "ignored")
 		w.WriteHeader(http.StatusNoContent)
@@ -271,3 +296,12 @@ func (h *GitHubWebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}()
 	JSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 }
+
+// PRReviewTrigger is satisfied by *prreview.Ingester: it (re)considers one PR
+// for the review-only path.
+type PRReviewTrigger interface {
+	ConsiderPR(ctx context.Context, repoFullName string, number int)
+}
+
+// SetPRReviewTrigger enables the review-only PR path for pull_request events.
+func (h *GitHubWebhookHandler) SetPRReviewTrigger(t PRReviewTrigger) { h.prReview = t }

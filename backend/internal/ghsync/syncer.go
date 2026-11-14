@@ -13,6 +13,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/wsevent"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/automerge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/metrics"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -65,6 +66,8 @@ type Syncer struct {
 	getReviews        func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Review, error)
 	getReviewComments func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.PRReviewComment, error)
 	getFailedChecks   func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Check, error)
+	// getChecks returns every check on the PR head (auto-merge eligibility).
+	getChecks func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Check, error)
 
 	// backoff tracks, per repo, consecutive forge-call failures observed
 	// during sweeps, so a rate-limited or otherwise-failing repo's effective
@@ -120,6 +123,9 @@ func New(db *sql.DB, hub Publisher, interval time.Duration, engine *workflow.Eng
 		},
 		getFailedChecks: func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Check, error) {
 			return repo.forge.FailedChecks(ctx, repo.ghName, prNumber)
+		},
+		getChecks: func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Check, error) {
+			return repo.forge.PRChecks(ctx, repo.ghName, prNumber)
 		},
 	}
 }
@@ -285,6 +291,10 @@ func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) (ok
 		}
 	}
 
+	if head.Number != 0 && head.State == "pr_open" && !s.reconcileAutoMerge(ctx, task, repo, head) {
+		ok = false
+	}
+
 	state := head.State
 	if state == task.GitState {
 		return ok // no git-state change — nothing further to do
@@ -332,6 +342,9 @@ func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) (ok
 		// The branch's work is upstream (or abandoned), so pending/failed
 		// push and PR side effects can never be needed; drop them so they
 		// don't linger in the Inbox. Write-back effects are left alone.
+		if _, err := s.q.DeleteTaskAutoMerge(ctx, task.ID); err != nil {
+			log.Warn("ghsync: clear auto-merge state", "err", err)
+		}
 		if n, err := s.q.DeleteMootTaskSideEffects(ctx, task.ID); err != nil {
 			log.Warn("ghsync: clear moot side effects", "err", err)
 		} else if n > 0 {
@@ -343,6 +356,51 @@ func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) (ok
 		s.finishMergedTask(ctx, updated, log)
 	}
 	return ok
+}
+
+// funcSource adapts the Syncer's overridable forge getters to automerge.Source.
+type funcSource struct {
+	s    *Syncer
+	repo repoInfo
+}
+
+func (f funcSource) PRChecks(ctx context.Context, n int) ([]forge.Check, error) {
+	return f.s.getChecks(ctx, f.repo, n)
+}
+
+func (f funcSource) PRReviews(ctx context.Context, n int) ([]forge.Review, error) {
+	return f.s.getReviews(ctx, f.repo, n)
+}
+
+// reconcileAutoMerge evaluates the repo's opt-in auto-merge policy for a task
+// whose PR is open and, when eligible, queues the merge through the workflow
+// engine's side-effect outbox. It runs on every PR refresh (polling sweep and
+// webhook alike), never in a loop of its own. A no-op for repos with
+// auto_merge_mode off. Returns false if a forge call failed (for backoff).
+func (s *Syncer) reconcileAutoMerge(ctx context.Context, task gen.Task, repo repoInfo, head forge.PRHead) bool {
+	if s.q == nil || s.getChecks == nil || s.getReviews == nil {
+		return true
+	}
+	if automerge.Mode(repo.repo) != automerge.ModeWhenGreen {
+		// Off: drop any stale verdict left from when it was on.
+		if _, err := s.q.DeleteTaskAutoMerge(ctx, task.ID); err != nil {
+			slog.Warn("ghsync: clear auto-merge state", "task_id", task.ID, "err", err)
+		}
+		return true
+	}
+	var enq automerge.Enqueuer
+	if s.engine != nil {
+		enq = s.engine
+	}
+	// Re-read the task: ingestPRFeedback may have moved it or changed its run.
+	if fresh, err := s.q.GetTask(ctx, task.ID); err == nil {
+		task = fresh
+	}
+	if _, err := automerge.Reconcile(ctx, s.q, enq, s.hub, funcSource{s: s, repo: repo}, task, repo.repo, head); err != nil {
+		slog.Warn("ghsync: auto-merge evaluation failed", "task_id", task.ID, "err", err)
+		return false
+	}
+	return true
 }
 
 // cleanupMergedBranch removes the task's worktree (if any is still attached)

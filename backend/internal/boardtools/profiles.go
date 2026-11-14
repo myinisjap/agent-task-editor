@@ -10,7 +10,7 @@ import (
 const ReadInstructions = "Tools for the Agent Task Editor kanban board. Tasks move between labels (columns); " +
 	"a task on an agent-triggerable label such as \"work\" is picked up by an AI agent automatically. " +
 	"Use list_tasks/get_task to see state and list_runs/get_run_logs/get_diff to inspect agent work; " +
-	"list_workflows/get_workflow, list_agents, list_repos/get_repo and list_templates/list_schedules show how the board is set up, and get_costs reports what agents have spent. " +
+	"list_workflows/get_workflow, list_agents, list_repos/get_repo, get_repo_map (generated codebase guide) and list_templates/list_schedules show how the board is set up, and get_costs reports what agents have spent. " +
 	"Start with list_needs_me to see what is waiting on a human. "
 
 // AdminInstructions is added for the admin profile.
@@ -20,6 +20,7 @@ const AdminInstructions = "To set the board up, create_workflow/update_workflow 
 	"A label only gets agent runs if an enabled agent lists it: list_agents/get_agent show them, list_provider_configs gives the provider ids, and create_agent/update_agent wire agents to labels. " +
 	"For recurring work, create_template/update_template define the task and create_schedule/update_schedule run it " +
 	"on a 5-field cron (update_schedule with enabled=false pauses). " +
+	"list_recipes/install_recipe set up a whole preset (CI-failure webhook, weekly dependency updates, ...) in one step. " +
 	"A schedule creates tasks unattended: leave target_label empty so a human promotes them, unless an agent should start straight away. "
 
 // WriteInstructions is added for the full and admin profiles.

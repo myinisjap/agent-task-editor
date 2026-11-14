@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -20,6 +21,7 @@ type result struct {
 	Notes            *string           `json:"Notes,omitempty"`
 	StoredInfo       *string           `json:"StoredInfo,omitempty"`
 	ResolvedComments []resolvedComment `json:"ResolvedComments,omitempty"`
+	PRReview         *prReview         `json:"PRReview,omitempty"`
 }
 
 // resolvedComment mirrors agent.ResolvedComment.
@@ -49,6 +51,8 @@ type toolState struct {
 	resolved   []resolvedComment
 	terminal   *result
 	commentIDs map[string]bool
+	prReview   *prReview
+	priorIDs   map[string]bool
 }
 
 type rpcRequest struct {
@@ -94,7 +98,15 @@ func main() {
 
 	// Parse open review comments from env (set by MCPManager.Prepare) so
 	// resolve_comment can validate IDs against the set of open comments.
-	st := &toolState{commentIDs: map[string]bool{}}
+	st := &toolState{commentIDs: map[string]bool{}, priorIDs: map[string]bool{}}
+	prReviewEnabled := os.Getenv("PR_REVIEW") == "1"
+	if raw := os.Getenv("PR_REVIEW_PRIOR_IDS"); raw != "" {
+		var ids []string
+		_ = json.Unmarshal([]byte(raw), &ids)
+		for _, id := range ids {
+			st.priorIDs[id] = true
+		}
+	}
 	if raw := os.Getenv("REVIEW_COMMENTS"); raw != "" {
 		var comments []reviewComment
 		_ = json.Unmarshal([]byte(raw), &comments)
@@ -224,6 +236,30 @@ func main() {
 					},
 				},
 			}
+			if prReviewEnabled {
+				tools = append(tools, map[string]any{
+					"name":        "submit_pr_review",
+					"description": "Submit your review of the pull request under review. Call once, before signal_complete. Findings are posted on the PR as a comment-only review (never an approval). Line numbers refer to the new (head) side of the diff.",
+					"inputSchema": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"summary": map[string]any{"type": "string", "description": "Review summary (markdown)"},
+							"comments": map[string]any{"type": "array", "description": "Inline findings", "items": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"path":       map[string]any{"type": "string", "description": "Repo-relative file path"},
+									"line":       map[string]any{"type": "integer", "description": "Line number on the head side"},
+									"start_line": map[string]any{"type": "integer", "description": "Optional first line of a multi-line range"},
+									"body":       map[string]any{"type": "string", "description": "The finding"},
+								},
+								"required": []string{"path", "line", "body"},
+							}},
+							"resolved_prior": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Ids of prior findings that are now resolved"},
+						},
+						"required": []string{"summary"},
+					},
+				})
+			}
 			if subtasks.enabled {
 				tools = append(tools, map[string]any{
 					"name":        "create_subtask",
@@ -340,6 +376,29 @@ func dispatchTool(name string, args json.RawMessage, st *toolState, transitions 
 			st.notes = a.Notes
 		}
 		return "Task notes updated", st.persist()
+
+	case "submit_pr_review":
+		var a prReview
+		if err := json.Unmarshal(args, &a); err != nil {
+			return "invalid arguments: " + err.Error(), nil
+		}
+		if strings.TrimSpace(a.Summary) == "" {
+			return "summary is required", nil
+		}
+		for _, c := range a.Comments {
+			if strings.TrimSpace(c.Path) == "" || c.Line <= 0 || strings.TrimSpace(c.Body) == "" {
+				return "each comment needs a path, a positive line and a body", nil
+			}
+		}
+		if len(st.priorIDs) > 0 {
+			for _, id := range a.ResolvedPrior {
+				if !st.priorIDs[id] {
+					return "unknown prior finding id: " + id, nil
+				}
+			}
+		}
+		st.prReview = &a
+		return "review recorded", st.persist()
 
 	case "resolve_comment":
 		var a struct {
@@ -472,6 +531,9 @@ func (st *toolState) persist() *result {
 
 // fill copies the accumulated notes/stored-info/resolutions onto a terminal result.
 func (st *toolState) fill(r *result) {
+	if st.prReview != nil {
+		r.PRReview = st.prReview
+	}
 	if st.notes != "" {
 		notes := st.notes
 		r.Notes = &notes
@@ -483,4 +545,19 @@ func (st *toolState) fill(r *result) {
 	if len(st.resolved) > 0 {
 		r.ResolvedComments = st.resolved
 	}
+}
+
+// prReview mirrors agent.PRReviewResult.
+type prReview struct {
+	Summary       string      `json:"summary"`
+	Comments      []prComment `json:"comments"`
+	ResolvedPrior []string    `json:"resolved_prior"`
+}
+
+// prComment mirrors agent.PRReviewComment.
+type prComment struct {
+	Path      string `json:"path"`
+	Line      int    `json:"line"`
+	StartLine int    `json:"start_line,omitempty"`
+	Body      string `json:"body"`
 }

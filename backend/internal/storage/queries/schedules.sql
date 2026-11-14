@@ -9,24 +9,24 @@
 -- UNIQUE(source, source_ref) index on tasks.
 
 -- name: ListTaskSchedules :many
-SELECT id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at FROM task_schedules ORDER BY created_at DESC;
+SELECT id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at, recipe_id FROM task_schedules ORDER BY created_at DESC;
 
 -- name: ListEnabledTaskSchedules :many
-SELECT id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at FROM task_schedules WHERE enabled != 0 ORDER BY created_at ASC;
+SELECT id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at, recipe_id FROM task_schedules WHERE enabled != 0 ORDER BY created_at ASC;
 
 -- name: GetTaskSchedule :one
-SELECT id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at FROM task_schedules WHERE id = ?;
+SELECT id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at, recipe_id FROM task_schedules WHERE id = ?;
 
 -- name: CreateTaskSchedule :one
 INSERT INTO task_schedules (id, template_id, repo_id, cron_expr, target_label, enabled)
 VALUES (?, ?, ?, ?, ?, ?)
-RETURNING id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at;
+RETURNING id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at, recipe_id;
 
 -- name: UpdateTaskSchedule :one
 UPDATE task_schedules
 SET cron_expr = ?, target_label = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
 WHERE id = ?
-RETURNING id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at;
+RETURNING id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at, recipe_id;
 
 -- name: DeleteTaskSchedule :exec
 DELETE FROM task_schedules WHERE id = ?;

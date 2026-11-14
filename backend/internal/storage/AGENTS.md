@@ -37,6 +37,7 @@ SQLite with WAL (Write-Ahead Logging) enabled for better concurrent read perform
 - `previews.sql` — task preview screenshot captures + images
 - `dashboard.sql` — aggregate queries for the dashboard
 - `repo_lessons.sql` — curated per-repo/global lessons injected into agent prompts
+- `repo_map.sql` — repo map: per-repo opt-in config (`repo_map_config`, absent row = off), global injection settings singleton (`repo_map_global`), generation runs with cost (`repo_map_runs`) and pages of the last few successful runs (`repo_map_pages`, pruned by `PruneRepoMapPages`)
 - `review_comments.sql` — inline diff review comment CRUD, both locally-created and GitHub-ingested
 - `pr_review_state.sql` — per-task GitHub PR review/check ingestion cursor (`task_pr_review_state`)
 

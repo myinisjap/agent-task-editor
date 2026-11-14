@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
+	"github.com/myinisjap/agent-task-editor/backend/internal/prreview"
 	"io"
 	"log/slog"
 	"net/http"
@@ -81,10 +82,13 @@ func (h *ReposHandler) Get(w http.ResponseWriter, r *http.Request) {
 // the API emit real JSON true/false, matching what request bodies accept.
 type repoResponse struct {
 	gen.Repo
-	IssueSyncEnabled              bool `json:"issue_sync_enabled"`
-	IssueWritebackEnabled         bool `json:"issue_writeback_enabled"`
-	PrReviewAutoTransitionEnabled bool `json:"pr_review_auto_transition_enabled"`
-	IssueCommentSyncEnabled       bool `json:"issue_comment_sync_enabled"`
+	IssueSyncEnabled              bool     `json:"issue_sync_enabled"`
+	IssueWritebackEnabled         bool     `json:"issue_writeback_enabled"`
+	PrReviewAutoTransitionEnabled bool     `json:"pr_review_auto_transition_enabled"`
+	IssueCommentSyncEnabled       bool     `json:"issue_comment_sync_enabled"`
+	PrReviewEnabled               bool     `json:"pr_review_enabled"`
+	PrReviewSkipDrafts            bool     `json:"pr_review_skip_drafts"`
+	PrReviewAuthorAssocs          []string `json:"pr_review_author_assocs"`
 }
 
 // newRepoResponse converts a stored repo row into its API representation.
@@ -95,11 +99,15 @@ func newRepoResponse(r gen.Repo) repoResponse {
 		IssueWritebackEnabled:         r.IssueWritebackEnabled != 0,
 		PrReviewAutoTransitionEnabled: r.PrReviewAutoTransitionEnabled != 0,
 		IssueCommentSyncEnabled:       r.IssueCommentSyncEnabled != 0,
+		PrReviewEnabled:               r.PrReviewEnabled != 0,
+		PrReviewSkipDrafts:            r.PrReviewSkipDrafts != 0,
+		PrReviewAuthorAssocs:          prreview.ParseAssociations(r.PrReviewAuthorAssocs),
 	}
 }
 
 // createRepoBody is the decoded request payload for ReposHandler.Create.
 type createRepoBody struct {
+	prReviewBody
 	Name                          string  `json:"name"`
 	Path                          string  `json:"path"`
 	RemoteURL                     *string `json:"remote_url"`
@@ -130,6 +138,8 @@ type createRepoBody struct {
 	PreviewCommand       *string `json:"preview_command"`
 	PreviewRoutes        *string `json:"preview_routes"`
 	PreviewPathsGlob     *string `json:"preview_paths_glob"`
+	AutoMergeMode        *string `json:"auto_merge_mode"`
+	AutoMergeMethod      *string `json:"auto_merge_method"`
 }
 
 func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -230,6 +240,16 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	prCur := gen.Repo{PrReviewAuthorAssocs: `["OWNER","MEMBER","COLLABORATOR"]`, PrReviewSkipDrafts: 1}
+	prParams, ok := h.resolvePRReview(w, r, body.prReviewBody, prCur, remoteURL != "")
+	if !ok {
+		return
+	}
+	autoMergeMode, autoMergeMethod, ok := resolveAutoMerge(w, body.AutoMergeMode, body.AutoMergeMethod, "", "")
+	if !ok {
+		return
+	}
+
 	repo, err := h.q.CreateRepo(r.Context(), gen.CreateRepoParams{
 		ID:                            uuid.NewString(),
 		Name:                          body.Name,
@@ -252,12 +272,21 @@ func (h *ReposHandler) Create(w http.ResponseWriter, r *http.Request) {
 		PreviewCommand:                pv.Command,
 		PreviewRoutes:                 pv.Routes,
 		PreviewPathsGlob:              pv.PathsGlob,
+		AutoMergeMode:                 autoMergeMode,
+		AutoMergeMethod:               autoMergeMethod,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
+	if body.any() {
+		prParams.ID = repo.ID
+		if repo, err = h.q.SetRepoPRReview(r.Context(), prParams); err != nil {
+			Err(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	if isClone {
 		h.startAsyncClone(r, &repo, remoteURL, body.Path)
 	} else {
@@ -638,6 +667,7 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
+		prReviewBody
 		Name                          *string `json:"name"`
 		Path                          *string `json:"path"`
 		RemoteURL                     *string `json:"remote_url"`
@@ -670,6 +700,8 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		PreviewCommand       *string `json:"preview_command"`
 		PreviewRoutes        *string `json:"preview_routes"`
 		PreviewPathsGlob     *string `json:"preview_paths_glob"`
+		AutoMergeMode        *string `json:"auto_merge_mode"`
+		AutoMergeMethod      *string `json:"auto_merge_method"`
 	}
 	if err := json.Unmarshal(bodyBytes, &body); err != nil {
 		Err(w, http.StatusBadRequest, "invalid request body")
@@ -835,6 +867,15 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	prParams, ok := h.resolvePRReview(w, r, body.prReviewBody, existing, remoteURL != nil && *remoteURL != "")
+	if !ok {
+		return
+	}
+	autoMergeMode, autoMergeMethod, ok := resolveAutoMerge(w, body.AutoMergeMode, body.AutoMergeMethod, existing.AutoMergeMode, existing.AutoMergeMethod)
+	if !ok {
+		return
+	}
+
 	if issueSyncEnabled != 0 {
 		if remoteURL == nil || *remoteURL == "" {
 			Err(w, http.StatusBadRequest, "issue sync requires a GitHub remote_url")
@@ -911,10 +952,19 @@ func (h *ReposHandler) Update(w http.ResponseWriter, r *http.Request) {
 		PreviewCommand:                pv.Command,
 		PreviewRoutes:                 pv.Routes,
 		PreviewPathsGlob:              pv.PathsGlob,
+		AutoMergeMode:                 autoMergeMode,
+		AutoMergeMethod:               autoMergeMethod,
 	})
 	if err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if body.any() {
+		prParams.ID = repo.ID
+		if repo, err = h.q.SetRepoPRReview(r.Context(), prParams); err != nil {
+			Err(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	setClaudeTrust(r.Context(), path)
 	if runtimeChanged && runtimeLanguages != "" {
@@ -1137,4 +1187,38 @@ func resolvePreview(w http.ResponseWriter, cmd, routes, globs *string, cur previ
 		out.PathsGlob = strings.Join(lines, "\n")
 	}
 	return out, true
+}
+
+// Auto-merge policy values (repos.auto_merge_mode / auto_merge_method).
+const (
+	autoMergeOff       = "off"
+	autoMergeWhenGreen = "when_green"
+)
+
+// resolveAutoMerge validates the auto_merge_mode / auto_merge_method request
+// fields. A nil field keeps the current value; empty stored values read as the
+// defaults (off / squash).
+func resolveAutoMerge(w http.ResponseWriter, mode, method *string, curMode, curMethod string) (string, string, bool) {
+	m, me := curMode, curMethod
+	if m == "" {
+		m = autoMergeOff
+	}
+	if me == "" {
+		me = "squash"
+	}
+	if mode != nil {
+		m = strings.TrimSpace(*mode)
+		if m != autoMergeOff && m != autoMergeWhenGreen {
+			Err(w, http.StatusBadRequest, "auto_merge_mode must be one of: off, when_green")
+			return "", "", false
+		}
+	}
+	if method != nil {
+		me = strings.TrimSpace(*method)
+		if me != "squash" && me != "merge" && me != "rebase" {
+			Err(w, http.StatusBadRequest, "auto_merge_method must be one of: squash, merge, rebase")
+			return "", "", false
+		}
+	}
+	return m, me, true
 }

@@ -166,3 +166,11 @@ go build -o mcp-server ./cmd/mcp-server
 ```
 
 Then set `MCP_SERVER_PATH=/path/to/mcp-server` in the server environment. When using `./dev.sh dev`, this is done automatically.
+
+## `submit_pr_review`
+
+Only listed for review-only PR runs (`PR_REVIEW=1`). Arguments: `summary`,
+`comments[{path,line,start_line?,body}]` (line numbers on the head side of the
+diff) and `resolved_prior[ids]` (earlier finding ids now fixed). ATE posts it
+on the PR as a comment-only review. If never called, the run notes are used as
+the summary.
