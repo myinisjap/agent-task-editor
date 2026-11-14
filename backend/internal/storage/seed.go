@@ -184,7 +184,7 @@ func SeedPRReviewWorkflow(ctx context.Context, db *DB) error {
 		{"pr-review", "done", "agent", sp("success")},
 		{"pr-review", "needs-attention", "agent", sp("failure")},
 		{"needs-attention", "pr-review", "human", nil},
-		{"done", "pr-review", "both", nil},
+		{"done", "pr-review", "human", nil},
 	}
 	for _, t := range transitions {
 		if _, err := q.CreateWorkflowTransition(ctx, gen.CreateWorkflowTransitionParams{
