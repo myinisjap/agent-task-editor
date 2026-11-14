@@ -336,7 +336,7 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
               {similar.map((s, i) => (
                 <span key={s.id}>
                   {i > 0 && ', '}
-                  <a href={`/tasks/${s.id}`} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                  <a href={`/tasks/${s.id}`} target="_blank" rel="noreferrer" className="text-accent-fg hover:underline">
                     {s.title}
                   </a>
                 </span>

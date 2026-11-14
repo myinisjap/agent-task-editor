@@ -163,7 +163,7 @@ export default function IntakeCard({ task, workflow, onChanged }: Props) {
           </p>
           {shownDuplicates.map((d) => (
             <div key={d.id} className="flex items-center gap-2 text-sm">
-              <a href={`/tasks/${d.id}`} className="text-accent hover:underline">
+              <a href={`/tasks/${d.id}`} className="text-accent-fg hover:underline">
                 {d.title}
               </a>
               {dupIds.has(d.id) && (
