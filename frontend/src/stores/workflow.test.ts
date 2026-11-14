@@ -44,4 +44,19 @@ describe('workflow store default selection', () => {
     useWorkflowStore.getState().setSelectedId('pr')
     expect(localStorage.getItem('workflow.selectedId')).toBe('pr')
   })
+
+  it('retries a transient list failure instead of leaving the board empty', async () => {
+    vi.useFakeTimers()
+    try {
+      list.mockReset()
+      list.mockRejectedValueOnce(new Error('boom')).mockResolvedValueOnce([DEF])
+      const p = useWorkflowStore.getState().fetch()
+      await vi.runAllTimersAsync()
+      await p
+      expect(list).toHaveBeenCalledTimes(2)
+      expect(useWorkflowStore.getState().workflows).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

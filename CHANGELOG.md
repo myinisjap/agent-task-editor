@@ -21,6 +21,7 @@ triggers the "Release" workflow the same way.
 
 ### Fixed
 - A fresh install could open the board (and default new tasks, the E2E setup, and the agent-config label picker) on the seeded "PR review" workflow instead of "Default". The default workflow is now chosen by one server-side rule, exposed as `is_default` on `GET /workflows`, and the PR review workflow never becomes the implicit default while another workflow exists.
+- **Board no longer stays empty after a transient workflow-list failure.** The workflow store now retries the initial fetch a few times instead of swallowing the first error.
 
 ### Added
 - **Steer a running agent.** `POST /tasks/{id}/runs/{run_id}/steer` (a Steer box on Task Detail, a command-palette entry, and the board MCP `steer_run` tool in the `full` profile) interrupts a `running` run and starts a follow-up run that resumes the session with your note (`STEERING NOTE FROM HUMAN`). The interrupted run ends `interrupted`, not failed: no retry budget, escalation or pause, and the dispatch lock is handed over without a gap. The note and actor are stored with the task's human decisions.
