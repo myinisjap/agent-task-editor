@@ -112,6 +112,7 @@ var _ forge.Forge = (*fakeSecondForge)(nil)
 func TestSyncer_DispatchesToResolvedForge_NotHardcodedToGitHub(t *testing.T) {
 	fake := &fakeSecondForge{host: "git.example.test"}
 	forge.Register(fake)
+	t.Cleanup(func() { forge.Unregister(fake) })
 
 	f, err := os.CreateTemp("", "ghsync-multiforge-*.db")
 	if err != nil {
@@ -193,6 +194,7 @@ func TestSyncer_DispatchesToResolvedForge_NotHardcodedToGitHub(t *testing.T) {
 func TestIngestReviewComments_TagsSourceWithResolvedForgeName(t *testing.T) {
 	fake := &fakeSecondForge{host: "git.example2.test", reviewComment: true}
 	forge.Register(fake)
+	t.Cleanup(func() { forge.Unregister(fake) })
 
 	f, err := os.CreateTemp("", "ghsync-multiforge-comments-*.db")
 	if err != nil {

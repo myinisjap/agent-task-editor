@@ -75,7 +75,9 @@ func TestForRemote_SelectsFirstMatchingRegisteredForge(t *testing.T) {
 	// Registering here (rather than relying on a real implementation's
 	// init()) keeps this test self-contained regardless of which real
 	// forges are compiled in.
-	forge.Register(fakeForge{host: "example.test"})
+	ff := fakeForge{host: "example.test"}
+	forge.Register(ff)
+	t.Cleanup(func() { forge.Unregister(ff) })
 
 	f, name, ok := forge.ForRemote("https://example.test/org/repo")
 	if !ok {

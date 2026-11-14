@@ -14,7 +14,9 @@ test.describe('board and task-detail smoke flow', () => {
     // 1. Load board
     await page.goto('board')
     await expect(page.getByRole('button', { name: 'About the board' })).toBeVisible()
-    await expect(page.getByText('Not ready', { exact: true }).first()).toBeVisible()
+    // The button renders before the workflow/columns fetch finishes; wait for
+    // the columns to load rather than relying on the default 5s timeout.
+    await expect(page.getByText('Not ready', { exact: true }).first()).toBeVisible({ timeout: 30_000 })
 
     // 2. Create a task
     const addTaskButton = page.getByRole('button', { name: '+ Add task' })
