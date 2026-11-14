@@ -26,6 +26,7 @@ type ConfigSnapshot struct {
 	RetryBackoffSecs          int64           `json:"retry_backoff_secs"`
 	ResumeSessions            bool            `json:"resume_sessions"`
 	SubtasksEnabled           bool            `json:"subtasks_enabled"`
+	CrossRepoSubtasksEnabled  bool            `json:"cross_repo_subtasks_enabled"`
 	MaxSubtasks               int64           `json:"max_subtasks"`
 	EnabledPlugins            json.RawMessage `json:"enabled_plugins"`
 	EnabledMcpServers         json.RawMessage `json:"enabled_mcp_servers"`
@@ -65,6 +66,7 @@ func SnapshotOf(cfg gen.AgentConfig) ConfigSnapshot {
 		RetryBackoffSecs:          cfg.RetryBackoffSecs,
 		ResumeSessions:            cfg.ResumeSessions != 0,
 		SubtasksEnabled:           cfg.SubtasksEnabled != 0,
+		CrossRepoSubtasksEnabled:  cfg.CrossRepoSubtasksEnabled != 0,
 		MaxSubtasks:               cfg.MaxSubtasks,
 		EnabledPlugins:            JSONTextOrEmptyArray(cfg.EnabledPlugins),
 		EnabledMcpServers:         JSONTextOrEmptyArray(cfg.EnabledMcpServers),
@@ -91,6 +93,7 @@ func (s ConfigSnapshot) ApplyTo(cfg gen.AgentConfig) gen.AgentConfig {
 	cfg.RetryBackoffSecs = s.RetryBackoffSecs
 	cfg.ResumeSessions = b2i(s.ResumeSessions)
 	cfg.SubtasksEnabled = b2i(s.SubtasksEnabled)
+	cfg.CrossRepoSubtasksEnabled = b2i(s.CrossRepoSubtasksEnabled)
 	cfg.MaxSubtasks = s.MaxSubtasks
 	cfg.EnabledPlugins = string(JSONTextOrEmptyArray(string(s.EnabledPlugins)))
 	cfg.EnabledMcpServers = string(JSONTextOrEmptyArray(string(s.EnabledMcpServers)))

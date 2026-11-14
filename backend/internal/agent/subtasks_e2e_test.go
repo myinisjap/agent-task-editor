@@ -61,7 +61,7 @@ func newSubtaskHarness(t *testing.T) *subtaskHarness {
 			return err
 		}
 		if IsSubtask(task) {
-			coord.OnChildTerminal(ctx, task, repo.Path)
+			_ = coord.OnChildTerminal(ctx, task, repo)
 			return nil
 		}
 		if task.WorktreePath != "" {
@@ -273,4 +273,135 @@ func sliceHas(ss []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// TestE2E_ForeignSubtaskFlow drives a parent in repo A with one home child (A)
+// and one foreign child (repo B, with a bare origin). The home child merges
+// back as before; the foreign child forks from B's own base, is pushed to B's
+// origin, gets its PR via OpenPR (with no repo git lock held), and is never
+// merged into A's parent branch.
+func TestE2E_ForeignSubtaskFlow(t *testing.T) {
+	h := newSubtaskHarness(t)
+	ctx := context.Background()
+	wfID := seedSubtaskWorkflow(t, h.q)
+
+	repoB := initRepo(t)
+	bare := filepath.Join(t.TempDir(), "origin.git")
+	gitIn(t, repoB, "clone", "--bare", repoB, bare)
+	gitIn(t, repoB, "remote", "add", "origin", bare)
+	gitIn(t, repoB, "fetch", "origin")
+	gitIn(t, repoB, "remote", "set-head", "origin", "main")
+
+	repoAID, repoBID := uuid.NewString(), uuid.NewString()
+	if _, err := h.q.CreateRepo(ctx, gen.CreateRepoParams{ID: repoAID, Name: "a", Path: h.repo, WorkflowID: &wfID}); err != nil {
+		t.Fatalf("create repo A: %v", err)
+	}
+	if _, err := h.q.CreateRepo(ctx, gen.CreateRepoParams{ID: repoBID, Name: "b", Path: repoB, WorkflowID: &wfID, RemoteUrl: &bare}); err != nil {
+		t.Fatalf("create repo B: %v", err)
+	}
+	pc, err := h.q.CreateProviderConfig(ctx, gen.CreateProviderConfigParams{
+		ID: uuid.NewString(), Name: "fake-provider", Provider: "fake", Model: "none", Env: `{}`,
+	})
+	if err != nil {
+		t.Fatalf("create provider config: %v", err)
+	}
+	if _, err := h.q.CreateAgentConfig(ctx, gen.CreateAgentConfigParams{
+		ID: uuid.NewString(), Name: "fake", ProviderConfigID: pc.ID,
+		Labels: `["work"]`, MaxRetries: 1, RetryBackoffSecs: 1,
+	}); err != nil {
+		t.Fatalf("create config: %v", err)
+	}
+
+	var opened []string
+	h.coord.OpenPR = func(ctx context.Context, task gen.Task, repo gen.Repo) (string, error) {
+		// No repo git lock may be held across the PR call.
+		for _, p := range []string{h.repo, repoB} {
+			l := RepoGitLock(p)
+			if !l.TryLock() {
+				t.Errorf("repo git lock for %s held during OpenPR", p)
+				continue
+			}
+			l.Unlock()
+		}
+		if repo.ID != repoBID || task.RepoID != repoBID {
+			t.Errorf("OpenPR called for wrong repo: task=%s repo=%s", task.RepoID, repo.ID)
+		}
+		opened = append(opened, task.ID)
+		if _, err := h.q.SetTaskPR(ctx, gen.SetTaskPRParams{GitState: "pr_open", PrUrl: "https://example.invalid/pr/1", ID: task.ID}); err != nil {
+			return "", err
+		}
+		return "pr_open", nil
+	}
+
+	parentID := uuid.NewString()
+	if _, err := h.q.CreateTask(ctx, gen.CreateTaskParams{ID: parentID, Title: "parent", WorkflowID: wfID, RepoID: repoAID, Label: "gate", Attachments: "[]"}); err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	pWt, pBranch, pBase, err := provisionWorktree(ctx, h.repo, parentID, "parent")
+	if err != nil {
+		t.Fatalf("provision parent: %v", err)
+	}
+	_ = h.q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{Branch: pBranch, WorktreePath: pWt, BaseRef: pBase, ID: parentID})
+
+	mk := func(repoID string) string {
+		cid := uuid.NewString()
+		if _, err := h.q.CreateSubtask(ctx, gen.CreateSubtaskParams{
+			ID: cid, Title: "child", Type: "feature", Label: "work", RepoID: repoID, WorkflowID: wfID, ParentTaskID: &parentID,
+		}); err != nil {
+			t.Fatalf("create child: %v", err)
+		}
+		if err := h.q.CreateTaskDependency(ctx, gen.CreateTaskDependencyParams{TaskID: parentID, DependsOnTaskID: cid}); err != nil {
+			t.Fatalf("create edge: %v", err)
+		}
+		return cid
+	}
+	homeID, foreignID := mk(repoAID), mk(repoBID)
+	if _, err := h.q.UpdateTaskLabel(ctx, gen.UpdateTaskLabelParams{Label: "assemble", ID: parentID}); err != nil {
+		t.Fatalf("move parent: %v", err)
+	}
+
+	pollT(t, h.q, homeID, func(tk gen.Task) bool { return tk.MergeStatus == "merged" }, "home child merged")
+	f := pollT(t, h.q, foreignID, func(tk gen.Task) bool { return tk.Label == "done" && tk.MergeStatus == "pr_open" }, "foreign child pr_open")
+
+	if len(opened) != 1 || opened[0] != foreignID {
+		t.Fatalf("OpenPR calls = %v, want exactly [%s]", opened, foreignID)
+	}
+	if f.WorktreePath != "" {
+		t.Fatalf("foreign worktree path should be cleared after teardown, got %q", f.WorktreePath)
+	}
+	if f.BaseRef == pBranch || f.BaseRef == "" {
+		t.Fatalf("foreign child base_ref = %q; must be repo B's base, not the parent branch %q", f.BaseRef, pBranch)
+	}
+	if _, err := os.Stat(filepath.Join(repoB, worktreeDir, foreignID)); !os.IsNotExist(err) {
+		t.Fatalf("foreign child worktree should be removed")
+	}
+
+	// Branch pushed to B's origin and kept in B.
+	out, err := exec.Command("git", "-C", repoB, "ls-remote", "--heads", "origin", f.Branch).CombinedOutput()
+	if err != nil || !strings.Contains(string(out), f.Branch) {
+		t.Fatalf("foreign branch %s not on B's origin: %v %s", f.Branch, err, out)
+	}
+	if lsTree(t, repoB, f.Branch) == nil || !sliceHas(lsTree(t, repoB, f.Branch), "file-"+short8(foreignID)+".txt") {
+		t.Fatalf("foreign branch missing its file")
+	}
+
+	// Nothing of the foreign child in repo A.
+	if sliceHas(lsTree(t, h.repo, pBranch), "file-"+short8(foreignID)+".txt") {
+		t.Fatalf("foreign child's file leaked into the parent branch")
+	}
+	if br, _ := exec.Command("git", "-C", h.repo, "branch", "--list", f.Branch).CombinedOutput(); strings.TrimSpace(string(br)) != "" {
+		t.Fatalf("repo A has a branch named after the foreign child: %s", br)
+	}
+	// The home child still merged back.
+	if !sliceHas(lsTree(t, h.repo, pBranch), "file-"+short8(homeID)+".txt") {
+		t.Fatalf("home child file missing from parent branch")
+	}
+
+	// Stage 1 readiness: the parent does not auto-advance while the foreign
+	// child is only pr_open.
+	time.Sleep(300 * time.Millisecond)
+	p, _ := h.q.GetTask(ctx, parentID)
+	if p.Label != "assemble" {
+		t.Fatalf("parent advanced to %q while foreign child is pr_open", p.Label)
+	}
 }

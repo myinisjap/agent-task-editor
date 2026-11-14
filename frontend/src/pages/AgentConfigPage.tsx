@@ -102,6 +102,7 @@ export default function AgentConfigPage() {
       retry_backoff_secs: a.retry_backoff_secs,
       resume_sessions: a.resume_sessions ?? true,
       subtasks_enabled: a.subtasks_enabled ?? false,
+      cross_repo_subtasks_enabled: a.cross_repo_subtasks_enabled ?? false,
       max_subtasks: a.max_subtasks ?? 10,
       max_cost_usd: a.max_cost_usd ?? 0,
       effort: a.effort ?? '',

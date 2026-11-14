@@ -325,6 +325,9 @@ func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) (ok
 		PRURL:    storeURL,
 	})
 
+	// A foreign subtask (ADR 0041) mirrors its PR state into merge_status.
+	s.syncForeignChildMergeStatus(ctx, updated, log)
+
 	// Status write-back to the source GitHub issue (opt-in per repo, no-op if
 	// the task wasn't imported or the repo doesn't have it enabled). Both
 	// hooks are idempotent via task-row flags, so it's safe to call them
@@ -440,4 +443,27 @@ func (s *Syncer) cleanupMergedBranch(ctx context.Context, task gen.Task, repoPat
 		return
 	}
 	log.Info("ghsync: deleted local branch after merge", "branch", task.Branch)
+}
+
+// syncForeignChildMergeStatus mirrors a foreign child's PR state into its
+// merge_status (ADR 0041): pr_open / merged / pr_closed. Home children and
+// top-level tasks are untouched. It does not re-evaluate the parent.
+func (s *Syncer) syncForeignChildMergeStatus(ctx context.Context, task gen.Task, log *slog.Logger) {
+	if !agent.IsSubtask(task) {
+		return
+	}
+	parent, err := s.q.GetTask(ctx, *task.ParentTaskID)
+	if err != nil || !agent.IsForeignChild(parent, task) {
+		return
+	}
+	ms := agent.ForeignChildMergeStatus(task.GitState)
+	if ms == task.MergeStatus {
+		return
+	}
+	if _, err := s.q.SetTaskMergeStatus(ctx, gen.SetTaskMergeStatusParams{MergeStatus: ms, ID: task.ID}); err != nil {
+		log.Warn("ghsync: set foreign child merge status", "err", err)
+		return
+	}
+	s.hub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: task.ID})
+	s.hub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: parent.ID})
 }

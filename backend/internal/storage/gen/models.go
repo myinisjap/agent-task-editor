@@ -35,6 +35,7 @@ type AgentConfig struct {
 	PermissionMode            string    `json:"permission_mode"`
 	FallbackProviderConfigIds string    `json:"fallback_provider_config_ids"`
 	EscalationLadder          string    `json:"escalation_ladder"`
+	CrossRepoSubtasksEnabled  int64     `json:"cross_repo_subtasks_enabled"`
 }
 
 type AgentConfigSkill struct {

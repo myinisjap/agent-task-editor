@@ -65,6 +65,8 @@ type SubtaskEnv struct {
 	TaskID string
 	// Enabled gates whether the tool is exposed at all.
 	Enabled bool
+	// CrossRepo adds the optional repo_id arg to create_subtask (ADR 0041).
+	CrossRepo bool
 	// MaxSubtasks is surfaced to the agent in the tool description.
 	MaxSubtasks int64
 	// PRReview, when non-nil, exposes the submit_pr_review tool (PR_REVIEW=1)
@@ -194,6 +196,9 @@ func buildSidecarEnv(runID, resultFile string, transitions []agent.TransitionHin
 		token = tok
 		env["API_TOKEN"] = tok
 		env["MAX_SUBTASKS"] = fmt.Sprintf("%d", subtasks.MaxSubtasks)
+		if subtasks.CrossRepo {
+			env["CROSS_REPO_SUBTASKS_ENABLED"] = "1"
+		}
 	}
 	return env, token, nil
 }

@@ -358,3 +358,17 @@ func TestSubmitPRReview(t *testing.T) {
 		t.Fatalf("terminal result lost the review: %+v", term)
 	}
 }
+
+func TestCreateSubtaskTool_RepoIDOnlyWithCrossRepo(t *testing.T) {
+	props := func(m map[string]any) map[string]any {
+		return m["inputSchema"].(map[string]any)["properties"].(map[string]any)
+	}
+	off := createSubtaskTool(subtaskConfig{enabled: true, maxSubtasks: "5"})
+	if _, ok := props(off)["repo_id"]; ok {
+		t.Fatal("repo_id advertised without cross-repo flag")
+	}
+	on := createSubtaskTool(subtaskConfig{enabled: true, maxSubtasks: "5", crossRepo: true})
+	if _, ok := props(on)["repo_id"]; !ok {
+		t.Fatal("repo_id missing with cross-repo flag")
+	}
+}

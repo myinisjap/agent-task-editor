@@ -404,7 +404,9 @@ export function AgentsHelp() {
           providers that support it — see the <strong>Pricing</strong> page's help). Enabling{' '}
           <code className="bg-surface-sunken rounded px-1 font-mono">subtasks_enabled</code> lets the
           agent split its work into child tasks via the <code className="bg-surface-sunken rounded px-1 font-mono">create_subtask</code>{' '}
-          MCP tool, up to <code className="bg-surface-sunken rounded px-1 font-mono">max_subtasks</code>.{' '}
+          MCP tool, up to <code className="bg-surface-sunken rounded px-1 font-mono">max_subtasks</code>; the separate{' '}
+          <code className="bg-surface-sunken rounded px-1 font-mono">cross_repo_subtasks_enabled</code> flag also lets it target another
+          repo (that child gets its own branch and PR).{' '}
           <code className="bg-surface-sunken rounded px-1 font-mono">effort</code> is a reasoning-effort
           hint that's silently ignored on providers that don't support it.
         </p>

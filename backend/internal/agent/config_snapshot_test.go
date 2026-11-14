@@ -11,7 +11,7 @@ func TestSnapshotApplyToKeepsIdentity(t *testing.T) {
 		ID: "a", Name: "src", Labels: `["x"]`, Enabled: 1, Priority: 5,
 		SystemPrompt: "p", ProviderConfigID: "pc", Effort: "high", PermissionMode: "plan",
 		MaxTurns: 3, MaxTokens: 4, TimeoutSecs: 5, MaxCostUsd: 1.5, MaxRetries: 2, RetryBackoffSecs: 6,
-		ResumeSessions: 1, SubtasksEnabled: 1, MaxSubtasks: 7,
+		ResumeSessions: 1, SubtasksEnabled: 1, CrossRepoSubtasksEnabled: 1, MaxSubtasks: 7,
 		EnabledPlugins: `["p"]`, EnabledMcpServers: `["m"]`, CommandAllowlist: `["a"]`, CommandDenylist: `["d"]`,
 		FallbackProviderConfigIds: `["f"]`, EscalationLadder: `[{"x":1}]`,
 	}

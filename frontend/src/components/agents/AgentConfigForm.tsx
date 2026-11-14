@@ -496,6 +496,21 @@ export default function AgentConfigForm({
             </p>
           )}
           {form.subtasks_enabled && (
+            <label className="flex items-center gap-2 text-xs text-fg-muted mt-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.cross_repo_subtasks_enabled ?? false}
+                onChange={(e) => setForm((f) => ({ ...f, cross_repo_subtasks_enabled: e.target.checked }))}
+              />
+              Allow subtasks in other repos (cross-repo)
+            </label>
+          )}
+          {form.subtasks_enabled && (
+            <p className="mt-1 text-xs text-fg-subtle">
+              Lets create_subtask target another configured repo. Each such child gets its own branch and PR. Off by default.
+            </p>
+          )}
+          {form.subtasks_enabled && (
             <label className="flex items-center gap-2 text-xs text-fg-muted mt-2">
               Max subtasks per task
               <input

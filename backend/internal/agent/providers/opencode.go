@@ -332,6 +332,7 @@ func (r *OpencodeRunner) runAttempt(ctx context.Context, input agent.RunInput, l
 			TaskID:      input.Task.ID,
 			Enabled:     input.AgentConfig.SubtasksEnabled,
 			MaxSubtasks: input.AgentConfig.MaxSubtasks,
+			CrossRepo:   input.AgentConfig.CrossRepoSubtasksEnabled,
 			PRReview:    input.PRReview,
 		})
 		if err != nil {

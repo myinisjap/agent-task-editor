@@ -1,11 +1,11 @@
 # 41. Multi-repo work is a parent task with one child task per repo
 
-Status: Accepted (design; not yet implemented)
+Status: Accepted (stage 1 implemented: `create_subtask` `repo_id`, `cross_repo_subtasks_enabled`, foreign children land via their own PR; later stages not yet)
 
 The nine design questions raised in the draft have been decided by the human;
 see *Decided questions* at the end. The Decision section and staged plan below
 reflect those answers.
-AGENTS.md links to this ADR land with stage 1, since nothing is built yet.
+AGENTS.md links to this ADR landed with stage 1.
 
 ## Context
 
