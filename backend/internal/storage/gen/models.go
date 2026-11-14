@@ -251,6 +251,14 @@ type CostWarningSetting struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type IntakeAssistantSetting struct {
+	ID               int64     `json:"id"`
+	Enabled          int64     `json:"enabled"`
+	AutoCheck        int64     `json:"auto_check"`
+	ProviderConfigID *string   `json:"provider_config_id"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
 type IntakeEndpoint struct {
 	ID                  string     `json:"id"`
 	Name                string     `json:"name"`
@@ -586,6 +594,24 @@ type TaskHumanDecision struct {
 	Reply            *string    `json:"reply"`
 	ReplyRunID       *string    `json:"reply_run_id"`
 	RepliedAt        *time.Time `json:"replied_at"`
+}
+
+type TaskIntakeCheck struct {
+	TaskID              string     `json:"task_id"`
+	Status              string     `json:"status"`
+	Trigger             string     `json:"trigger"`
+	Verdict             string     `json:"verdict"`
+	Questions           string     `json:"questions"`
+	SuggestedType       string     `json:"suggested_type"`
+	SuggestedWorkflowID string     `json:"suggested_workflow_id"`
+	DuplicateIds        string     `json:"duplicate_ids"`
+	Error               string     `json:"error"`
+	ProviderConfigID    *string    `json:"provider_config_id"`
+	CostUsd             float64    `json:"cost_usd"`
+	InputTokens         int64      `json:"input_tokens"`
+	OutputTokens        int64      `json:"output_tokens"`
+	StartedAt           time.Time  `json:"started_at"`
+	FinishedAt          *time.Time `json:"finished_at"`
 }
 
 type TaskLabelHistory struct {
