@@ -174,12 +174,14 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		effects := h.sideEffectMap(r.Context(), ids)
 		autoMerges := h.autoMergeMap(r.Context(), ids)
 		pendings := h.sourcePendingMap(r.Context(), ids)
+		prSources := h.prReviewMap(r.Context(), ids)
 		fanouts := h.fanoutMap(r.Context(), ids)
 		resp := toTaskResponses(children)
 		for i := range resp {
 			resp[i] = applySideEffects(resp[i], effects)
 			resp[i] = applyAutoMerge(resp[i], autoMerges)
 			resp[i] = applySourcePending(resp[i], pendings)
+			resp[i] = applyPRReview(resp[i], prSources)
 			resp[i] = applyFanout(resp[i], fanouts)
 			resp[i] = applyActiveRunStatus(applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons), runStatuses)
 		}
@@ -217,11 +219,13 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	autoMerges := h.autoMergeMap(r.Context(), ids)
 	fanouts := h.fanoutMap(r.Context(), ids)
 	pendings := h.sourcePendingMap(r.Context(), ids)
+	prSources := h.prReviewMap(r.Context(), ids)
 	resp := toTaskResponses(tasks)
 	for i := range resp {
 		resp[i] = applySideEffects(resp[i], effects)
 		resp[i] = applyAutoMerge(resp[i], autoMerges)
 		resp[i] = applySourcePending(resp[i], pendings)
+		resp[i] = applyPRReview(resp[i], prSources)
 		resp[i] = applyFanout(resp[i], fanouts)
 		resp[i] = applyActiveRunStatus(applyBlockReason(applyQueuePosition(applyRollup(applyDepCounts(resp[i], counts), rollups), positions), blockReasons), runStatuses)
 	}
@@ -453,6 +457,7 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	resp = applySideEffects(resp, h.sideEffectMap(r.Context(), ids))
 	resp = applyAutoMerge(resp, h.autoMergeMap(r.Context(), ids))
 	resp = applySourcePending(resp, h.sourcePendingMap(r.Context(), ids))
+	resp = applyPRReview(resp, h.prReviewMap(r.Context(), ids))
 	if cost, cerr := h.q.SumTaskCost(r.Context(), task.ID); cerr == nil {
 		resp.CumulativeCostUsd = cost
 	}
@@ -973,6 +978,7 @@ func (h *TasksHandler) respondTask(w http.ResponseWriter, r *http.Request, taskI
 	ids := []string{taskID}
 	resp := applySideEffects(toTaskResponse(task), h.sideEffectMap(r.Context(), ids))
 	resp = applySourcePending(resp, h.sourcePendingMap(r.Context(), ids))
+	resp = applyPRReview(resp, h.prReviewMap(r.Context(), ids))
 	JSON(w, http.StatusOK, resp)
 }
 

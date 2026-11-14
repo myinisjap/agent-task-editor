@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -53,13 +54,18 @@ func OnTaskTerminal(ctx context.Context, q TaskTerminalStore, task gen.Task, rep
 	lock.Lock()
 	defer lock.Unlock()
 
-	if !merged && repo.RemoteUrl != nil && *repo.RemoteUrl != "" && task.Branch != "" {
+	reviewOnly := forge.IsReviewSource(task.Source)
+	if !merged && !reviewOnly && repo.RemoteUrl != nil && *repo.RemoteUrl != "" && task.Branch != "" {
 		if err := PushBranch(ctx, gitDir, task.Branch); err != nil {
 			return fmt.Errorf("push branch %s: %w", task.Branch, err)
 		}
 	}
 	if err := RemoveWorktree(ctx, repo.Path, task.WorktreePath); err != nil {
 		return fmt.Errorf("remove worktree: %w", err)
+	}
+	if reviewOnly && task.Branch != "" {
+		// Throwaway local branch for a review-only PR task; never pushed.
+		_ = DeleteLocalBranch(ctx, repo.Path, task.Branch)
 	}
 	if err := q.ClearTaskWorktreePath(ctx, task.ID); err != nil {
 		return fmt.Errorf("clear worktree_path: %w", err)

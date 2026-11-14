@@ -67,6 +67,9 @@ type SubtaskEnv struct {
 	Enabled bool
 	// MaxSubtasks is surfaced to the agent in the tool description.
 	MaxSubtasks int64
+	// PRReview, when non-nil, exposes the submit_pr_review tool (PR_REVIEW=1)
+	// and passes the prior finding ids it may mark resolved.
+	PRReview *agent.PRReviewInput
 }
 
 // Prepare creates temp files for one agent run and returns the config.
@@ -163,6 +166,15 @@ func buildSidecarEnv(runID, resultFile string, transitions []agent.TransitionHin
 		"RESULT_FILE":     resultFile,
 		"TRANSITIONS":     string(transitionsJSON),
 		"REVIEW_COMMENTS": string(reviewCommentsJSON),
+	}
+	if subtasks != nil && subtasks.PRReview != nil {
+		env["PR_REVIEW"] = "1"
+		ids := make([]string, 0, len(subtasks.PRReview.PriorFindings))
+		for _, f := range subtasks.PRReview.PriorFindings {
+			ids = append(ids, f.ID)
+		}
+		idsJSON, _ := json.Marshal(ids)
+		env["PR_REVIEW_PRIOR_IDS"] = string(idsJSON)
 	}
 	token := ""
 	// Expose create_subtask only when the run's config opted in. The sidecar

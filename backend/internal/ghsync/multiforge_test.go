@@ -236,6 +236,18 @@ func TestIngestReviewComments_TagsSourceWithResolvedForgeName(t *testing.T) {
 	}
 }
 
+func (f *fakeSecondForge) GetPR(ctx context.Context, repoName string, number int) (forge.PullRequest, error) {
+	return forge.PullRequest{}, nil
+}
+
+func (f *fakeSecondForge) ListOpenPRs(ctx context.Context, repoName string) ([]forge.PullRequest, error) {
+	return nil, nil
+}
+
+func (f *fakeSecondForge) PostCommentReview(ctx context.Context, repoName string, number int, r forge.ReviewSubmission) (string, error) {
+	return "", nil
+}
+
 func (f *fakeSecondForge) PRChecks(ctx context.Context, repoName string, prNumber int) ([]forge.Check, error) {
 	return nil, nil
 }

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"sort"
 	"time"
 
@@ -69,6 +70,11 @@ func SuccessTarget(transitions []gen.WorkflowTransition, fromLabel string) (targ
 // measure human judgment (gate exits, rule-proposal evidence, escapes) exclude it.
 // Must match the literals in config.go, SQL queries, migration 086 and the frontend.
 const ActorPRFeedbackSync = "pr-feedback-sync"
+
+// ActorPRReviewSync is the reserved actor_id recorded when a pushed commit on a
+// reviewed PR re-opens its review-only task. Excluded from autonomy escapes like
+// ActorPRFeedbackSync. Must match config.go and the SQL literals.
+const ActorPRReviewSync = "pr-review-sync"
 
 // ActorAutoMerge is the reserved actor_id on the label-history row recorded
 // when ATE merges a task's PR itself (auto-merge policy). Like
@@ -147,6 +153,11 @@ type Engine struct {
 	// enqueue a "create_pr" side effect, regardless of who triggered the move.
 	// Used to push the task's branch and open a pull request.
 	OnCreatePR func(ctx context.Context, task gen.Task) error
+	// OnPRReviewPost, if set, makes a transition of a review-only PR task
+	// (forge.IsReviewSource) into a terminal label enqueue a "pr_review_post"
+	// side effect that posts the agent's review on the PR.
+	OnPRReviewPost func(ctx context.Context, task gen.Task) error
+
 	// OnAutoMerge runs the "auto_merge" side effect enqueued by
 	// EnqueueAutoMerge: merge the task's PR through the forge. Wrap errors in
 	// Permanent when a retry cannot help (e.g. branch protection refused).
@@ -316,6 +327,9 @@ func (e *Engine) transition(ctx context.Context, taskID, toLabel string, trigger
 	var effects []string
 	if toIsTerminal && e.OnTerminal != nil {
 		effects = append(effects, SideEffectTerminal)
+	}
+	if toIsTerminal && e.OnPRReviewPost != nil && forge.IsReviewSource(task.Source) {
+		effects = append(effects, SideEffectPRReviewPost)
 	}
 	if toCreatePR && e.OnCreatePR != nil {
 		effects = append(effects, SideEffectCreatePR)

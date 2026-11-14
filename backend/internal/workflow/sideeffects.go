@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"log/slog"
 	"time"
 
@@ -25,6 +26,10 @@ const (
 	// SideEffectLeaveNotReady applies the in-progress signal to the source issue
 	// after the task leaves the human-gate label.
 	SideEffectLeaveNotReady = "leave_not_ready"
+	// SideEffectPRReviewPost delivers the pending review of a review-only PR
+	// task to the forge after it reaches a terminal label.
+	SideEffectPRReviewPost = "pr_review_post"
+
 	// SideEffectAutoMerge merges the task's open PR through the forge once the
 	// repo's auto-merge policy found it safe (see EnqueueAutoMerge).
 	SideEffectAutoMerge = "auto_merge"
@@ -233,6 +238,13 @@ func (e *Engine) execSideEffect(ctx context.Context, se gen.TaskSideEffect) erro
 	if err != nil {
 		return fmt.Errorf("get task: %w", err)
 	}
+	// Posting a review stays valid whatever label the task has moved to since.
+	if se.Kind == SideEffectPRReviewPost {
+		if e.OnPRReviewPost == nil {
+			return nil
+		}
+		return e.OnPRReviewPost(ctx, task)
+	}
 	// A merged/closed PR means the branch's work is upstream; push and PR
 	// effects can never be needed (and would fail: the local branch is gone).
 	if (se.Kind == SideEffectTerminal || se.Kind == SideEffectCreatePR || se.Kind == SideEffectAutoMerge) &&
@@ -258,6 +270,9 @@ func (e *Engine) execSideEffect(ctx context.Context, se gen.TaskSideEffect) erro
 		}
 		return e.OnTerminal(ctx, task)
 	case SideEffectCreatePR:
+		if forge.IsReviewSource(task.Source) {
+			return nil // review-only PR tasks never open pull requests
+		}
 		if e.OnCreatePR == nil || !on(func(l gen.WorkflowLabel) bool { return l.CreatePr != 0 }) {
 			return nil
 		}

@@ -53,6 +53,8 @@ type RouterDeps struct {
 	GitHubWebhookSecret string
 	// PRRefresher receives matched webhook events (the ghsync Syncer).
 	PRRefresher handlers.PRRefresher
+	// PRReview triggers the review-only PR path from pull_request webhooks (optional).
+	PRReview handlers.PRReviewTrigger
 
 	RepoBaseDir string
 	// ListenAddr is the HTTP server's bind address (e.g. ":8080"); used only
@@ -201,6 +203,9 @@ func NewRouter(deps RouterDeps) http.Handler {
 	// against GITHUB_WEBHOOK_SECRET (404 when unset). It sits on a literal path
 	// so it wins over the /api/v1 mount below.
 	webhookH := handlers.NewGitHubWebhookHandler(deps.GitHubWebhookSecret, deps.PRRefresher)
+	if deps.PRReview != nil {
+		webhookH.SetPRReviewTrigger(deps.PRReview)
+	}
 	r.Post("/api/v1/github/webhook", webhookH.Handle)
 
 	// Intake webhook receiver - outside BearerAuth for the same reason: the

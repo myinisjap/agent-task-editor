@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/myinisjap/agent-task-editor/backend/internal/gitcmd"
+	"github.com/myinisjap/agent-task-editor/backend/internal/prreview"
 	"log/slog"
 	"net/http"
 	"os"
@@ -146,6 +147,10 @@ func main() {
 		slog.Error("failed to seed default workflow", "err", err)
 		os.Exit(1)
 	}
+	if err := storage.SeedPRReviewWorkflow(seedCtx, db); err != nil {
+		slog.Error("failed to seed PR review workflow", "err", err)
+		os.Exit(1)
+	}
 
 	// Mark runs left 'running'/'pending' by a previous crash as 'interrupted'
 	// (not 'failed') and clear every task's dispatch lock so they re-dispatch;
@@ -256,6 +261,19 @@ func main() {
 			return err
 		}
 		return nil
+	}
+
+	// Review-only PR path (opt-in per repo): the ingester turns eligible open
+	// PRs into review tasks (webhook + polling), the poster delivers the
+	// agent's review back on the PR as a comment-type review via the outbox.
+	prIngester := prreview.New(db.SQL(), engine, pub)
+	prPoster := prreview.NewPoster(db.SQL(), pub)
+	engine.OnPRReviewPost = func(ctx context.Context, task gen.Task) error {
+		repo, err := termQ.GetRepo(ctx, task.RepoID)
+		if err != nil {
+			return fmt.Errorf("get repo: %w", err)
+		}
+		return prPoster.Post(ctx, task, repo)
 	}
 
 	// On the auto_merge outbox effect (enqueued by ghsync when a repo's opt-in
@@ -461,6 +479,7 @@ func main() {
 		MetricsPublic:       cfg.MetricsPublic,
 		GitHubWebhookSecret: cfg.GitHubWebhookSecret,
 		PRRefresher:         ghSyncer,
+		PRReview:            prIngester,
 		RepoBaseDir:         cfg.RepoBaseDir,
 		ListenAddr:          listenAddr,
 		UploadDir:           uploadDir,
@@ -635,6 +654,7 @@ func main() {
 		return health.ProviderReady(provider, health.Input{}, nil)
 	})
 	go ghSyncer.Run(ctx)
+	go prIngester.Run(ctx, cfg.GitHubSyncInterval)
 	go issueImporter.Run(ctx)
 	go taskScheduler.Run(ctx)
 	if backupScheduler != nil {

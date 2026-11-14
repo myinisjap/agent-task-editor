@@ -89,6 +89,7 @@ sql:
       - "internal/storage/migrations/090_automation_recipes.up.sql"
       - "internal/storage/migrations/088_lesson_distiller.up.sql"
       - "internal/storage/migrations/089_repo_auto_merge.up.sql"
+      - "internal/storage/migrations/091_pr_review.up.sql"
     gen:
       go:
         package: "gen"

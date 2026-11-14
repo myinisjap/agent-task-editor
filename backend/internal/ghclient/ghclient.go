@@ -834,6 +834,18 @@ func ParseGitHubName(remoteURL string) (string, bool) {
 	return "", false
 }
 
+func (GitHub) GetPR(ctx context.Context, repoName string, number int) (forge.PullRequest, error) {
+	return GetPR(ctx, repoName, number)
+}
+
+func (GitHub) ListOpenPRs(ctx context.Context, repoName string) ([]forge.PullRequest, error) {
+	return ListOpenPRs(ctx, repoName)
+}
+
+func (GitHub) PostCommentReview(ctx context.Context, repoName string, number int, r forge.ReviewSubmission) (string, error) {
+	return PostCommentReview(ctx, repoName, number, r)
+}
+
 // GetPRChecks returns every check run and commit status on the PR's head
 // commit, bucketed. A check run that has not completed is "pending". Statuses
 // come from the combined-status endpoint, which already reports only the

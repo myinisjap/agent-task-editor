@@ -17,7 +17,7 @@ function formatTimestamp(iso: string): string {
 // action, subtasks_complete = slate as a neutral system trigger).
 const isPolicy = (e: TaskLabelHistoryEntry) => e.actor_id === 'policy'
 const isAutoMerge = (e: TaskLabelHistoryEntry) => e.actor_id === 'auto-merge'
-const isSync = (e: TaskLabelHistoryEntry) => e.actor_id === 'pr-feedback-sync' || isAutoMerge(e)
+const isSync = (e: TaskLabelHistoryEntry) => e.actor_id === 'pr-feedback-sync' || e.actor_id === 'pr-review-sync' || isAutoMerge(e)
 
 function triggerBadgeClass(trigger: string): string {
   switch (trigger) {

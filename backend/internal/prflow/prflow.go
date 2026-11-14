@@ -63,6 +63,9 @@ func New(store Store, wb *writeback.Writeback) *Service {
 // on the task, and runs the issue write-back. It is idempotent: an existing PR
 // for the branch is returned rather than erroring.
 func (s *Service) CreateForTask(ctx context.Context, task gen.Task, repo gen.Repo) (updated gen.Task, prURL string, err error) {
+	if forge.IsReviewSource(task.Source) {
+		return gen.Task{}, "", fmt.Errorf("%w: review-only PR tasks never push or open pull requests", ErrPrecondition)
+	}
 	if task.Branch == "" {
 		return gen.Task{}, "", fmt.Errorf("%w: task has no branch yet", ErrPrecondition)
 	}

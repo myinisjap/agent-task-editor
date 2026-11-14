@@ -3,6 +3,7 @@ import type { TaskCommand } from '../stores/commandPalette'
 import { canHumanMove } from './humanMoves'
 import { humanActionsFor, humanPathTargetLabel } from './humanGate'
 import { labelDisplayName } from './labelDisplay'
+import { isReviewSource } from './prReview'
 
 export interface TaskCommandHandlers {
   moveLabel: (label: string) => void | Promise<void>
@@ -42,7 +43,10 @@ export function buildTaskCommands(args: {
     if (canReject) add('reject', 'Request changes', () => handlers.requestChanges(), 'reject')
   }
   if (canRerun) add('rerun', 'Rerun', () => handlers.rerun(), 'retry run agent')
-  if (task.pr_url) {
+  if (isReviewSource(task.source)) {
+    const url = task.pr_review?.pr_url
+    if (url) add('open-pr', 'Open PR', () => handlers.openPR(url), 'pull request github')
+  } else if (task.pr_url) {
     const url = task.pr_url
     add('open-pr', 'Open PR', () => handlers.openPR(url), 'pull request github')
   } else if (task.branch) {
