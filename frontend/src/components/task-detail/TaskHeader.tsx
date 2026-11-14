@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom'
 import { api, authedRawFetch, type Task, type Repo, type WorkflowLabel, type WorkflowTransition } from '../../api/client'
 import GitStateBadge from '../board/GitStateBadge'
 import SideEffectBadge from '../shared/SideEffectBadge'
+import AutoMergeBadge from '../shared/AutoMergeBadge'
 import GitHubAuthWarning from '../shared/GitHubAuthWarning'
 import { PRIORITY_LEVELS, priorityLabel } from '../../lib/priority'
 import AgentNotesModal from './AgentNotesModal'
@@ -405,6 +406,11 @@ export default function TaskHeader({
               effects={task.side_effects}
               onRetry={() => { void api.tasks.retrySideEffects(task.id).catch(() => {}) }}
             />
+          </Row>
+        )}
+        {task.auto_merge && (
+          <Row label="Auto-merge" wide>
+            <AutoMergeBadge autoMerge={task.auto_merge} />
           </Row>
         )}
         {task.branch && (

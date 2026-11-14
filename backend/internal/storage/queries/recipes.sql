@@ -1,5 +1,5 @@
 -- Automation recipes: tag/untag the objects a recipe install creates. See
--- migration 089 and internal/recipes. recipe_id '' = not from a recipe.
+-- migration 090 and internal/recipes. recipe_id '' = not from a recipe.
 
 -- name: SetTaskTemplateRecipe :exec
 UPDATE task_templates SET recipe_id = ? WHERE id = ?;

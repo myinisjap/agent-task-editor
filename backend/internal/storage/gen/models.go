@@ -366,6 +366,8 @@ type Repo struct {
 	PreviewCommand                string    `json:"preview_command"`
 	PreviewRoutes                 string    `json:"preview_routes"`
 	PreviewPathsGlob              string    `json:"preview_paths_glob"`
+	AutoMergeMode                 string    `json:"auto_merge_mode"`
+	AutoMergeMethod               string    `json:"auto_merge_method"`
 }
 
 type RepoLesson struct {
@@ -451,6 +453,15 @@ type Task struct {
 	MatchedRuleID           *string    `json:"matched_rule_id"`
 	ConsecutiveFailureCount int64      `json:"consecutive_failure_count"`
 	AlwaysAsk               int64      `json:"always_ask"`
+}
+
+type TaskAutoMerge struct {
+	TaskID    string    `json:"task_id"`
+	State     string    `json:"state"`
+	Reason    string    `json:"reason"`
+	Message   string    `json:"message"`
+	HeadSha   string    `json:"head_sha"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type TaskBase struct {

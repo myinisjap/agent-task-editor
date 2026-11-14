@@ -639,6 +639,23 @@ The feedback is deduped on `"<head sha>|<base ref>"`, so:
 
 The move is recorded in label history with trigger `human`, actor `pr-feedback-sync` and note `GitHub PR review feedback ingested`. Gate backtests, autonomy rule proposals and escape detection do not count it as a human rejection.
 
+### Auto-merge when green (opt-in)
+
+By default the pipeline ends at "PR open" and you merge yourself. A repo can opt in to letting ATE merge the PR:
+
+| Repo field | Meaning |
+|---|---|
+| `auto_merge_mode` | `off` (default) or `when_green` |
+| `auto_merge_method` | `squash` (default), `merge` or `rebase` |
+
+Auto-merge is per repo (there is no per-label switch). It is re-evaluated whenever the task's PR state is refreshed (GitHub webhook, or the polling fallback), never in its own loop. A PR is merged only when **all** of these hold: the PR was opened for the task's branch and is open; it is not a draft and the forge reports it mergeable (no conflicts); every check on the head commit has passed (none pending or failed); no reviewer's latest decisive review is "changes requested"; the task has no live agent run and is not paused, archived or marked `always_ask`. A repo that reports no checks at all is treated as having no CI after a ~3 minute grace period.
+
+The merge goes through the side-effect outbox and is pinned to the evaluated head SHA, so a push between the check and the merge fails safely and is simply re-evaluated. If the forge refuses (branch protection, a required review) the failure is not retried: it shows in **Needs you** with the forge's message and Retry/Dismiss. CI failures and conflicts keep flowing through the PR-feedback path above. After the merge, the normal merged-PR sync moves the task to its terminal label and cleans up. The merge is recorded in label history with trigger `human` and reserved actor `auto-merge` (also reserved in `API_TOKENS`); like `pr-feedback-sync` it is not counted as a human decision.
+
+Task Detail and the board card show "Auto-merge when green" with the blocking reason while the PR is not yet eligible.
+
+> **Warning:** with no `verify_command`, or with a gate upstream on Auto, a PR can be opened and merged with no human involved. The repo edit form warns about both.
+
 By default, newly-ingested PR feedback is surfaced in the prompt but the task
 stays wherever a human put it — someone still has to click Reject (or
 whatever the workflow's manual transition is) to send it back to an agent.

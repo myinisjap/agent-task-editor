@@ -95,3 +95,10 @@ func TestMergeability_Constants(t *testing.T) {
 		t.Fatal("MergeableUnknown must be distinct from the other two states")
 	}
 }
+
+func (fakeForge) PRChecks(ctx context.Context, repoName string, prNumber int) ([]forge.Check, error) {
+	return nil, nil
+}
+func (fakeForge) MergePullRequest(ctx context.Context, repoName string, prNumber int, method forge.MergeMethod, expectedHeadSHA string) error {
+	return nil
+}

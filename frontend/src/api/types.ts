@@ -5616,7 +5616,7 @@ export interface paths {
         put?: never;
         /**
          * Register a repo
-         * @description The body also accepts verify_command (string) and verify_timeout_seconds (integer, 1-3600); see the Repo schema. It also accepts preview_command, preview_routes and preview_paths_glob (strings).
+         * @description The body also accepts verify_command (string) and verify_timeout_seconds (integer, 1-3600); see the Repo schema. It also accepts preview_command, preview_routes and preview_paths_glob (strings). It also accepts auto_merge_mode (off|when_green) and auto_merge_method (squash|merge|rebase).
          */
         post: {
             parameters: {
@@ -5742,6 +5742,16 @@ export interface paths {
                         preview_routes?: string;
                         /** @description Replaces the newline-separated UI path globs (empty = defaults). Omit to leave unchanged. */
                         preview_paths_glob?: string;
+                        /**
+                         * @description Auto-merge policy. Omit to leave unchanged.
+                         * @enum {string}
+                         */
+                        auto_merge_mode?: "off" | "when_green";
+                        /**
+                         * @description Auto-merge method. Omit to leave unchanged.
+                         * @enum {string}
+                         */
+                        auto_merge_method?: "squash" | "merge" | "rebase";
                     };
                 };
             };
@@ -8165,6 +8175,18 @@ export interface components {
             active_run_status?: "pending" | "running" | "waiting_human";
             /** @description Outstanding post-transition side effects (branch push, PR creation, source-issue write-back) from the durable outbox: rows that are waiting, being retried after a failure, or failed for good. Populated on GET /tasks and GET /tasks/{id}; always an array, empty when nothing is outstanding or on mutation responses. */
             side_effects?: components["schemas"]["TaskSideEffect"][];
+            /** @description Latest auto-merge evaluation of the task's open PR when the repo's auto_merge_mode is when_green. null when it does not apply. */
+            auto_merge?: {
+                /**
+                 * @description waiting = blocked (see reason/message); merging = merge queued
+                 * @enum {string}
+                 */
+                state: "waiting" | "merging";
+                /** @description Blocking code, e.g. checks_pending, checks_failed, conflict, changes_requested, draft, always_ask, paused, active_run, no_checks, merge_refused; empty when merging */
+                reason: string;
+                /** @description Human-readable explanation of reason */
+                message: string;
+            } | null;
             /** @description An edit to the source issue that the sync importer held back because a human had already approved the task (it passed a human gate). Null when none is pending. Apply or discard it via /tasks/{id}/source-update. Populated on GET /tasks and GET /tasks/{id} and the source-update responses. */
             source_pending_update?: components["schemas"]["TaskSourcePendingUpdate"] | null;
             /** @description Per-task override: when true the autonomy policy always asks a human at gates (a hard stop). Set via PATCH /tasks/{id}/always-ask. */
@@ -8188,10 +8210,10 @@ export interface components {
         /** @description One outstanding row of the side-effect outbox. A label transition records the work it owes (pushing the branch, opening a PR, updating the source issue) in the same transaction as the move; a background worker runs it with exponential backoff. Rows are deleted on success, so only unfinished work is listed. A pending row with attempts > 0 and a last_error is "failed, retrying"; status failed means the attempt budget is exhausted and it needs a manual retry. */
         TaskSideEffect: {
             /**
-             * @description terminal = push the branch and tear down the worktree (or merge a subtask back); create_pr = push and open a pull request; leave_not_ready = apply the in-progress signal to the source issue.
+             * @description auto_merge = merge the task's PR through the forge (repo auto-merge policy; a forge refusal fails it at once, no retries); terminal = push the branch and tear down the worktree (or merge a subtask back); create_pr = push and open a pull request; leave_not_ready = apply the in-progress signal to the source issue.
              * @enum {string}
              */
-            kind: "terminal" | "create_pr" | "leave_not_ready";
+            kind: "terminal" | "create_pr" | "leave_not_ready" | "auto_merge";
             /** @enum {string} */
             status: "pending" | "running" | "failed";
             /** @description Failed attempts so far */
@@ -8882,6 +8904,16 @@ export interface components {
             preview_routes?: string;
             /** @description Newline-separated globs deciding when a diff counts as a UI change. Empty = frontend/**, web/**, src/**\/*.{tsx,jsx,vue,svelte,css}. */
             preview_paths_glob?: string;
+            /**
+             * @description Opt-in auto-merge policy (default off). when_green: ATE merges a task's PR once all checks pass, it is not a draft or conflicting, has no unresolved changes-requested review and the task has no live run, is not paused and not always_ask. See docs/workflows.md.
+             * @enum {string}
+             */
+            auto_merge_mode?: "off" | "when_green";
+            /**
+             * @description Merge method used by auto-merge (default squash).
+             * @enum {string}
+             */
+            auto_merge_method?: "squash" | "merge" | "rebase";
             /** Format: date-time */
             created_at: string;
         };

@@ -73,6 +73,10 @@ type taskResponse struct {
 	// retrying after a failure, or failed for good. Always an array; empty
 	// when nothing is outstanding. Populated on the list and single-task GET.
 	SideEffects []sideEffectResponse `json:"side_effects"`
+	// AutoMerge is the latest auto-merge evaluation of the task's open PR
+	// ("Auto-merge when green" state and, when blocked, why). Nil when the
+	// repo's auto-merge policy does not apply to the task.
+	AutoMerge *autoMergeResponse `json:"auto_merge"`
 	// SourcePendingUpdate is an upstream issue edit the importer held back
 	// because a human had already approved the task. Nil when none is pending.
 	// Applied or discarded via /tasks/{id}/source-update.
@@ -146,6 +150,38 @@ func (h *TasksHandler) sideEffectMap(ctx context.Context, ids []string) map[stri
 func applySideEffects(resp taskResponse, m map[string][]sideEffectResponse) taskResponse {
 	if effects, ok := m[resp.ID]; ok {
 		resp.SideEffects = effects
+	}
+	return resp
+}
+
+// autoMergeResponse is the wire form of a task_auto_merge row.
+type autoMergeResponse struct {
+	// State is "waiting" (blocked, see Reason/Message) or "merging" (queued).
+	State   string `json:"state"`
+	Reason  string `json:"reason"`
+	Message string `json:"message"`
+}
+
+// autoMergeMap fetches the auto-merge verdicts for the given task ids.
+func (h *TasksHandler) autoMergeMap(ctx context.Context, ids []string) map[string]*autoMergeResponse {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := h.q.ListTaskAutoMergeForTasks(ctx, ids)
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]*autoMergeResponse, len(rows))
+	for _, r := range rows {
+		m[r.TaskID] = &autoMergeResponse{State: r.State, Reason: r.Reason, Message: r.Message}
+	}
+	return m
+}
+
+// applyAutoMerge sets the auto-merge verdict on a response.
+func applyAutoMerge(resp taskResponse, m map[string]*autoMergeResponse) taskResponse {
+	if v, ok := m[resp.ID]; ok {
+		resp.AutoMerge = v
 	}
 	return resp
 }

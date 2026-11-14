@@ -366,6 +366,10 @@ Nothing in the default workflow routes back to `not_ready`, so a task wedged in 
 - It goes through the engine's `ForceTransition`, so everything that normally happens on entering a label still does: `active_agent_run_id` is cleared, `task.label_changed` is published, and terminal / create-PR / leave-`not_ready` hooks fire.
 - Label history records it with trigger `human`, the actor, and a note starting with `Forced move`.
 
+## Auto-merge
+
+A repo can opt in to ATE merging a task's PR once its checks are green (`auto_merge_mode: when_green`, method squash/merge/rebase). It runs on PR refresh, goes through the side-effect outbox, and the existing merged-PR sync then finishes the task. Eligibility rules, failure handling and warnings: [task-sources.md](task-sources.md#auto-merge-when-green-opt-in).
+
 ## Task Dependencies
 
 A task can declare **dependencies** on other tasks in the same workflow — a way
