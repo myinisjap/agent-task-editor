@@ -60,6 +60,7 @@ function workflow(overrides: Partial<Workflow> = {}): Workflow {
     description: '',
     labels: [],
     transitions: [],
+    is_default: (overrides.name ?? 'Default') === 'Default',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,

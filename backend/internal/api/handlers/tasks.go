@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -21,6 +20,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/escape"
 	"github.com/myinisjap/agent-task-editor/backend/internal/intakecheck"
 	"github.com/myinisjap/agent-task-editor/backend/internal/reviewbrief"
+	"github.com/myinisjap/agent-task-editor/backend/internal/storage"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/writeback"
@@ -396,25 +396,11 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // resolveDefaultWorkflowID picks the workflow a task lands on when the
-// caller doesn't supply one. It prefers the workflow literally named
-// "Default" (seeded on first run — see storage.SeedDefaultWorkflow), which
-// keeps this deterministic without a schema change. If that workflow has
-// been renamed or deleted, it falls back to the alphabetically-first
-// workflow by name so the board's workflow dropdown and this fallback stay
-// consistent with each other.
+// caller doesn't supply one. See storage.PickDefaultWorkflow: the workflow
+// named "Default", else the alphabetically-first one that isn't the seeded
+// "PR review" workflow.
 func (h *TasksHandler) resolveDefaultWorkflowID(ctx context.Context) (string, error) {
-	if wf, err := h.q.GetWorkflowByName(ctx, "Default"); err == nil {
-		return wf.ID, nil
-	}
-	workflows, err := h.q.ListWorkflows(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to load workflows")
-	}
-	if len(workflows) == 0 {
-		return "", fmt.Errorf("no workflows configured")
-	}
-	sort.Slice(workflows, func(i, j int) bool { return workflows[i].Name < workflows[j].Name })
-	return workflows[0].ID, nil
+	return storage.DefaultWorkflowID(ctx, h.q)
 }
 
 // resolveInitialLabel picks the label a freshly created task starts on.

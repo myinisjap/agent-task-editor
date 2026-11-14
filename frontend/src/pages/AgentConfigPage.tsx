@@ -9,6 +9,7 @@ import AgentSidebar from '../components/agents/AgentSidebar'
 import AgentConfigForm, { type FormState } from '../components/agents/AgentConfigForm'
 import ConfirmDialog from '../components/shared/ConfirmDialog'
 import { errMessage } from '../lib/errMessage'
+import { defaultWorkflow } from '../lib/defaultWorkflow'
 import HelpModal from '../components/shared/HelpModal'
 import { Button, PageFrame } from '../components/ui'
 import { AgentsHelp } from '../components/shared/pageHelp'
@@ -51,7 +52,7 @@ export default function AgentConfigPage() {
   // store refreshes don't auto-select an agent over the empty form.
   const [creatingNew, setCreatingNew] = useState(false)
 
-  const availableLabels = workflows[0]?.labels.map((l) => l.name) ?? []
+  const availableLabels = defaultWorkflow(workflows)?.labels.map((l) => l.name) ?? []
 
   useEffect(() => {
     fetchAgents()

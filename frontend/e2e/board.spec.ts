@@ -11,10 +11,12 @@ test.describe('board and task-detail smoke flow', () => {
   test('load board, create a task, open its detail page, and mount the log pane', async ({ page }) => {
     const taskTitle = `E2E smoke task ${Date.now()}`
 
-    // 1. Load board
+    // 1. Load board.
+    // Columns appear only after the workflow list loads, so wait on the
+    // first column itself with a budget sized for a cold compose stack.
     await page.goto('board')
     await expect(page.getByRole('button', { name: 'About the board' })).toBeVisible()
-    await expect(page.getByText('Not ready', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText('Not ready', { exact: true }).first()).toBeVisible({ timeout: 20_000 })
 
     // 2. Create a task
     const addTaskButton = page.getByRole('button', { name: '+ Add task' })

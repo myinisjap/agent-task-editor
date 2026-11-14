@@ -402,3 +402,16 @@ type ReviewSubmission struct {
 // ErrInlineAnchor means the forge rejected the inline comment positions of a
 // review (e.g. a line outside the diff).
 var ErrInlineAnchor = errors.New("forge: inline review comment anchor rejected")
+
+// Unregister removes a previously Registered Forge (matched by interface
+// equality). Intended for tests that register a throwaway fake and must not
+// leak it into later tests: the registry is process-global and first-match
+// wins, so a leaked fake shadows the next test's fake for the same host.
+func Unregister(f Forge) {
+	for i, cand := range registry {
+		if cand == f {
+			registry = append(registry[:i:i], registry[i+1:]...)
+			return
+		}
+	}
+}

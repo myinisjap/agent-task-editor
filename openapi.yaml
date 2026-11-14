@@ -1576,6 +1576,7 @@ components:
         transitions: { type: array, items: { $ref: "#/components/schemas/WorkflowTransition" } }
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
+        is_default:  { type: boolean, description: 'True for the board default workflow: the one named "Default", else the alphabetically-first workflow other than the seeded "PR review" workflow. Exactly one workflow is default when any exist.' }
       required: [id, name, description, labels, transitions, created_at, updated_at]
 
     AgentConfigSnapshot:

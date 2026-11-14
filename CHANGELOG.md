@@ -19,6 +19,10 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Fixed
+- A fresh install could open the board (and default new tasks, the E2E setup, and the agent-config label picker) on the seeded "PR review" workflow instead of "Default". The default workflow is now chosen by one server-side rule, exposed as `is_default` on `GET /workflows`, and the PR review workflow never becomes the implicit default while another workflow exists.
+- **Board no longer stays empty after a transient workflow-list failure.** The workflow store now retries the initial fetch a few times instead of swallowing the first error.
+
 ### Added
 - **Cross-repo subtasks (multi-repo stage 1, ADR 0041).** `create_subtask` / `POST /tasks/{id}/subtasks` accept an optional `repo_id`, gated by the new agent-config flag `cross_repo_subtasks_enabled` (off by default; also requires `subtasks_enabled`; migration 096). A subtask in another repo (a "foreign child", derived from the repo mismatch) uses the parent's workflow, forks from its own repo's base, and on reaching a terminal label is pushed and gets its own PR instead of merging into the parent branch; its `merge_status` follows the PR (`pending` → `pr_open` → `merged` / `pr_closed`). Home children keep the existing merge-back. Parent readiness, prompts and UI for foreign children come in later stages.
 - **Steer a running agent.** `POST /tasks/{id}/runs/{run_id}/steer` (a Steer box on Task Detail, a command-palette entry, and the board MCP `steer_run` tool in the `full` profile) interrupts a `running` run and starts a follow-up run that resumes the session with your note (`STEERING NOTE FROM HUMAN`). The interrupted run ends `interrupted`, not failed: no retry budget, escalation or pause, and the dispatch lock is handed over without a gap. The note and actor are stored with the task's human decisions.
