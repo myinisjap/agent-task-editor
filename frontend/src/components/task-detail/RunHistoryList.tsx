@@ -195,7 +195,8 @@ export default function RunHistoryList({
         </div>
       )}
 
-      {isRunning && onSteer && <SteerBox onSteer={onSteer} disabled={actionPending} />}
+      {/* Offered whenever the task has a live running run (the page passes onSteer only then), even if an older run is selected. */}
+      {onSteer && <SteerBox onSteer={onSteer} disabled={actionPending} />}
 
       {isRunning && (
         <button

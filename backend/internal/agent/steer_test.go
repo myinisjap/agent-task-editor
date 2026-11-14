@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -100,5 +101,40 @@ func TestE2E_SteerRunningRun_ResumesWithNoteWithoutFailure(t *testing.T) {
 	decs, err := h.q.ListTaskHumanDecisions(context.Background(), taskID)
 	if err != nil || len(decs) != 1 || decs[0].Reply == nil || *decs[0].Reply != "use approach B" {
 		t.Fatalf("steering note not recorded as a decision: %v %v", decs, err)
+	}
+
+	// The follow-up run's timeline opens with the note so the UI shows what
+	// redirected it.
+	runs, err := h.q.ListAgentRuns(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("list runs: %v", err)
+	}
+	var followUpID string
+	for _, r := range runs {
+		if r.ID != firstRunID {
+			followUpID = r.ID
+		}
+	}
+	if followUpID == "" {
+		t.Fatalf("no follow-up run found among %d runs", len(runs))
+	}
+	logs, err := h.q.ListAgentLogs(context.Background(), followUpID)
+	if err != nil {
+		t.Fatalf("list follow-up logs: %v", err)
+	}
+	var sawNote bool
+	for _, l := range logs {
+		if l.Type == "system" && l.Content == "Steering note from human: use approach B" {
+			sawNote = true
+		}
+	}
+	if !sawNote {
+		t.Errorf("follow-up run %s has no steering-note log entry; logs=%v", followUpID, logs)
+	}
+	firstLogs, _ := h.q.ListAgentLogs(context.Background(), firstRunID)
+	for _, l := range firstLogs {
+		if strings.HasPrefix(l.Content, "Steering note from human:") {
+			t.Errorf("steering note logged on the interrupted run instead of the follow-up")
+		}
 	}
 }

@@ -944,18 +944,20 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			Seq:        NextLogSeq(),
 		}); err != nil {
 			log.Warn("dispatcher: record human reply log", "err", err)
-			if opts.steerNote != nil && *opts.steerNote != "" {
-				if err := d.q.CreateAgentLog(ctx, gen.CreateAgentLogParams{
-					ID:         uuid.NewString(),
-					AgentRunID: runID,
-					Timestamp:  time.Now(),
-					Type:       "system",
-					Content:    "Steering note from human: " + *opts.steerNote,
-					Seq:        NextLogSeq(),
-				}); err != nil {
-					log.Warn("dispatcher: record steering note log", "err", err)
-				}
-			}
+		}
+	}
+	// Same for a steering note delivered to a live run, so the follow-up
+	// run's timeline shows what redirected it.
+	if opts.steerNote != nil && *opts.steerNote != "" {
+		if err := d.q.CreateAgentLog(ctx, gen.CreateAgentLogParams{
+			ID:         uuid.NewString(),
+			AgentRunID: runID,
+			Timestamp:  time.Now(),
+			Type:       "system",
+			Content:    "Steering note from human: " + *opts.steerNote,
+			Seq:        NextLogSeq(),
+		}); err != nil {
+			log.Warn("dispatcher: record steering note log", "err", err)
 		}
 	}
 

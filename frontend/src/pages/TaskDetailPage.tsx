@@ -284,6 +284,11 @@ export default function TaskDetailPage() {
   const activeRun = runs.find((r) => r.id === selectedRun)
   const needsHuman = activeRun?.status === 'waiting_human' && activeRun.id !== retriedRunId
   const isRunning = activeRun?.status === 'running'
+  // The task's live running run (the one holding the dispatch lock). Steering
+  // always targets it, whichever run is selected in the history list.
+  const liveRunId =
+    (task?.active_agent_run_id && runs.find((r) => r.id === task.active_agent_run_id && r.status === 'running')?.id) ||
+    runs.find((r) => r.status === 'running')?.id
   const latestRun = runs[0]
   const canRerun = !!(latestRun && (latestRun.status === 'failed' || latestRun.status === 'completed' || latestRun.status === 'cancelled' || latestRun.status === 'interrupted'))
   const isHumanGateLabel = task
@@ -422,11 +427,11 @@ export default function TaskDetailPage() {
   // Steer a running run: interrupts it gracefully and starts a follow-up run
   // (same task and label, session resumed) that carries the note.
   const handleSteer = async (message: string) => {
-    if (!id || !selectedRun || !message.trim()) return
+    if (!id || !liveRunId || !message.trim()) return
     setActionError('')
     setActionPending(true)
     try {
-      await api.tasks.steerRun(id, selectedRun, message.trim())
+      await api.tasks.steerRun(id, liveRunId, message.trim())
       showToast('Steering note sent. The agent restarts with it.')
       refreshRuns()
       refreshHumanDecisions()
@@ -631,9 +636,9 @@ export default function TaskDetailPage() {
     useCommandPaletteStore.getState().setTaskContext({
       taskId: id,
       title: task.title,
-      commands: buildTaskCommands({ task, workflow, canRerun, handlers: proxy, isRunning: !!isRunning }),
+      commands: buildTaskCommands({ task, workflow, canRerun, handlers: proxy, isRunning: !!liveRunId }),
     })
-  }, [id, task, workflow, canRerun, isRunning])
+  }, [id, task, workflow, canRerun, liveRunId])
   useEffect(() => () => useCommandPaletteStore.getState().setTaskContext(null), [id])
 
   if (!task) return <div className="p-6 text-fg-muted">Loading…</div>
@@ -701,7 +706,7 @@ export default function TaskDetailPage() {
               isRunning={!!isRunning}
               canRerun={canRerun}
               onStop={handleStop}
-              onSteer={handleSteer}
+              onSteer={liveRunId ? handleSteer : undefined}
               onRerun={handleRerun}
               actionPending={actionPending}
             />
@@ -758,7 +763,7 @@ export default function TaskDetailPage() {
       isRunning={!!isRunning}
       canRerun={canRerun}
       onStop={handleStop}
-      onSteer={handleSteer}
+      onSteer={liveRunId ? handleSteer : undefined}
       onRerun={handleRerun}
       labelHistory={labelHistory}
       canApprove={humanActions.canApprove}
