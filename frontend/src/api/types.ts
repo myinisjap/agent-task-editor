@@ -6115,6 +6115,161 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/automation-recipes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List automation recipes
+         * @description Bundled one-click presets (see docs/task-templates.md#automation-recipes) with their install parameters and installed state.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Recipes */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutomationRecipe"][];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/automation-recipes/{id}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Install an automation recipe
+         * @description Creates the recipe's template, schedule and/or intake endpoint + rule in one transaction, tagged with the recipe id. An empty `target_label` parks created tasks on the workflow's human-review label. A non-gate label is rejected with code `auto_start_confirmation_required` unless `confirm_auto_start` is true. For webhook recipes the response carries the endpoint URL and HMAC secret (shown once) and a paste-ready sender snippet.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AutomationRecipeInstallRequest"];
+                };
+            };
+            responses: {
+                /** @description Installed */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AutomationRecipeInstallResult"];
+                    };
+                };
+                /** @description Validation error (or auto_start_confirmation_required) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Recipe not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Already installed */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/automation-recipes/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove an installed automation recipe
+         * @description Deletes only the objects tagged with this recipe id. Tasks already created are kept.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Removed */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Recipe unknown or not installed */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/intake-endpoints": {
         parameters: {
             query?: never;
@@ -8146,6 +8301,8 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+            /** @description Automation recipe id this object was created by; empty = not from a recipe. */
+            recipe_id?: string;
         };
         /** @description Short curated lesson injected into agent prompts (REPO LESSONS section). repo_id null means the lesson applies to every repo. Only status=active lessons are injected, filtered by stages (empty = all agents) and path_globs (empty = always; otherwise matched against the files the task branch changed vs base). */
         RepoLesson: {
@@ -8220,6 +8377,8 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+            /** @description Automation recipe id this object was created by; empty = not from a recipe. */
+            recipe_id?: string;
         };
         /** @description A match->apply intake routing rule, evaluated first-match-wins (by sort_order) at task-creation time for the 'issue' (issue import) and 'schedule' sources (see internal/intake and docs/task-sources.md). Subsumes the deprecated per-repo issue_sync_label filter, which narrowed only the fetch; rules shape the resulting task (template, priority, target label, workflow, cost budget) after fetch/creation. Every match_* field left empty/absent matches "any"; every apply_* field left empty/absent means "leave the caller's default". Landing a task on a non-agent_ignore apply_target_label bypasses the human-review gate that protects against untrusted imported issue content, so it is only permitted when match_author_assoc is restricted to OWNER/MEMBER/COLLABORATOR — the API rejects a rule that doesn't satisfy this with 400 Bad Request. */
         IntakeRule: {
@@ -8258,10 +8417,69 @@ export interface components {
             apply_max_cost_usd?: number | null;
             /** @description Reserved; first-match-wins is the only evaluation mode in v1. */
             stop_processing: boolean;
+            /** @description Automation recipe id this rule was created by; empty = not from a recipe. */
+            recipe_id?: string;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        AutomationRecipeParam: {
+            key: string;
+            label: string;
+            /** @enum {string} */
+            kind: "repo" | "workflow" | "label" | "cron" | "string";
+            required: boolean;
+            default: string;
+            help: string;
+        };
+        AutomationRecipe: {
+            id: string;
+            version: number;
+            name: string;
+            description: string;
+            /** @enum {string} */
+            kind: "webhook" | "schedule";
+            default_cron?: string;
+            params: components["schemas"]["AutomationRecipeParam"][];
+            template: {
+                name: string;
+                title: string;
+                description: string;
+                type: string;
+            };
+            installed: boolean;
+            objects: {
+                template_id: string | null;
+                schedule_id: string | null;
+                endpoint_id: string | null;
+                rule_id: string | null;
+                repo_id: string | null;
+            };
+        };
+        AutomationRecipeInstallRequest: {
+            /** @description Keyed by the recipe's param keys (repo_id, workflow_id, target_label, cron_expr, branch). */
+            params: {
+                [key: string]: string;
+            };
+            /** @description Required when target_label is a non-human-gate label (tasks start agents without review). */
+            confirm_auto_start?: boolean;
+        };
+        AutomationRecipeInstallResult: {
+            recipe: string;
+            template: components["schemas"]["TaskTemplate"];
+            schedule?: components["schemas"]["TaskSchedule"];
+            endpoint?: components["schemas"]["IntakeEndpoint"];
+            rule?: components["schemas"]["IntakeRule"];
+            /** @description Full intake URL (webhook recipes). */
+            url?: string;
+            /** @description HMAC secret, shown once (webhook recipes). */
+            secret?: string;
+            /** @description Paste-ready sender snippet (webhook recipes). Never contains the secret. */
+            snippet?: string;
+            /** @description Label created tasks start on ('' for webhook recipes = the workflow's human-gate label). */
+            target_label: string;
+            warnings: string[];
         };
         /** @description A signed inbound webhook endpoint that creates tasks (see docs/task-sources.md). The HMAC secret is never included here; it is returned only by create and rotate-secret. */
         IntakeEndpoint: {
@@ -8287,6 +8505,8 @@ export interface components {
             secret_set: boolean;
             /** @example /api/v1/intake/<id> */
             url_path: string;
+            /** @description Automation recipe id this object was created by; empty = not from a recipe. */
+            recipe_id?: string;
         };
         IntakeEndpointCreated: components["schemas"]["IntakeEndpoint"] & {
             /** @description HMAC secret. Shown only once. */

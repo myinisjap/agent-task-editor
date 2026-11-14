@@ -143,6 +143,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	schedulesH := handlers.NewSchedulesHandler(q)
 	intakeRulesH := handlers.NewIntakeRulesHandler(q)
 	intakeEndpointsH := handlers.NewIntakeEndpointsHandler(q, intakehook.NewService(db.SQL(), q, hub))
+	recipesH := handlers.NewRecipesHandler(db.SQL(), q)
 	skillsH := handlers.NewSkillsHandler(q, db.SQL(), skills.Store{Dir: deps.SkillsDir})
 	// dispatcherLiveness may also implement GlobalCostReporter (as
 	// *agent.Dispatcher does) to supply the dashboard's global spend-ceiling
@@ -338,6 +339,12 @@ func NewRouter(deps RouterDeps) http.Handler {
 			r.Get("/intake-rules/{id}", intakeRulesH.Get)
 			r.Put("/intake-rules/{id}", intakeRulesH.Update)
 			r.Delete("/intake-rules/{id}", intakeRulesH.Delete)
+
+			// Automation recipes: one-click presets expanding into templates,
+			// schedules and intake endpoints/rules (see internal/recipes)
+			r.Get("/automation-recipes", recipesH.List)
+			r.Post("/automation-recipes/{id}/install", recipesH.Install)
+			r.Delete("/automation-recipes/{id}", recipesH.Remove)
 
 			// Intake webhook endpoints CRUD (the receiver is mounted outside
 			// BearerAuth above).

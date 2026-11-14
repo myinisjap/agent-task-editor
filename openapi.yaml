@@ -1033,6 +1033,7 @@ components:
         type:        { type: string, enum: [feature, bug, chore, spike] }
         created_at:  { type: string, format: date-time }
         updated_at:  { type: string, format: date-time }
+        recipe_id:     { type: string, description: "Automation recipe id this object was created by; empty = not from a recipe." }
       required: [id, name, title, description, type, created_at, updated_at]
 
     RepoLesson:
@@ -1108,6 +1109,7 @@ components:
         last_run_at:   { type: string, format: date-time, nullable: true }
         created_at:    { type: string, format: date-time }
         updated_at:    { type: string, format: date-time }
+        recipe_id:     { type: string, description: "Automation recipe id this object was created by; empty = not from a recipe." }
       required: [id, template_id, repo_id, cron_expr, target_label, enabled, last_run_at, created_at, updated_at]
 
     IntakeRule:
@@ -1143,9 +1145,78 @@ components:
         apply_workflow_id:   { type: string, nullable: true, description: "Overrides the repo's default workflow for this task. Null = use the repo's own workflow." }
         apply_max_cost_usd:  { type: number, format: double, nullable: true, description: "Null = leave default (no per-task override)." }
         stop_processing:     { type: boolean, description: "Reserved; first-match-wins is the only evaluation mode in v1." }
+        recipe_id:           { type: string, description: "Automation recipe id this rule was created by; empty = not from a recipe." }
         created_at:          { type: string, format: date-time }
         updated_at:          { type: string, format: date-time }
       required: [id, name, enabled, sort_order, match_source, match_labels, match_title_pattern, match_body_pattern, match_author_assoc, apply_target_label, stop_processing, created_at, updated_at]
+
+    AutomationRecipeParam:
+      type: object
+      properties:
+        key:      { type: string }
+        label:    { type: string }
+        kind:     { type: string, enum: [repo, workflow, label, cron, string] }
+        required: { type: boolean }
+        default:  { type: string }
+        help:     { type: string }
+      required: [key, label, kind, required, default, help]
+
+    AutomationRecipe:
+      type: object
+      properties:
+        id:          { type: string }
+        version:     { type: integer }
+        name:        { type: string }
+        description: { type: string }
+        kind:        { type: string, enum: [webhook, schedule] }
+        default_cron: { type: string }
+        params:      { type: array, items: { $ref: "#/components/schemas/AutomationRecipeParam" } }
+        template:
+          type: object
+          properties:
+            name:        { type: string }
+            title:       { type: string }
+            description: { type: string }
+            type:        { type: string }
+          required: [name, title, description, type]
+        installed:   { type: boolean }
+        objects:
+          type: object
+          properties:
+            template_id: { type: string, nullable: true }
+            schedule_id: { type: string, nullable: true }
+            endpoint_id: { type: string, nullable: true }
+            rule_id:     { type: string, nullable: true }
+            repo_id:     { type: string, nullable: true }
+          required: [template_id, schedule_id, endpoint_id, rule_id, repo_id]
+      required: [id, version, name, description, kind, params, template, installed, objects]
+
+    AutomationRecipeInstallRequest:
+      type: object
+      properties:
+        params:
+          type: object
+          additionalProperties: { type: string }
+          description: "Keyed by the recipe's param keys (repo_id, workflow_id, target_label, cron_expr, branch)."
+        confirm_auto_start:
+          type: boolean
+          description: "Required when target_label is a non-human-gate label (tasks start agents without review)."
+      required: [params]
+
+    AutomationRecipeInstallResult:
+      type: object
+      properties:
+        recipe:       { type: string }
+        template:     { $ref: "#/components/schemas/TaskTemplate" }
+        schedule:     { $ref: "#/components/schemas/TaskSchedule" }
+        endpoint:     { $ref: "#/components/schemas/IntakeEndpoint" }
+        rule:         { $ref: "#/components/schemas/IntakeRule" }
+        url:          { type: string, description: "Full intake URL (webhook recipes)." }
+        secret:       { type: string, description: "HMAC secret, shown once (webhook recipes)." }
+        snippet:      { type: string, description: "Paste-ready sender snippet (webhook recipes). Never contains the secret." }
+        target_label: { type: string, description: "Label created tasks start on ('' for webhook recipes = the workflow's human-gate label)." }
+        warnings:     { type: array, items: { type: string } }
+      required: [recipe, template, target_label, warnings]
 
     IntakeEndpoint:
       type: object
@@ -1168,6 +1239,7 @@ components:
         updated_at:           { type: string, format: date-time }
         secret_set:           { type: boolean }
         url_path:             { type: string, example: "/api/v1/intake/<id>" }
+        recipe_id:     { type: string, description: "Automation recipe id this object was created by; empty = not from a recipe." }
       required: [id, name, repo_id, workflow_id, target_label, enabled, title_template, description_template, dedupe_key_template, last_received_at, created_at, updated_at, secret_set, url_path]
 
     IntakeEndpointCreated:
@@ -6006,6 +6078,63 @@ paths:
                 properties:
                   authed: { type: boolean }
                   note:   { type: string }
+
+  /automation-recipes:
+    get:
+      summary: List automation recipes
+      description: >
+        Bundled one-click presets (see docs/task-templates.md#automation-recipes)
+        with their install parameters and installed state.
+      responses:
+        "200":
+          description: Recipes
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/AutomationRecipe" } }
+
+  /automation-recipes/{id}/install:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      summary: Install an automation recipe
+      description: >
+        Creates the recipe's template, schedule and/or intake endpoint + rule in
+        one transaction, tagged with the recipe id. An empty `target_label`
+        parks created tasks on the workflow's human-review label. A non-gate
+        label is rejected with code `auto_start_confirmation_required` unless
+        `confirm_auto_start` is true. For webhook recipes the response carries
+        the endpoint URL and HMAC secret (shown once) and a paste-ready sender
+        snippet.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AutomationRecipeInstallRequest" }
+      responses:
+        "201":
+          description: Installed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutomationRecipeInstallResult" }
+        "400": { description: "Validation error (or auto_start_confirmation_required)" }
+        "404": { description: Recipe not found }
+        "409": { description: Already installed, or the template name is taken }
+
+  /automation-recipes/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      summary: Remove an installed automation recipe
+      description: Deletes only the objects tagged with this recipe id. Tasks already created are kept.
+      responses:
+        "204": { description: Removed }
+        "404": { description: Recipe unknown or not installed }
 
   /intake-endpoints:
     get:

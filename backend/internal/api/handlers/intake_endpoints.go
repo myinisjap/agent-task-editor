@@ -91,6 +91,7 @@ type intakeEndpointDTO struct {
 	UpdatedAt           time.Time  `json:"updated_at"`
 	SecretSet           bool       `json:"secret_set"`
 	URLPath             string     `json:"url_path"`
+	RecipeID            string     `json:"recipe_id"`
 }
 
 type intakeEndpointCreatedDTO struct {
@@ -104,7 +105,7 @@ func toIntakeEndpointDTO(e gen.IntakeEndpoint) intakeEndpointDTO {
 		TargetLabel: e.TargetLabel, Enabled: e.Enabled, TitleTemplate: e.TitleTemplate,
 		DescriptionTemplate: e.DescriptionTemplate, DedupeKeyTemplate: e.DedupeKeyTemplate,
 		LastReceivedAt: e.LastReceivedAt, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt,
-		SecretSet: e.Secret != "", URLPath: "/api/v1/intake/" + e.ID,
+		SecretSet: e.Secret != "", URLPath: "/api/v1/intake/" + e.ID, RecipeID: e.RecipeID,
 	}
 }
 
