@@ -662,6 +662,35 @@ with `{"status":"active"}` (plus any edits).
 
 ---
 
+## Repo Map
+
+A generated, refreshed codebase guide per repo; see [repo-map.md](repo-map.md).
+
+### `GET /repos/{id}/map`
+The latest successful map: `config` (`enabled`, `provider_config_id`,
+`refresh_interval_hours`, `min_commits_behind`), `pages[]` (`slug`, `title`,
+`body` markdown, `commit_sha`), `commit_sha`, `generated_at`, `head_sha`,
+`commits_behind` (null when unknown), `layout_changed`, `stale`, `running` and
+`last_run`. `pages` is empty before the first successful run.
+
+### `PUT /repos/{id}/map/config`
+Partial update of the per-repo opt-in and refresh policy. `400` for an unknown
+provider config, enabling without one, or an out-of-range value.
+
+### `POST /repos/{id}/map/generate`
+Starts a run in the background; `202` with the running run row. `400` when the
+map is not enabled or its provider is unavailable, `409` when a run is already
+in progress or a global cost ceiling is reached.
+
+### `GET /repos/{id}/map/runs`
+Runs newest first (`?limit=` 1-100, default 10), each with `status`, `trigger`,
+`commit_sha`, `page_count`, `char_count`, `error`, `cost_usd` and token counts.
+
+### `GET /settings/repo-map`, `PUT /settings/repo-map`
+Global `inject_labels` (default `["plan"]`) and `excluded_agent_ids`.
+
+---
+
 ## Task Schedules
 
 Recurring instantiation of a task template against a repo on a cron

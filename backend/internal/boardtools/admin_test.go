@@ -111,6 +111,7 @@ func TestRepoTools(t *testing.T) {
 		"POST /api/v1/repos":                   `{"id":"r1","name":"acme/app","path":"/repos/acme/app","clone_status":"cloning"}`,
 		"PATCH /api/v1/repos/r1":               `{"id":"r1","name":"acme/app","workflow_id":"w2","clone_status":"ready"}`,
 		"GET /api/v1/repos/r1":                 `{"id":"r1","verify_command":"make test"}`,
+		"GET /api/v1/repos/r1/map":             `{"pages":[],"commits_behind":null}`,
 		"POST /api/v1/repos/r1/runtime/detect": `{"suggestions":[{"id":"go","version":"1.26","source":"go.mod"}]}`,
 		"GET /api/v1/agents":                   `[{"id":"a1","name":"Coder","labels":"work","enabled":true,"system_prompt":"long","provider_config":{"provider":"claude","model":"opus","env":"x"}}]`,
 	})
@@ -135,6 +136,7 @@ func TestRepoTools(t *testing.T) {
 	for _, tc := range []struct{ tool, args, want string }{
 		{"get_repo", `{"repo_id":"r1"}`, "make test"},
 		{"detect_repo_runtime", `{"repo_id":"r1"}`, `"go.mod"`},
+		{"get_repo_map", `{"repo_id":"r1"}`, "pages"},
 		{"list_agents", `{}`, `"provider":"claude"`},
 	} {
 		text, isErr := c.Call(tools, tc.tool, json.RawMessage(tc.args))
@@ -152,6 +154,7 @@ func TestRepoTools(t *testing.T) {
 		{"update_repo", `{"workflow_id":"w2"}`},
 		{"get_repo", `{}`},
 		{"detect_repo_runtime", `{}`},
+		{"get_repo_map", `{}`},
 	} {
 		if _, isErr := c.Call(tools, tc.tool, json.RawMessage(tc.args)); !isErr {
 			t.Errorf("%s accepted %s", tc.tool, tc.args)

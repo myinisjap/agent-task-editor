@@ -3174,6 +3174,301 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/repos/{id}/map": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Get a repo's generated map, config and staleness
+         * @description Pages come from the latest successful generation run; pages is empty when none exists. Disabled repos return their (default) config.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The map */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoMap"];
+                    };
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{id}/map/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** Set the repo's map opt-in and refresh policy */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RepoMapConfigUpdate"];
+                };
+            };
+            responses: {
+                /** @description The saved config */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoMapConfig"];
+                    };
+                };
+                /** @description Unknown provider config */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{id}/map/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Generate or refresh the repo's map now
+         * @description Starts a run in the background in a read-only scratch checkout of the default branch and returns the (still running) run row.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Run started */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoMapRun"];
+                    };
+                };
+                /** @description The map is not enabled for the repo */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description A run is already in progress */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{id}/map/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /** List the repo's map generation runs, newest first */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoMapRun"][];
+                    };
+                };
+                /** @description Invalid limit */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/repo-map": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the global repo map injection settings */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoMapSettings"];
+                    };
+                };
+            };
+        };
+        /** Set the labels flagged for the REPO MAP prompt section and the agent configs that opted out */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        inject_labels?: string[];
+                        excluded_agent_ids?: string[];
+                    };
+                };
+            };
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RepoMapSettings"];
+                    };
+                };
+                /** @description A label name contains a comma or newline */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/lessons": {
         parameters: {
             query?: never;
@@ -8336,6 +8631,79 @@ export interface components {
             updated_at: string;
             /** @description Automation recipe id this object was created by; empty = not from a recipe. */
             recipe_id?: string;
+        };
+        /** @description Per-repo repo map opt-in and refresh policy (off by default). */
+        RepoMapConfig: {
+            enabled: boolean;
+            provider_config_id: string | null;
+            /** @description Scheduled refresh cadence in hours (default 168); 0 = manual only */
+            refresh_interval_hours: number;
+            /** @description A scheduled refresh needs the default branch to be more than this many commits ahead (or the top-level layout to have changed); default 20 */
+            min_commits_behind: number;
+        };
+        /** @description Partial update; omitted fields keep their value. */
+        RepoMapConfigUpdate: {
+            enabled?: boolean;
+            /** @description Empty string clears it */
+            provider_config_id?: string;
+            refresh_interval_hours?: number;
+            min_commits_behind?: number;
+        };
+        RepoMapPage: {
+            /** @enum {string} */
+            slug: "overview" | "layout" | "build-test-run" | "key-flows" | "conventions";
+            title: string;
+            /** @description Markdown */
+            body: string;
+            /** @description Commit the page was generated from */
+            commit_sha: string;
+        };
+        RepoMapRun: {
+            id: string;
+            repo_id: string;
+            /** @enum {string} */
+            trigger: "schedule" | "manual";
+            actor: string;
+            /** @enum {string} */
+            status: "running" | "succeeded" | "failed" | "skipped";
+            commit_sha: string;
+            provider_config_id: string | null;
+            page_count: number;
+            char_count: number;
+            error: string;
+            cost_usd: number;
+            input_tokens: number;
+            output_tokens: number;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            finished_at: string | null;
+        };
+        /** @description A repo's current map (latest successful run) plus staleness. */
+        RepoMap: {
+            config: components["schemas"]["RepoMapConfig"];
+            pages: components["schemas"]["RepoMapPage"][];
+            /** @description Commit the map was generated from; empty when there is no map */
+            commit_sha: string;
+            /** Format: date-time */
+            generated_at: string | null;
+            /** @description Current tip of the default branch */
+            head_sha: string;
+            /** @description Commits the default branch has moved since commit_sha; null when unknown or no map */
+            commits_behind: number | null;
+            /** @description The top-level files/directories differ from commit_sha */
+            layout_changed: boolean;
+            /** @description The scheduled-refresh rule (more than min_commits_behind commits, or layout changed) holds right now */
+            stale: boolean;
+            running: boolean;
+            last_run: components["schemas"]["RepoMapRun"] | null;
+        };
+        /** @description Global repo map injection settings. */
+        RepoMapSettings: {
+            /** @description Workflow labels whose agent runs get the REPO MAP prompt section (default [plan]) */
+            inject_labels: string[];
+            /** @description Agent configs that opted out of the section */
+            excluded_agent_ids: string[];
         };
         /** @description Short curated lesson injected into agent prompts (REPO LESSONS section). repo_id null means the lesson applies to every repo. Only status=active lessons are injected, filtered by stages (empty = all agents) and path_globs (empty = always; otherwise matched against the files the task branch changed vs base). */
         RepoLesson: {

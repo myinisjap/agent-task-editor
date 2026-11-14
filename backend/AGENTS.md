@@ -36,6 +36,7 @@ internal/ghclient/ GitHub REST API client (no subprocess per call) (PR create/lo
 internal/ghsync/  Background PR-state poller — refreshes task git_state + pr_mergeable from GitHub, cleans up merged branches, ingests PR review/GHA/merge-conflict feedback into task_review_comments + run Feedback (optional auto-transition; see pr_review.go)
 internal/health/  Provider readiness checks (used by GET /health/providers)
 internal/remotemcp/ Remote MCP endpoint (POST /mcp) + Google-backed OAuth server; calls the router in-process via middleware.WithTrustedActor
+internal/repomap/ Per-repo generated codebase map: scratch read-only checkout -> provider CLI -> capped pages, runs + cost, staleness/scheduler, REPO MAP prompt section (docs/repo-map.md)
 internal/prflow/  Push a task's branch and create/find its PR (forge resolution, PR body, SetTaskPR persist, issue write-back); shared by the HTTP CreatePR handler and the workflow OnCreatePR hook wired in cmd/server. Must not import api/handlers
 internal/storage/ SQLite DB, migrations, sqlc-generated queries, seed data
 internal/tasksource/ GitHub Issues importer — polls opted-in repos, creates tasks for new issues, updates tasks whose issue drifted, reconciles tasks whose issue closed/unlabeled, and (opt-in) ingests the issue comment thread

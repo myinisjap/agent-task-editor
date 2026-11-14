@@ -192,6 +192,7 @@ The full profile has everything the stdio server has, plus (read tools first):
 | `list_provider_configs` | Provider configs an agent can run on: id, name, provider, model (never their env) |
 | `get_agent` | One agent config in full, including its system prompt (provider env stripped); includes `running_experiment` (share, tasks per arm) while an A/B experiment runs |
 | `get_repo` | One repo's settings, including `clone_status` / `clone_error` |
+| `get_repo_map` | The repo's generated codebase guide (pages, commit SHA, commits behind); see [repo-map.md](repo-map.md) |
 | `detect_repo_runtime` | Suggested toolchain pins from the repo's manifest files; changes nothing |
 | `list_needs_me` | Tasks waiting on a human (task id, title, label, reason) — the "what needs me?" opener |
 | `get_costs` | What agents have spent: total tokens/USD over finished runs, the split by provider, and the top tasks by cost (`limit`, default 5, max 50; or one `task_id`). The dashboard cost endpoints take no date/repo filters, so there are none |
@@ -303,7 +304,7 @@ exposed, in any profile.
   The client id stays valid as long as `MCP_SIGNING_KEY` is unchanged.
 - Tool profile: by default (`MCP_TOOL_PROFILE=readonly`) only the read tools
   (`list_repos`, `list_workflows`, `list_tasks`, `get_task`, `list_runs`,
-  `get_run_logs`, `get_diff`, `get_workflow`, `list_agents`, `get_repo`,
+  `get_run_logs`, `get_diff`, `get_workflow`, `list_agents`, `get_repo`, `get_repo_map`,
   `detect_repo_runtime`, `list_needs_me`, `get_costs`, `list_provider_configs`, `get_agent`, `list_templates`, `list_schedules`) are exposed, because run logs, diffs and task
   bodies contain text an attacker can influence and could steer a model into
   calling write tools. `MCP_TOOL_PROFILE=full` also exposes `create_task`,

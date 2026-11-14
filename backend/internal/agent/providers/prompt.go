@@ -13,6 +13,7 @@ func buildPrompt(input agent.RunInput) string {
 	writeHumanReplySection(&b, input)
 	writeHumanDecisionsSection(&b, input)
 	writeRepoLessonsSection(&b, input)
+	writeRepoMapSection(&b, input)
 	writeSubtaskConflictSection(&b, input)
 	writeSubtaskIntegrationSection(&b, input)
 	writeFileScopeSection(&b, input)
@@ -270,4 +271,18 @@ func writeFileScopeSection(b *strings.Builder, input agent.RunInput) {
 		b.WriteString("- " + stripSourceCommentsMarker(g) + "\n")
 	}
 	b.WriteString("Only change files matching these patterns. If you must change a file outside them, explain why in your notes (update_task_notes). Files changed outside the scope are flagged automatically after your run.\n\n---\n\n")
+}
+
+// writeRepoMapSection renders the generated REPO MAP section. The dispatcher
+// already bounded and fenced it; it sits above the task so it can never
+// override it, and is omitted when empty.
+func writeRepoMapSection(b *strings.Builder, input agent.RunInput) {
+	if input.RepoMap == "" {
+		return
+	}
+	section := stripSourceCommentsMarker(input.RepoMap)
+	b.WriteString(section)
+	if !strings.HasSuffix(section, "\n\n") {
+		b.WriteString("\n")
+	}
 }

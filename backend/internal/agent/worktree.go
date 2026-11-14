@@ -393,6 +393,13 @@ func changedFilesAgainstBase(ctx context.Context, wtPath, baseRef, branch string
 	return files, nil
 }
 
+// DefaultBaseRef is defaultBaseRef for packages outside agent (the repo map
+// generator checks out the repo's default branch the same way tasks branch
+// from it).
+func DefaultBaseRef(ctx context.Context, repoPath string) (string, error) {
+	return defaultBaseRef(ctx, repoPath)
+}
+
 // provisionPRWorktree checks out the head of pull request prNumber into a
 // worktree on a local, never-pushed branch "pr-review-<N>-<id8>" (deliberately
 // without the "ate-" prefix). The PR head is fetched via refs/pull/<N>/head,

@@ -393,6 +393,52 @@ type RepoLesson struct {
 	LastCheckedAt *time.Time `json:"last_checked_at"`
 }
 
+type RepoMapConfig struct {
+	RepoID               string    `json:"repo_id"`
+	Enabled              int64     `json:"enabled"`
+	ProviderConfigID     *string   `json:"provider_config_id"`
+	RefreshIntervalHours int64     `json:"refresh_interval_hours"`
+	MinCommitsBehind     int64     `json:"min_commits_behind"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
+type RepoMapGlobal struct {
+	ID               int64     `json:"id"`
+	InjectLabels     string    `json:"inject_labels"`
+	ExcludedAgentIds string    `json:"excluded_agent_ids"`
+	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+type RepoMapPage struct {
+	ID        string    `json:"id"`
+	RepoID    string    `json:"repo_id"`
+	RunID     string    `json:"run_id"`
+	Slug      string    `json:"slug"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	CommitSha string    `json:"commit_sha"`
+	Position  int64     `json:"position"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type RepoMapRun struct {
+	ID               string     `json:"id"`
+	RepoID           string     `json:"repo_id"`
+	Trigger          string     `json:"trigger"`
+	Actor            string     `json:"actor"`
+	Status           string     `json:"status"`
+	CommitSha        string     `json:"commit_sha"`
+	ProviderConfigID *string    `json:"provider_config_id"`
+	PageCount        int64      `json:"page_count"`
+	CharCount        int64      `json:"char_count"`
+	Error            string     `json:"error"`
+	CostUsd          float64    `json:"cost_usd"`
+	InputTokens      int64      `json:"input_tokens"`
+	OutputTokens     int64      `json:"output_tokens"`
+	StartedAt        time.Time  `json:"started_at"`
+	FinishedAt       *time.Time `json:"finished_at"`
+}
+
 type RepoSkill struct {
 	RepoID  string `json:"repo_id"`
 	SkillID string `json:"skill_id"`
