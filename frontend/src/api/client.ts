@@ -74,6 +74,7 @@ export type AutonomyEscape = Schemas['AutonomyEscape']
 export type AutonomySettings = Schemas['AutonomySettings']
 export type RuleProposal = Schemas['RuleProposal']
 export type RuleProposalRun = Schemas['RuleProposalRun']
+export type LessonDistillRun = Schemas['LessonDistillRun']
 // Named *Entry historically; the schema is TaskLabelHistory.
 export type TaskLabelHistoryEntry = Schemas['TaskLabelHistory']
 export type AgentLog = Schemas['AgentLog']
@@ -488,6 +489,9 @@ export const api = {
     delete: (id: string) => request<void>(`/repos/${id}`, { method: 'DELETE' }),
     lessons: (id: string, status?: LessonStatus) =>
       request<RepoLesson[]>(`/repos/${id}/lessons${status ? `?status=${status}` : ''}`),
+    distillLessons: (id: string) => request<LessonDistillRun>(`/repos/${id}/lessons/distill`, { method: 'POST' }),
+    lessonDistillRuns: (id: string, limit = 1) =>
+      request<LessonDistillRun[]>(`/repos/${id}/lessons/distill-runs?limit=${limit}`),
     skills: (id: string) => request<Skill[]>(`/repos/${id}/skills`),
     setSkills: (id: string, skill_ids: string[]) =>
       request<Skill[]>(`/repos/${id}/skills`, { method: 'PUT', body: JSON.stringify({ skill_ids }) }),
@@ -516,6 +520,7 @@ export const api = {
     createGlobal: (body: RepoLessonCreate) => request<RepoLesson>('/lessons', { method: 'POST', body: JSON.stringify(body) }),
     update: (id: string, body: RepoLessonUpdate) => request<RepoLesson>(`/lessons/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     delete: (id: string) => request<void>(`/lessons/${id}`, { method: 'DELETE' }),
+    dismiss: (id: string) => request<void>(`/lessons/${id}/dismiss`, { method: 'POST' }),
   },
   templates: {
     list: () => request<TaskTemplate[]>('/templates'),

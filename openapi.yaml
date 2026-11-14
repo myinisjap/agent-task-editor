@@ -353,6 +353,24 @@ components:
         output_tokens: { type: integer }
         started_at: { type: string, format: date-time }
         finished_at: { type: string, format: date-time, nullable: true }
+    LessonDistillRun:
+      type: object
+      required: [id, repo_id, trigger, actor, status, provider_config_id, evidence_count, proposal_count, error, cost_usd, input_tokens, output_tokens, started_at, finished_at]
+      properties:
+        id: { type: string }
+        repo_id: { type: string }
+        trigger: { type: string, enum: [schedule, manual] }
+        actor: { type: string }
+        status: { type: string, enum: [running, succeeded, failed, skipped] }
+        provider_config_id: { type: string, nullable: true }
+        evidence_count: { type: integer }
+        proposal_count: { type: integer, description: Proposed lessons stored by this run. }
+        error: { type: string, description: Why the run failed or was skipped. }
+        cost_usd: { type: number }
+        input_tokens: { type: integer }
+        output_tokens: { type: integer }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time, nullable: true }
     ShouldHaveAskedRequest:
       type: object
       properties:
@@ -4758,6 +4776,55 @@ paths:
       responses:
         "204": { description: Deleted }
         "404": { description: Lesson not found }
+
+  /repos/{id}/lessons/distill:
+    post:
+      summary: Draft lessons for a repo from recent task history (distiller)
+      description: >-
+        Reads the repo's last 30 days of evidence (human rejection notes, human
+        replies, rework failure feedback, repeated verify failures, "should have
+        asked" notes), asks the provider config chosen for rule proposals for
+        candidate lessons, validates them like human-created lessons, drops
+        near-duplicates of existing or dismissed lessons and ones citing no real
+        task, and stores at most 5 as `status=proposed`, `source=distiller`.
+        Proposed lessons are never injected until accepted (PATCH the lesson to
+        `status=active`). Runs in the background; poll distill-runs.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "202":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LessonDistillRun" }
+        "400": { description: No usable provider config set for proposals }
+        "404": { description: Repo not found }
+        "409": { description: A run is already in progress for this repo }
+
+  /repos/{id}/lessons/distill-runs:
+    get:
+      summary: A repo's recent lesson distiller runs
+      description: Newest first, with cost.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/LessonDistillRun" } }
+        "400": { description: Invalid limit }
+        "404": { description: Repo not found }
+
+  /lessons/{id}/dismiss:
+    post:
+      summary: Dismiss a proposed distiller lesson
+      description: Deletes the proposal and remembers its text so it is not offered again.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204": { description: Dismissed }
+        "404": { description: Lesson not found }
+        "409": { description: Lesson is not a proposed distiller lesson }
 
   /skills:
     get:

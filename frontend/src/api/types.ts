@@ -3325,6 +3325,176 @@ export interface paths {
         };
         trace?: never;
     };
+    "/repos/{id}/lessons/distill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Draft lessons for a repo from recent task history (distiller)
+         * @description Reads the repo's last 30 days of evidence (human rejection notes, human replies, rework failure feedback, repeated verify failures, "should have asked" notes), asks the provider config chosen for rule proposals for candidate lessons, validates them like human-created lessons, drops near-duplicates of existing or dismissed lessons and ones citing no real task, and stores at most 5 as `status=proposed`, `source=distiller`. Proposed lessons are never injected until accepted (PATCH the lesson to `status=active`). Runs in the background; poll distill-runs.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LessonDistillRun"];
+                    };
+                };
+                /** @description No usable provider config set for proposals */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description A run is already in progress for this repo */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/repos/{id}/lessons/distill-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * A repo's recent lesson distiller runs
+         * @description Newest first, with cost.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LessonDistillRun"][];
+                    };
+                };
+                /** @description Invalid limit */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Repo not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/lessons/{id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss a proposed distiller lesson
+         * @description Deletes the proposal and remembers its text so it is not offered again.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Dismissed */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Lesson not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Lesson is not a proposed distiller lesson */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/skills": {
         parameters: {
             query?: never;
@@ -7558,6 +7728,28 @@ export interface components {
             proposal_count: number;
             /** @description Suggested new review-brief checks */
             flag_ideas: components["schemas"]["RuleProposalFlagIdea"][];
+            /** @description Why the run failed or was skipped. */
+            error: string;
+            cost_usd: number;
+            input_tokens: number;
+            output_tokens: number;
+            /** Format: date-time */
+            started_at: string;
+            /** Format: date-time */
+            finished_at: string | null;
+        };
+        LessonDistillRun: {
+            id: string;
+            repo_id: string;
+            /** @enum {string} */
+            trigger: "schedule" | "manual";
+            actor: string;
+            /** @enum {string} */
+            status: "running" | "succeeded" | "failed" | "skipped";
+            provider_config_id: string | null;
+            evidence_count: number;
+            /** @description Proposed lessons stored by this run. */
+            proposal_count: number;
             /** @description Why the run failed or was skipped. */
             error: string;
             cost_usd: number;
