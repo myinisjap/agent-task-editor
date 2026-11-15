@@ -137,6 +137,11 @@ type RunInput struct {
 	// (generated orientation; background only). Empty when the repo, label or
 	// agent config is not opted in. Rendered only by buildPrompt.
 	RepoMap string
+	// ChangeSet is the rendered, bounded and fenced CHANGE SET section (ADR
+	// 0041), or "". CrossRepoSubtasks is the planner's repo list, or "".
+	// Both are rendered only by buildPrompt.
+	ChangeSet         string
+	CrossRepoSubtasks string
 	// Absolute paths of attachment images on the server filesystem
 	AttachmentAbsPaths []string
 	// ResumeSessionID, if non-empty, asks the provider to resume this prior

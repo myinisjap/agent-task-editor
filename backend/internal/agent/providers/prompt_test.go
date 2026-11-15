@@ -368,3 +368,27 @@ func TestBuildSystemPrompt_MentionsPRFence(t *testing.T) {
 		t.Fatal("system prompt should describe the PR fence")
 	}
 }
+
+func TestBuildPrompt_ChangeSetAndCrossRepo(t *testing.T) {
+	in := agent.RunInput{
+		Task:              agent.Task{Title: "T", Description: "D"},
+		ChangeSet:         "CHANGE SET X\n<<<BEGIN CHANGE SET (generated)\n>>>END CHANGE SET\n\n---\n\n",
+		CrossRepoSubtasks: "CROSS-REPO SUBTASKS Y\n---\n\n",
+	}
+	p := buildPrompt(in)
+	ci, xi, ti := strings.Index(p, "CHANGE SET X"), strings.Index(p, "CROSS-REPO SUBTASKS Y"), strings.Index(p, "Task:")
+	if ci < 0 || xi < ci || ti < xi {
+		t.Fatalf("bad order %d %d %d:\n%s", ci, xi, ti, p)
+	}
+	if r := buildResumePrompt(in); strings.Contains(r, "CHANGE SET X") || strings.Contains(r, "CROSS-REPO") {
+		t.Error("resume prompt must not carry the sections")
+	}
+	if s := buildSystemPrompt(in); s != buildSystemPrompt(agent.RunInput{Task: in.Task}) {
+		t.Error("system prompt changed")
+	}
+	// Absent sections leave the prompt byte-identical.
+	in.ChangeSet, in.CrossRepoSubtasks = "", ""
+	if buildPrompt(in) != buildPrompt(agent.RunInput{Task: in.Task}) {
+		t.Error("empty sections changed the prompt")
+	}
+}

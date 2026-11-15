@@ -103,4 +103,5 @@ the SHA and staleness for a repo.
 
 - Free-form "ask the codebase" Q&A (the Chat tab covers interactive questions).
 - A UI for `inject_labels` / `excluded_agent_ids` (API only today).
+- A sibling repo's Overview + Layout excerpt is also included in CHANGE SET prompts of multi-repo tasks (ADR 0041) when that repo's map is enabled; `inject_labels` do not apply, `excluded_agent_ids` do.
 - Counting map-run cost toward the global cost ceilings.

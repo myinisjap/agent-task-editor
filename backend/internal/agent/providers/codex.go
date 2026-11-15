@@ -587,6 +587,9 @@ func mcpSidecarEnv(input agent.RunInput, backendURL, apiToken, resultFile string
 		env["TASK_ID"] = input.Task.ID
 		env["API_TOKEN"] = apiToken
 		env["MAX_SUBTASKS"] = fmt.Sprintf("%d", input.AgentConfig.MaxSubtasks)
+		if input.AgentConfig.CrossRepoSubtasksEnabled {
+			env["CROSS_REPO_SUBTASKS_ENABLED"] = "1"
+		}
 	}
 	return env
 }

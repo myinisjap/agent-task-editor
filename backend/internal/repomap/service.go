@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
 
@@ -306,25 +308,11 @@ func (s *Service) PromptSection(ctx context.Context, repoID, label, agentConfigI
 	if !ShouldInject(g.InjectLabels, label) || AgentExcluded(g.ExcludedAgentIds, agentConfigID) {
 		return ""
 	}
-	run, err := s.Q.GetLatestSuccessfulRepoMapRun(ctx, repoID)
-	if err != nil {
+	pages, sha, behind, ok := s.latestPages(ctx, repoID)
+	if !ok {
 		return ""
 	}
-	rows, err := s.Q.ListRepoMapPagesForRun(ctx, run.ID)
-	if err != nil {
-		return ""
-	}
-	pages := make([]Page, 0, len(rows))
-	for _, r := range rows {
-		pages = append(pages, Page{Slug: r.Slug, Title: r.Title, Body: r.Body})
-	}
-	behind := -1
-	if repo, err := s.Q.GetRepo(ctx, repoID); err == nil && dirExists(repo.Path) {
-		if br, err := DefaultBranch(ctx, repo.Path); err == nil {
-			behind = CommitsBehind(ctx, repo.Path, run.CommitSha, br.Ref)
-		}
-	}
-	return InjectionSection(pages, run.CommitSha, behind)
+	return InjectionSection(pages, sha, behind)
 }
 
 // Run marks runs left running by a restart as failed, then refreshes due
@@ -399,4 +387,68 @@ func (s *Service) Due(ctx context.Context, cfg gen.RepoMapConfig) (bool, error) 
 		return true, nil
 	}
 	return NeedsRefresh(true, m.CommitsBehind, int(cfg.MinCommitsBehind), m.LayoutChanged), nil
+}
+
+var _ agent.RepoMapExcerptSource = (*Service)(nil)
+
+// Excerpt returns repoID's Overview + Layout for CHANGE SET prompts of other
+// repos' tasks. inject_labels is ignored (it is change-set context, not
+// per-stage orientation); the enabled flag and agent exclusion still apply.
+func (s *Service) Excerpt(ctx context.Context, repoID, agentConfigID string) agent.RepoMapExcerpt {
+	cfg, err := s.Q.GetRepoMapConfig(ctx, repoID)
+	if err != nil || cfg.Enabled == 0 {
+		return agent.RepoMapExcerpt{}
+	}
+	g, err := s.Q.GetRepoMapGlobal(ctx)
+	if err != nil || AgentExcluded(g.ExcludedAgentIds, agentConfigID) {
+		return agent.RepoMapExcerpt{}
+	}
+	pages, sha, behind, ok := s.latestPages(ctx, repoID)
+	if !ok {
+		return agent.RepoMapExcerpt{}
+	}
+	var overview, layout string
+	for _, p := range pages {
+		switch p.Slug {
+		case "overview":
+			overview = p.Body
+		case "layout":
+			layout = p.Body
+		}
+	}
+	if overview == "" && layout == "" {
+		return agent.RepoMapExcerpt{}
+	}
+	one := ""
+	for _, l := range strings.Split(overview, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			one = l
+			break
+		}
+	}
+	return agent.RepoMapExcerpt{Body: joinBounded(overview, layout, MaxInjectedChars), SHA: sha, OneLine: one, CommitsBehind: behind, OK: true}
+}
+
+// latestPages loads the latest successful run's pages, its commit and how far
+// the default branch is ahead (-1 when unknown).
+func (s *Service) latestPages(ctx context.Context, repoID string) (pages []Page, sha string, behind int, ok bool) {
+	run, err := s.Q.GetLatestSuccessfulRepoMapRun(ctx, repoID)
+	if err != nil {
+		return nil, "", 0, false
+	}
+	rows, err := s.Q.ListRepoMapPagesForRun(ctx, run.ID)
+	if err != nil {
+		return nil, "", 0, false
+	}
+	pages = make([]Page, 0, len(rows))
+	for _, r := range rows {
+		pages = append(pages, Page{Slug: r.Slug, Title: r.Title, Body: r.Body})
+	}
+	behind = -1
+	if repo, err := s.Q.GetRepo(ctx, repoID); err == nil && dirExists(repo.Path) {
+		if br, err := DefaultBranch(ctx, repo.Path); err == nil {
+			behind = CommitsBehind(ctx, repo.Path, run.CommitSha, br.Ref)
+		}
+	}
+	return pages, run.CommitSha, behind, true
 }
