@@ -133,7 +133,7 @@ Outbound webhook notifications when a task needs a human — see [websocket.md#o
 | Variable | Default | Description |
 |---|---|---|
 | `NOTIFY_WEBHOOK_URL` | _(empty, disabled)_ | Target URL for outbound task-needs-human notifications (generic JSON POST — pair with something like a webhook relay for Slack/Discord/ntfy). Treat this as a **secret**: many webhook URLs (e.g. Slack incoming webhooks) embed an auth token in the path, and it is never logged in full by the server. |
-| `NOTIFY_BASE_URL` | _(empty)_ | Base URL used to build a deep link (`<base>/tasks/<id>`) in each notification payload. **Required for a working link** — without it, the payload simply omits the `url` field rather than guessing a server-local address that wouldn't resolve for whoever receives the notification. |
+| `NOTIFY_BASE_URL` | _(empty)_ | Base URL used to build a deep link (`<base>/tasks/<id>`) in each notification payload. It also builds the board link in the "Part of change set" section of multi-repo PR bodies (without it that section shows the parent task id instead of a link). **Required for a working link** — without it, the payload simply omits the `url` field rather than guessing a server-local address that wouldn't resolve for whoever receives the notification. |
 | `NOTIFY_DEBOUNCE` | `5m` | Minimum time between two notifications sharing the same task+reason, so a retry storm doesn't spam the webhook. Only meaningful when `NOTIFY_WEBHOOK_URL` is set. |
 
 ### Repository Access

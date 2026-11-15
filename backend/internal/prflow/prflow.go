@@ -43,6 +43,10 @@ func IsUpstream(err error) bool { return errors.Is(err, ErrUpstream) }
 
 // Store is the slice of the task store prflow needs. *gen.Queries satisfies it.
 type Store interface {
+	GetTask(ctx context.Context, id string) (gen.Task, error)
+	GetRepo(ctx context.Context, id string) (gen.Repo, error)
+	ListSubtasks(ctx context.Context, parentTaskID *string) ([]gen.Task, error)
+	ListWorkflowDependencyEdges(ctx context.Context, workflowID string) ([]gen.ListWorkflowDependencyEdgesRow, error)
 	SetTaskPR(ctx context.Context, arg gen.SetTaskPRParams) (gen.Task, error)
 }
 
@@ -50,12 +54,15 @@ type Store interface {
 type Service struct {
 	store Store
 	wb    *writeback.Writeback
+	cs    ChangeSetOptions
+	// forgeFor resolves a remote URL to a forge; tests inject a fake.
+	forgeFor func(string) (forge.Forge, string, bool)
 }
 
 // New returns a Service persisting PR state through store. wb may be nil to
 // skip the issue write-back.
 func New(store Store, wb *writeback.Writeback) *Service {
-	return &Service{store: store, wb: wb}
+	return &Service{store: store, wb: wb, forgeFor: forge.ForRemote}
 }
 
 // CreateForTask pushes the task's branch to origin and opens (or reuses) a
@@ -87,7 +94,7 @@ func (s *Service) CreateForTask(ctx context.Context, task gen.Task, repo gen.Rep
 
 	// The compare/PR base wants a branch name, not a remote-tracking ref.
 	base := strings.TrimPrefix(task.BaseRef, "origin/")
-	body := BuildBody(task, BranchCommits(ctx, gitDir, task.BaseRef, task.Branch))
+	body := s.bodyFor(ctx, task, BranchCommits(ctx, gitDir, task.BaseRef, task.Branch))
 
 	state, prURL, err := f.CreatePR(ctx, ghName, task.Branch, base, task.Title, body)
 	if err != nil {
@@ -109,6 +116,8 @@ func (s *Service) CreateForTask(ctx context.Context, task gen.Task, repo gen.Rep
 		s.wb.OnPROpened(ctx, updated, repo)
 		s.wb.OnPRMerged(ctx, updated, repo)
 	}
+
+	s.afterPROpened(ctx, updated)
 
 	return updated, prURL, nil
 }

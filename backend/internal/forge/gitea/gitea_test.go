@@ -728,3 +728,29 @@ func TestMergePullRequest(t *testing.T) {
 		})
 	}
 }
+
+func TestEditPRBody(t *testing.T) {
+	for _, tc := range []struct {
+		status  int
+		refused bool
+		ok      bool
+	}{{200, false, true}, {403, true, false}, {422, true, false}, {500, false, false}} {
+		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
+			var gotBody map[string]string
+			g, _ := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPatch || r.URL.Path != "/api/v1/repos/o/r/pulls/4" {
+					t.Errorf("request %s %s", r.Method, r.URL.Path)
+				}
+				_ = json.NewDecoder(r.Body).Decode(&gotBody)
+				writeJSON(t, w, tc.status, map[string]string{"message": "nope"})
+			})
+			err := g.EditPRBody(context.Background(), "o/r", 4, "hello")
+			if (err == nil) != tc.ok || errors.Is(err, forge.ErrPRBodyEditRefused) != tc.refused {
+				t.Fatalf("err = %v", err)
+			}
+			if gotBody["body"] != "hello" {
+				t.Errorf("body = %v", gotBody)
+			}
+		})
+	}
+}

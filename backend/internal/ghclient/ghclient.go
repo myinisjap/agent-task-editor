@@ -74,6 +74,22 @@ func (GitHub) PRChecks(ctx context.Context, repoName string, prNumber int) ([]fo
 	return GetPRChecks(ctx, repoName, prNumber)
 }
 
+func (GitHub) EditPRBody(ctx context.Context, repoName string, prNumber int, body string) error {
+	metrics.GhCallsTotal.WithLabelValues("pr_edit").Inc()
+	_, _, err := apiDo(ctx, http.MethodPatch, fmt.Sprintf("%s/pulls/%d", repoPath(repoName), prNumber), map[string]any{"body": body})
+	if err == nil {
+		return nil
+	}
+	var ae *apiError
+	if errors.As(err, &ae) {
+		switch ae.Status {
+		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusUnprocessableEntity:
+			return fmt.Errorf("%w: %s", forge.ErrPRBodyEditRefused, apiMessage(ae.Body))
+		}
+	}
+	return err
+}
+
 func (GitHub) MergePullRequest(ctx context.Context, repoName string, prNumber int, method forge.MergeMethod, expectedHeadSHA string) error {
 	return MergePullRequest(ctx, repoName, prNumber, method, expectedHeadSHA)
 }

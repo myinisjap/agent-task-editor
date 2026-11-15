@@ -8,6 +8,7 @@ const NOUN: Record<string, string> = {
   leave_not_ready: 'Issue update',
   auto_merge: 'Auto-merge',
   review_reply: 'Review reply',
+  change_set_links: 'PR cross-links',
 }
 
 /** Short human text for one outstanding outbox row. */

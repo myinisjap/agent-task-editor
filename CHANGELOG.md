@@ -19,6 +19,9 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+- **Multi-repo stage 5 (ADR 0041): cross-linked PRs.** PRs of a change set get a generated "Part of change set" section (parent title + board link, sibling repos/PR URLs or "not opened yet", intended merge order from child dependencies); when a later sibling's PR opens, earlier siblings' PR bodies are updated between HTML markers (human text outside is untouched) via the new `change_set_links` outbox effect (migration 100), falling back to one marker-deduped comment if the forge refuses the edit. New `forge.Forge.EditPRBody` (GitHub, Gitea). Single-repo PRs are unchanged.
+
 ### Fixed
 - **codex_cli now advertises `create_subtask`'s `repo_id`** when `cross_repo_subtasks_enabled` is on (its sidecar env was missing the flag).
 - A fresh install could open the board (and default new tasks, the E2E setup, and the agent-config label picker) on the seeded "PR review" workflow instead of "Default". The default workflow is now chosen by one server-side rule, exposed as `is_default` on `GET /workflows`, and the PR review workflow never becomes the implicit default while another workflow exists.

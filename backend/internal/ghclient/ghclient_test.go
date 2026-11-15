@@ -608,3 +608,26 @@ func TestMergePullRequest_RejectsBadMethod(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestEditPRBody(t *testing.T) {
+	for _, tc := range []struct {
+		status  int
+		refused bool
+		ok      bool
+	}{{200, false, true}, {403, true, false}, {404, true, false}, {422, true, false}, {500, false, false}} {
+		reqs := fakeAPI(t, func(r recorded, w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(tc.status)
+			_, _ = w.Write([]byte(`{"message":"nope"}`))
+		})
+		err := GitHub{}.EditPRBody(context.Background(), "acme/widgets", 7, "new body")
+		r := (*reqs)[0]
+		var body map[string]string
+		_ = json.Unmarshal([]byte(r.Body), &body)
+		if r.Method != http.MethodPatch || r.Path != "/repos/acme/widgets/pulls/7" || body["body"] != "new body" {
+			t.Fatalf("request = %+v", r)
+		}
+		if (err == nil) != tc.ok || errors.Is(err, forge.ErrPRBodyEditRefused) != tc.refused {
+			t.Errorf("status %d: err = %v", tc.status, err)
+		}
+	}
+}

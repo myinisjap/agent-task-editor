@@ -886,6 +886,22 @@ func (g *Gitea) MergePullRequest(ctx context.Context, repoName string, prNumber 
 	return err
 }
 
+// EditPRBody implements forge.Forge via PATCH /pulls/{n}. 401/403/404/422 map to
+// forge.ErrPRBodyEditRefused.
+func (g *Gitea) EditPRBody(ctx context.Context, repoName string, prNumber int, body string) error {
+	metrics.GiteaCallsTotal.WithLabelValues("pr_edit").Inc()
+	respBody, err := g.apiCall(ctx, http.MethodPatch, fmt.Sprintf("/repos/%s/pulls/%d", repoName, prNumber), map[string]any{"body": body}, nil)
+	if err == nil {
+		return nil
+	}
+	for _, code := range []string{"401", "403", "404", "422"} {
+		if strings.Contains(err.Error(), "status "+code) {
+			return fmt.Errorf("%w: %s", forge.ErrPRBodyEditRefused, giteaMessage(respBody))
+		}
+	}
+	return err
+}
+
 // giteaMessage extracts Gitea's {"message": ...} text, falling back to the raw body.
 func giteaMessage(body []byte) string {
 	var m struct {

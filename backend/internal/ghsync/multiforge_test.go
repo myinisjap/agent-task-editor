@@ -95,6 +95,9 @@ func (f *fakeSecondForge) CommentOnIssue(ctx context.Context, repoName string, i
 func (f *fakeSecondForge) CloseIssueWithComment(ctx context.Context, repoName string, issueNumber int, body string) error {
 	return nil
 }
+func (f *fakeSecondForge) EditPRBody(ctx context.Context, repoName string, prNumber int, body string) error {
+	return nil
+}
 func (f *fakeSecondForge) AuthStatus() (bool, string) { return true, "fake" }
 func (f *fakeSecondForge) CompareURL(repoName, base, branch, title, body string) string {
 	return "https://" + f.host + "/" + repoName + "/compare/" + base + "..." + branch

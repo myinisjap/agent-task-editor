@@ -75,6 +75,9 @@ func (f *fakeOtherForge) CloseIssueWithComment(ctx context.Context, repoName str
 	f.closeCalls = append(f.closeCalls, body)
 	return nil
 }
+func (f *fakeOtherForge) EditPRBody(ctx context.Context, repoName string, prNumber int, body string) error {
+	return nil
+}
 func (f *fakeOtherForge) AuthStatus() (bool, string) { return true, "fake" }
 func (f *fakeOtherForge) CompareURL(repoName, base, branch, title, body string) string {
 	return "https://forge.test/" + repoName
