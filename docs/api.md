@@ -561,6 +561,12 @@ Returns `201` with the created task object (same shape as `POST /tasks`) plus
 carry `file_scope` (always an array) and, for parents, `integration_status`
 (`""`, `pending` or `done`).
 
+
+Derived multi-repo fields on task objects (computed on read, never stored): `change_set_repo_count` (distinct repos across a multi-repo parent and its non-archived children, always >= 2, else `0`), `foreign_child` (the task's repo differs from its parent's), and, on `GET /tasks/{id}` only for a task with children, `rolled_up_cost_usd` (own cost plus every child's run cost, archived children included; `cumulative_cost_usd` stays the task's own cost). No parent cost cap is enforced.
+
+### `GET /tasks/{id}/change-set`
+
+Read-only change-set view ([ADR 0041](adr/0041-multi-repo-work-as-parent-with-per-repo-children.md)); `{id}` may be the parent or any child. For a family with at least one foreign child it returns `{multi_repo: true, parent: {task_id, title, repo_id, label, rolled_up_cost_usd}, merge_order: [child ids], children: [...]}`, children in created order (archived excluded). Each child has `task_id, title, repo_id, foreign, label, branch, git_state, pr_url, merge_status`, `verification` (`pass|fail|timeout|error|not_run`), `changed` (`{files, additions, deletions}` or `null` without a branch/diff), `auto_merge` (`{state, reason, message}` or `null`, e.g. reason `change_set_order`) and `merge_position` (1-based, or `null` when no child-to-child dependency exists). Otherwise `{multi_repo: false, merge_order: [], children: []}`. `404` for an unknown task. It runs git for the diff stats, so it is not part of the list endpoints.
 ---
 
 ## Task Templates

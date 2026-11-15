@@ -34,6 +34,17 @@ type taskResponse struct {
 	SubtaskTotal     int64 `json:"subtask_total"`
 	SubtaskDone      int64 `json:"subtask_done"`
 	SubtaskConflicts int64 `json:"subtask_conflicts"`
+	// ChangeSetRepoCount is the number of distinct repos across a multi-repo
+	// parent and its non-archived children (>= 2), or 0 for every other task
+	// (ADR 0041). Derived on read.
+	ChangeSetRepoCount int64 `json:"change_set_repo_count"`
+	// ForeignChild is true when this task is a child whose repo differs from
+	// its parent's (a change-set member, ADR 0041). Derived on read.
+	ForeignChild bool `json:"foreign_child"`
+	// RolledUpCostUsd is the parent's own cost plus the cost of all its
+	// children's runs (archived children included). Set only by GET
+	// /tasks/{id}, and only for a task with children. No cap is enforced.
+	RolledUpCostUsd *float64 `json:"rolled_up_cost_usd,omitempty"`
 	// QueuePosition is a derived, read-time 0-based rank in the current
 	// agent-pickup queue (priority DESC, created_at ASC), among tasks
 	// currently eligible for dispatch. Nil when the task is not currently
@@ -263,9 +274,10 @@ func applyDepCounts(resp taskResponse, counts map[string]depCounts) taskResponse
 
 // subtaskRollup pairs a parent's derived child counts.
 type subtaskRollup struct {
-	total     int64
-	done      int64
-	conflicts int64
+	total        int64
+	done         int64
+	conflicts    int64
+	foreignRepos int64
 }
 
 // subtaskRollupMap fetches per-parent child rollups keyed by parent id, for
@@ -283,9 +295,10 @@ func (h *TasksHandler) subtaskRollupMap(ctx context.Context, ids []string) map[s
 	m := make(map[string]subtaskRollup, len(rows))
 	for _, row := range rows {
 		m[row.ParentID] = subtaskRollup{
-			total:     row.Total,
-			done:      floatPtrToInt(row.Done),
-			conflicts: floatPtrToInt(row.Conflicts),
+			total:        row.Total,
+			done:         floatPtrToInt(row.Done),
+			conflicts:    floatPtrToInt(row.Conflicts),
+			foreignRepos: row.ForeignRepos,
 		}
 	}
 	return m
@@ -305,6 +318,9 @@ func applyRollup(resp taskResponse, rollups map[string]subtaskRollup) taskRespon
 		resp.SubtaskTotal = r.total
 		resp.SubtaskDone = r.done
 		resp.SubtaskConflicts = r.conflicts
+		if r.foreignRepos > 0 {
+			resp.ChangeSetRepoCount = r.foreignRepos + 1
+		}
 	}
 	return resp
 }
@@ -522,6 +538,31 @@ func (h *TasksHandler) mergeOrderMap(ctx context.Context, tasks []gen.Task) map[
 func applyMergeOrder(resp taskResponse, m map[string][]mergeOrderPred) taskResponse {
 	if v, ok := m[resp.ID]; ok {
 		resp.MergeOrderPending = v
+	}
+	return resp
+}
+
+// foreignChildMap returns the set of the given task ids that are children in a
+// different repo than their parent (ADR 0041).
+func (h *TasksHandler) foreignChildMap(ctx context.Context, ids []string) map[string]bool {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := h.q.ListForeignChildIDsForTasks(ctx, ids)
+	if err != nil || len(rows) == 0 {
+		return nil
+	}
+	m := make(map[string]bool, len(rows))
+	for _, id := range rows {
+		m[id] = true
+	}
+	return m
+}
+
+// applyForeignChild sets foreign_child on a response.
+func applyForeignChild(resp taskResponse, m map[string]bool) taskResponse {
+	if m[resp.ID] {
+		resp.ForeignChild = true
 	}
 	return resp
 }

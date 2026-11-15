@@ -17,6 +17,13 @@ import { gateTarget } from '../home/AutoApprovingRow'
 import { PR_STAYS_OPEN_TEXT, undoConfirmText } from '../../lib/homeInbox'
 import { UNDO_DISABLED_TITLE } from '../home/PolicyApprovalRow'
 import { Badge, Button, Card, Field, buttonClasses, controlClasses } from '../ui'
+import { useReposStore } from '../../stores/repos'
+
+/** Repo display name from the repos store, falling back to the raw id. */
+function RepoName({ id }: { id: string }) {
+  const name = useReposStore((s) => s.repos.find((r) => r.id === id)?.name)
+  return <>{name || id}</>
+}
 
 const PRIMARY = buttonClasses({ variant: 'primary', size: 'sm' })
 const SECONDARY = buttonClasses({ variant: 'secondary', size: 'sm' })
@@ -169,8 +176,8 @@ export default function InboxPreview(p: InboxPreviewProps) {
               <ul className="text-sm text-fg list-disc pl-5">
                 {prs.map((pr) => (
                   <li key={pr.task_id} className="break-words">
-                    <Link to={`/tasks/`} className="text-accent-fg hover:underline">{pr.title}</Link>
-                    <span className="text-fg-muted"> · {pr.repo_id}</span>
+                    <Link to={`/tasks/${pr.task_id}`} className="text-accent-fg hover:underline">{pr.title}</Link>
+                    <span className="text-fg-muted"> · <RepoName id={pr.repo_id} /></span>
                     {pr.state === 'pr_closed' && <span className="text-danger"> · PR closed</span>}
                     {pr.state === 'land_failed' && <span className="text-danger"> · PR could not be opened</span>}
                     {pr.pr_url && (

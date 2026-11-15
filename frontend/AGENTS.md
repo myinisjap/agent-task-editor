@@ -24,7 +24,8 @@ src/
 │   └── types.ts      Shared TypeScript type definitions
 ├── components/
 │   ├── DependenciesPanel.tsx  Task dependency list + add/remove UI
-│   ├── SubtasksPanel.tsx      Subtask checklist + add/remove UI
+│   ├── SubtasksPanel.tsx      Subtask checklist + add/remove UI; fetches the change-set view for multi-repo parents and children
+│   │   (task-detail/ChangeSetPanel.tsx: per-repo "Change set" panel and "Part of change set" line)
 │   ├── board/        AgentGroupColumn, AgentLogEntry, BoardFilterSheet, GitStateBadge, NewTaskModal, TaskBoard, TaskCard, TaskColumn
 │   ├── chat/          TerminalKeyBar (mobile Esc/Tab/arrow/Ctrl row for the chat terminal)
 │   ├── diff/          FileDiffViewer (syntax-highlighted git diff + inline review comments)

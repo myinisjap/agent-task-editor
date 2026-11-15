@@ -386,11 +386,20 @@ SELECT
         SELECT 1 FROM workflow_labels wl
         WHERE wl.workflow_id = c.workflow_id AND wl.name = c.label AND wl.is_terminal != 0
     ) THEN 1 ELSE 0 END) AS done,
-    SUM(CASE WHEN c.merge_status = 'merge_conflict' THEN 1 ELSE 0 END) AS conflicts
+    SUM(CASE WHEN c.merge_status = 'merge_conflict' THEN 1 ELSE 0 END) AS conflicts,
+    COUNT(DISTINCT CASE WHEN c.repo_id != p.repo_id AND c.archived = 0 THEN c.repo_id END) AS foreign_repos
 FROM tasks p
 JOIN tasks c ON c.parent_task_id = p.id
 WHERE p.id IN (sqlc.slice('parent_ids'))
 GROUP BY p.id;
+
+-- name: ListForeignChildIDsForTasks :many
+-- Of the given task ids, the ones that are children living in a different
+-- repo than their parent (multi-repo change-set children, ADR 0041).
+SELECT c.id AS task_id
+FROM tasks c
+JOIN tasks p ON p.id = c.parent_task_id
+WHERE c.id IN (sqlc.slice('task_ids')) AND c.repo_id != p.repo_id;
 
 -- name: IncrementTaskFailureCount :one
 -- Bumps the consecutive genuine-failure counter and returns the new value. The

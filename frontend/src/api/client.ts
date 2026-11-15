@@ -14,6 +14,8 @@ type Schemas = components['schemas']
 export type ProviderConfig = Schemas['ProviderConfig']
 export type ChatSession = Schemas['ChatSession']
 export type Task = Schemas['Task']
+export type ChangeSet = Schemas['ChangeSet']
+export type ChangeSetChild = Schemas['ChangeSetChild']
 export type Skill = Schemas['Skill']
 export type RepoLesson = Schemas['RepoLesson']
 export type RepoLessonCreate = Schemas['RepoLessonCreate']
@@ -339,6 +341,7 @@ export const api = {
     // Subtasks (Mechanism 2). subtasks() lists a parent's children; createSubtask
     // adds one under the parent (lands on a human-gate label).
     subtasks: (id: string) => request<Task[]>(`/tasks?parent_id=${encodeURIComponent(id)}`),
+    changeSet: (id: string) => request<ChangeSet>(`/tasks/${encodeURIComponent(id)}/change-set`),
     createSubtask: (id: string, body: { title: string; description?: string; type?: string; label?: string }) =>
       request<Task>(`/tasks/${id}/subtasks`, { method: 'POST', body: JSON.stringify(body) }),
     reviewComments: (id: string) => request<ReviewComment[]>(`/tasks/${id}/review-comments`),

@@ -296,6 +296,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			// Uploads — serve attachment images
 			r.Get("/uploads/{task_id}/{filename}", uploadsH.ServeFile)
 			r.Get("/tasks/{id}", tasksH.Get)
+			r.Get("/tasks/{id}/change-set", tasksH.ChangeSet)
 			r.Patch("/tasks/{id}", tasksH.Update)
 			r.Delete("/tasks/{id}", tasksH.Delete)
 			r.Patch("/tasks/{id}/label", tasksH.MoveLabel)
