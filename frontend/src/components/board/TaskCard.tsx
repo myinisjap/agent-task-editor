@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, Ban, Check, CircleDollarSign, Copy, CornerDownRight, Hourglass, ListTree, Lock, Pause, Pencil, Play, RefreshCw, Trash2, TriangleAlert } from 'lucide-react'
+import { Archive, ArchiveRestore, Ban, Check, CircleDollarSign, Copy, CornerDownRight, GitFork, Hourglass, ListTree, Lock, Pause, Pencil, Play, RefreshCw, Trash2, TriangleAlert } from 'lucide-react'
 import { memo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useDraggable } from '@dnd-kit/core'
@@ -445,6 +445,15 @@ function TaskCard({
               <Icon icon={Check} size="xs" />merged
             </Badge>
           )}
+          {task.foreign_child && (
+            <span
+              data-testid="repo-chip"
+              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-accent/30 bg-accent/15 text-accent-fg font-medium max-w-[120px]"
+              title={`Change-set child in repo ${repoName ?? task.repo_id} — part of a multi-repo task`}
+            >
+              <Icon icon={GitFork} size="xs" /><span className="truncate">{repoName ?? task.repo_id.slice(0, 8)}</span>
+            </span>
+          )}
           {subtaskTotal > 0 && (
             <span
               className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold ${subtaskConflicts > 0 ? 'bg-danger-soft text-danger' : 'bg-surface-sunken text-fg-muted'}`}
@@ -452,6 +461,11 @@ function TaskCard({
             >
               <Icon icon={ListTree} size="xs" />{task.subtask_done ?? 0}/{subtaskTotal}{subtaskConflicts > 0 && <Icon icon={TriangleAlert} size="xs" />}
             </span>
+          )}
+          {(task.change_set_repo_count ?? 0) >= 2 && (
+            <Badge size="xs" data-testid="repos-badge" title="Multi-repo task: its children span these repos">
+              {task.change_set_repo_count} repos
+            </Badge>
           )}
           {blocked && (
             <Badge size="xs"

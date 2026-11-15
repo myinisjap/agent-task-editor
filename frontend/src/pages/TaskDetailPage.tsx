@@ -1,7 +1,7 @@
 import { CircleDollarSign } from 'lucide-react'
 import Icon from '../components/ui/Icon'
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { api, type Task, type AgentRun, type TaskLabelHistoryEntry, type TaskSourceComment, type TaskHumanDecision, type Workflow, type Repo } from '../api/client'
 import { wsClient } from '../api/ws'
 import { useAgentsStore } from '../stores/agents'
@@ -64,7 +64,14 @@ export default function TaskDetailPage() {
   // re-dispatched run shows up and is selected.
   const [retriedRunId, setRetriedRunId] = useState<string | null>(null)
   const [creatingPR, setCreatingPR] = useState(false)
-  const [activeTab, setActiveTab] = useState<Tab>('overview')
+  // ?tab=diff|logs deep-links a tab (change-set rows link to a child's diff).
+  const [searchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const paramTab: Tab | null = tabParam === 'diff' || tabParam === 'logs' ? tabParam : null
+  const [activeTab, setActiveTab] = useState<Tab>(paramTab ?? 'overview')
+  useEffect(() => {
+    if (paramTab) setActiveTab(paramTab)
+  }, [id, paramTab])
   const [showHelp, setShowHelp] = useState(false)
   const [workflow, setWorkflow] = useState<Workflow | null>(null)
   const [alwaysAskPending, setAlwaysAskPending] = useState(false)

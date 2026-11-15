@@ -191,6 +191,7 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 		runStatuses := h.activeRunStatusMap(r.Context(), ids)
 		effects := h.sideEffectMap(r.Context(), ids)
 		autoMerges := h.autoMergeMap(r.Context(), ids)
+		foreigns := h.foreignChildMap(r.Context(), ids)
 		mergeOrders := h.mergeOrderMap(r.Context(), children)
 		pendings := h.sourcePendingMap(r.Context(), ids)
 		verdicts := h.intakeVerdicts(r.Context(), ids)
@@ -201,6 +202,7 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 			resp[i] = h.withVerdict(resp[i], verdicts)
 			resp[i] = applySideEffects(resp[i], effects)
 			resp[i] = applyAutoMerge(resp[i], autoMerges)
+			resp[i] = applyForeignChild(resp[i], foreigns)
 			resp[i] = applyMergeOrder(resp[i], mergeOrders)
 			resp[i] = applySourcePending(resp[i], pendings)
 			resp[i] = applyPRReview(resp[i], prSources)
@@ -238,6 +240,7 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	blockReasons := h.blockReasonMap(r.Context(), tasks)
 	runStatuses := h.activeRunStatusMap(r.Context(), ids)
 	effects := h.sideEffectMap(r.Context(), ids)
+	foreigns := h.foreignChildMap(r.Context(), ids)
 	autoMerges := h.autoMergeMap(r.Context(), ids)
 	mergeOrders := h.mergeOrderMap(r.Context(), tasks)
 	fanouts := h.fanoutMap(r.Context(), ids)
@@ -248,6 +251,7 @@ func (h *TasksHandler) List(w http.ResponseWriter, r *http.Request) {
 	for i := range resp {
 		resp[i] = h.withVerdict(resp[i], verdicts)
 		resp[i] = applySideEffects(resp[i], effects)
+		resp[i] = applyForeignChild(resp[i], foreigns)
 		resp[i] = applyAutoMerge(resp[i], autoMerges)
 		resp[i] = applyMergeOrder(resp[i], mergeOrders)
 		resp[i] = applySourcePending(resp[i], pendings)
@@ -326,11 +330,18 @@ func (h *TasksHandler) Get(w http.ResponseWriter, r *http.Request) {
 	resp = applySideEffects(resp, h.sideEffectMap(r.Context(), ids))
 	resp = h.withIntake(r.Context(), resp, task)
 	resp = applyAutoMerge(resp, h.autoMergeMap(r.Context(), ids))
+	resp = applyForeignChild(resp, h.foreignChildMap(r.Context(), ids))
 	resp = applyMergeOrder(resp, h.mergeOrderMap(r.Context(), []gen.Task{task}))
 	resp = applySourcePending(resp, h.sourcePendingMap(r.Context(), ids))
 	resp = applyPRReview(resp, h.prReviewMap(r.Context(), ids))
 	if cost, cerr := h.q.SumTaskCost(r.Context(), task.ID); cerr == nil {
 		resp.CumulativeCostUsd = cost
+		if resp.SubtaskTotal > 0 {
+			if kids, kerr := h.q.SumChildrenTaskCost(r.Context(), &task.ID); kerr == nil {
+				total := cost + kids
+				resp.RolledUpCostUsd = &total
+			}
+		}
 	}
 	if task.MatchedRuleID != nil {
 		if rule, rerr := h.q.GetIntakeRule(r.Context(), *task.MatchedRuleID); rerr == nil {

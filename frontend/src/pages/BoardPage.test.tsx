@@ -762,3 +762,27 @@ describe('BoardPage on phone', () => {
     expect(await screen.findByText('Filtered cost: $1.50')).toBeInTheDocument()
   })
 })
+
+describe('BoardPage repo filter with change-set children (ADR 0041)', () => {
+  beforeEach(() => {
+    costByTaskMock.mockReset().mockResolvedValue([])
+    tasksListMock.mockReset()
+    workflowsListMock.mockReset()
+    seedStores([
+      task({ id: 'p', title: 'Parent task', repo_id: 'r1', change_set_repo_count: 2 }),
+      task({ id: 'c', title: 'Foreign child', repo_id: 'r2', parent_task_id: 'p', foreign_child: true }),
+    ])
+  })
+
+  it('shows the parent under its primary repo only', async () => {
+    render(<MemoryRouter initialEntries={['/board?repo=r1']}><BoardPage /></MemoryRouter>)
+    expect(await screen.findByText('Parent task')).toBeInTheDocument()
+    expect(screen.queryByText('Foreign child')).not.toBeInTheDocument()
+  })
+
+  it('shows the foreign child under its own repo only', async () => {
+    render(<MemoryRouter initialEntries={['/board?repo=r2']}><BoardPage /></MemoryRouter>)
+    expect(await screen.findByText('Foreign child')).toBeInTheDocument()
+    expect(screen.queryByText('Parent task')).not.toBeInTheDocument()
+  })
+})

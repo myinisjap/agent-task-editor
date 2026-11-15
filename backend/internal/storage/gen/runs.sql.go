@@ -1237,6 +1237,22 @@ func (q *Queries) SetAgentRunStarted(ctx context.Context, id string) (AgentRun, 
 	return i, err
 }
 
+const sumChildrenTaskCost = `-- name: SumChildrenTaskCost :one
+SELECT CAST(COALESCE(SUM(ar.cost_usd),0) AS REAL) AS cost_usd
+FROM agent_runs ar JOIN tasks c ON c.id = ar.task_id
+WHERE c.parent_task_id = ?
+`
+
+// Cost of every run of every child of a parent (archived children included,
+// the money was spent). Added to the parent's own SumTaskCost for the
+// rolled-up cost on a multi-repo parent (ADR 0041).
+func (q *Queries) SumChildrenTaskCost(ctx context.Context, parentTaskID *string) (float64, error) {
+	row := q.db.QueryRowContext(ctx, sumChildrenTaskCost, parentTaskID)
+	var cost_usd float64
+	err := row.Scan(&cost_usd)
+	return cost_usd, err
+}
+
 const sumCostForDay = `-- name: SumCostForDay :one
 SELECT CAST(COALESCE(SUM(cost_usd),0) AS REAL) AS cost_usd
 FROM agent_runs WHERE created_at >= CAST(?1 AS TEXT) AND created_at < CAST(?2 AS TEXT)

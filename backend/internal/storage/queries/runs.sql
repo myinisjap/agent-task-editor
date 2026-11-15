@@ -205,6 +205,14 @@ ORDER BY ar.created_at DESC;
 SELECT CAST(COALESCE(SUM(cost_usd),0) AS REAL) AS cost_usd
 FROM agent_runs WHERE task_id = ?;
 
+-- name: SumChildrenTaskCost :one
+-- Cost of every run of every child of a parent (archived children included,
+-- the money was spent). Added to the parent's own SumTaskCost for the
+-- rolled-up cost on a multi-repo parent (ADR 0041).
+SELECT CAST(COALESCE(SUM(ar.cost_usd),0) AS REAL) AS cost_usd
+FROM agent_runs ar JOIN tasks c ON c.id = ar.task_id
+WHERE c.parent_task_id = ?;
+
 -- name: SumUsageByDay :many
 -- Daily token/cost/run-count rollup for the dashboard's cost-by-day table,
 -- most recent day first, capped at the last 30 days with recorded activity.

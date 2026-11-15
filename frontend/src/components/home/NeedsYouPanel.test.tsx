@@ -97,3 +97,17 @@ describe('NeedsYouPanel autonomy groups', () => {
     expect(screen.getByRole('button', { name: 'Undo Approved one' })).toBeDisabled()
   })
 })
+
+describe('NeedsYouPanel change_set_partial', () => {
+  it('shows a merged / not merged summary next to the title', () => {
+    const item = {
+      ...human, task_id: 'cs1', task_title: 'Add feature', reason: 'change_set_partial',
+      change_set: {
+        merged: [{ task_id: 'm1', title: 'api', repo_id: 'r1', state: 'merged' }],
+        failed: [{ task_id: 'f1', title: 'ui', repo_id: 'r2', state: 'pr_closed' }, { task_id: 'f2', title: 'cli', repo_id: 'r3', state: 'pr_closed' }],
+      },
+    } as unknown as NeedsMeItem
+    render(<NeedsYouPanel sections={buildInbox([item], [], [], [])} onSelect={vi.fn()} workflows={[wf]} />)
+    expect(screen.getByTestId('change-set-partial-summary')).toHaveTextContent('1 merged, 2 not merged')
+  })
+})

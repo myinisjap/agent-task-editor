@@ -70,7 +70,14 @@ export default function NeedsYouPanel({ sections, onSelect, limit, highlight, wo
                   className="w-full flex items-center gap-2 min-w-0 rounded-md px-2 py-1.5 text-left hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 >
                   <Badge tone={SECTION_META[key]?.tone ?? 'neutral'} size="xs" className="shrink-0">{sectionTitle(key)}</Badge>
-                  <span className="flex-1 min-w-0 truncate text-sm text-fg">{entryTitle(e)}</span>
+                  <span className="flex-1 min-w-0 truncate text-sm text-fg">
+                    {entryTitle(e)}
+                    {e.kind === 'needs_me' && e.item.reason === 'change_set_partial' && e.item.change_set && (
+                      <span data-testid="change-set-partial-summary" className="text-fg-muted">
+                        {' '}· {e.item.change_set.merged.length} merged, {e.item.change_set.failed.length} not merged
+                      </span>
+                    )}
+                  </span>
                   <span
                     data-stale={isStale(since, now) ? 'true' : undefined}
                     className={cx('shrink-0 font-mono text-xs', isStale(since, now) ? 'text-warning' : 'text-fg-muted')}

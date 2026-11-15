@@ -70,6 +70,7 @@ export default function ReviewLayout({
   autoApproving?: { dueAt: string }
   onHold?: () => void
 }) {
+  const multiCost = task.rolled_up_cost_usd != null && (task.change_set_repo_count ?? 0) >= 2
   const defaultTab: MainTab = mode === 'plan' ? 'plan' : 'diff'
   const [tab, setTab] = useState<MainTab>(defaultTab)
   const [showRejectForm, setShowRejectForm] = useState(false)
@@ -163,7 +164,7 @@ export default function ReviewLayout({
         <div className="flex flex-wrap items-center gap-3 mt-1 text-xs text-fg-muted">
           {stateChip}
           {repoName && <span>{repoName}</span>}
-          <span>${(task.cumulative_cost_usd ?? 0).toFixed(2)}</span>
+          <span title={multiCost ? "incl. child tasks" : undefined}>${(multiCost ? task.rolled_up_cost_usd! : (task.cumulative_cost_usd ?? 0)).toFixed(2)}</span>
           <span>{runs.length} run{runs.length === 1 ? '' : 's'}</span>
         </div>
       </div>

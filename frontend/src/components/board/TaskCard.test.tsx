@@ -562,3 +562,29 @@ describe('TaskCard review-only PR tasks', () => {
     expect(screen.getByRole('link', { name: /PR #7/ })).toHaveAttribute('href', 'https://github.com/o/r/pull/7')
   })
 })
+
+describe('TaskCard multi-repo chips (ADR 0041)', () => {
+  beforeEach(() => {
+    useTasksStore.setState({ tasks: [], loading: false, error: null })
+    useReposStore.setState({ repos: [{ id: 'r2', name: 'api-repo' }] as never, loading: false, error: null })
+  })
+  const renderCard = (t: Task) => render(<MemoryRouter><TaskCard task={t} /></MemoryRouter>)
+
+  it('shows the repo chip only on a foreign child', () => {
+    renderCard(baseTask({ repo_id: 'r2', parent_task_id: 'p', foreign_child: true }))
+    expect(screen.getByTestId('repo-chip')).toHaveTextContent('api-repo')
+    expect(screen.queryByTestId('repos-badge')).toBeNull()
+  })
+
+  it('shows the N repos badge only when change_set_repo_count >= 2', () => {
+    renderCard(baseTask({ change_set_repo_count: 3, subtask_total: 3 }))
+    expect(screen.getByTestId('repos-badge')).toHaveTextContent('3 repos')
+    expect(screen.queryByTestId('repo-chip')).toBeNull()
+  })
+
+  it('a plain task has neither', () => {
+    renderCard(baseTask({ change_set_repo_count: 0, foreign_child: false }))
+    expect(screen.queryByTestId('repo-chip')).toBeNull()
+    expect(screen.queryByTestId('repos-badge')).toBeNull()
+  })
+})

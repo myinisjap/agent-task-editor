@@ -651,6 +651,61 @@ components:
         started_at:            { type: string, format: date-time }
         finished_at:           { type: string, format: date-time, nullable: true }
       required: [task_id, status, trigger, verdict, questions, suggested_type, suggested_workflow_id, duplicate_ids, error, cost_usd, input_tokens, output_tokens, started_at]
+    ChangeSetParent:
+      type: object
+      required: [task_id, title, repo_id, label, rolled_up_cost_usd]
+      properties:
+        task_id: { type: string }
+        title: { type: string }
+        repo_id: { type: string }
+        label: { type: string }
+        rolled_up_cost_usd: { type: number, format: double }
+    ChangeSetChild:
+      type: object
+      required: [task_id, title, repo_id, foreign, label, branch, git_state, pr_url, merge_status, verification, changed, auto_merge, merge_position]
+      properties:
+        task_id: { type: string }
+        title: { type: string }
+        repo_id: { type: string }
+        foreign: { type: boolean, description: "In a different repo than the parent." }
+        label: { type: string }
+        branch: { type: string }
+        git_state: { type: string }
+        pr_url: { type: string }
+        merge_status: { type: string }
+        verification:
+          type: string
+          enum: [pass, fail, timeout, error, not_run]
+        changed:
+          nullable: true
+          type: object
+          properties:
+            files: { type: integer }
+            additions: { type: integer }
+            deletions: { type: integer }
+        auto_merge:
+          nullable: true
+          type: object
+          properties:
+            state: { type: string, enum: [waiting, merging] }
+            reason: { type: string }
+            message: { type: string }
+        merge_position:
+          nullable: true
+          type: integer
+          description: 1-based position in the merge order; null when the family has no child-to-child dependency edge.
+    ChangeSet:
+      type: object
+      required: [multi_repo, merge_order, children]
+      properties:
+        multi_repo: { type: boolean }
+        parent: { $ref: "#/components/schemas/ChangeSetParent" }
+        merge_order:
+          type: array
+          items: { type: string }
+        children:
+          type: array
+          items: { $ref: "#/components/schemas/ChangeSetChild" }
     CreatedChildTask:
       type: object
       description: A child created together with its parent by POST /tasks (ADR 0041).
@@ -818,6 +873,21 @@ components:
         subtask_conflicts:
           type: integer
           description: "Derived: children whose merge-back is in conflict."
+        change_set_repo_count:
+          type: integer
+          description: >
+            Derived: distinct repos across a multi-repo parent and its
+            non-archived children (always >= 2), or 0 for every other task.
+        foreign_child:
+          type: boolean
+          description: "Derived: true when this task is a child whose repo differs from its parent's (a change-set member)."
+        rolled_up_cost_usd:
+          type: number
+          format: double
+          description: >
+            Only on GET /tasks/{id}, for a task with children: the task's own
+            cost plus the cost of every child's runs (archived children
+            included). No cap is enforced (ADR 0041). Omitted otherwise.
         file_scope:
           type: array
           items: { type: string }
@@ -4373,6 +4443,29 @@ paths:
         "403": { description: Creating run's config is not permitted to create subtasks (or cross-repo subtasks for a foreign repo_id) }
         "404": { description: Parent task not found }
         "422": { description: Per-parent subtask cap reached }
+
+  /tasks/{id}/change-set:
+    get:
+      summary: Change-set view of a multi-repo task family
+      description: >
+        Read-only, derived on read (ADR 0041). {id} may be the parent or any of
+        its children. For a family with at least one foreign child (a child in a
+        different repo than the parent) it returns every non-archived child in
+        created order with its verify result, diff stats (null when no branch
+        or the diff is unavailable), auto-merge state and 1-based merge
+        position. Otherwise multi_repo is false and children is empty. There is
+        no merged cross-repo diff.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChangeSet" }
+        "404": { description: Task not found }
 
   /tasks/{id}/dependencies/{dep_id}:
     delete:

@@ -530,6 +530,48 @@ func (q *Queries) ListAgentPickupTasks(ctx context.Context) ([]Task, error) {
 	return items, nil
 }
 
+const listForeignChildIDsForTasks = `-- name: ListForeignChildIDsForTasks :many
+SELECT c.id AS task_id
+FROM tasks c
+JOIN tasks p ON p.id = c.parent_task_id
+WHERE c.id IN (/*SLICE:task_ids*/?) AND c.repo_id != p.repo_id
+`
+
+// Of the given task ids, the ones that are children living in a different
+// repo than their parent (multi-repo change-set children, ADR 0041).
+func (q *Queries) ListForeignChildIDsForTasks(ctx context.Context, taskIds []string) ([]string, error) {
+	query := listForeignChildIDsForTasks
+	var queryParams []interface{}
+	if len(taskIds) > 0 {
+		for _, v := range taskIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:task_ids*/?", strings.Repeat(",?", len(taskIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:task_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var task_id string
+		if err := rows.Scan(&task_id); err != nil {
+			return nil, err
+		}
+		items = append(items, task_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listGhSyncEligibleTasks = `-- name: ListGhSyncEligibleTasks :many
 SELECT id, title, description, type, label, repo_id, workflow_id, current_agent_run_id, agent_notes, active_agent_run_id, created_at, updated_at, branch, worktree_path, base_ref, attachments, git_state, paused, transient_retry_count, next_retry_at, source, source_ref, archived, pr_url, parent_task_id, created_by_run_id, merge_status, max_cost_usd, priority, writeback_in_progress_sent, writeback_pr_commented, writeback_closed, source_state, source_state_at, pr_mergeable, cost_warned, matched_rule_id, consecutive_failure_count, always_ask FROM tasks_full WHERE branch != '' AND archived = 0 AND git_state NOT IN ('pr_merged', 'pr_closed') AND source NOT IN ('github_pr', 'gitea_pr') ORDER BY created_at DESC
 `
@@ -661,7 +703,8 @@ SELECT
         SELECT 1 FROM workflow_labels wl
         WHERE wl.workflow_id = c.workflow_id AND wl.name = c.label AND wl.is_terminal != 0
     ) THEN 1 ELSE 0 END) AS done,
-    SUM(CASE WHEN c.merge_status = 'merge_conflict' THEN 1 ELSE 0 END) AS conflicts
+    SUM(CASE WHEN c.merge_status = 'merge_conflict' THEN 1 ELSE 0 END) AS conflicts,
+    COUNT(DISTINCT CASE WHEN c.repo_id != p.repo_id AND c.archived = 0 THEN c.repo_id END) AS foreign_repos
 FROM tasks p
 JOIN tasks c ON c.parent_task_id = p.id
 WHERE p.id IN (/*SLICE:parent_ids*/?)
@@ -669,10 +712,11 @@ GROUP BY p.id
 `
 
 type ListSubtaskRollupsForParentsRow struct {
-	ParentID  string   `json:"parent_id"`
-	Total     int64    `json:"total"`
-	Done      *float64 `json:"done"`
-	Conflicts *float64 `json:"conflicts"`
+	ParentID     string   `json:"parent_id"`
+	Total        int64    `json:"total"`
+	Done         *float64 `json:"done"`
+	Conflicts    *float64 `json:"conflicts"`
+	ForeignRepos int64    `json:"foreign_repos"`
 }
 
 // Same as ListSubtaskRollups but scoped to a specific set of parent ids, so
@@ -702,6 +746,7 @@ func (q *Queries) ListSubtaskRollupsForParents(ctx context.Context, parentIds []
 			&i.Total,
 			&i.Done,
 			&i.Conflicts,
+			&i.ForeignRepos,
 		); err != nil {
 			return nil, err
 		}

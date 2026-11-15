@@ -760,3 +760,19 @@ describe('TaskDetailPage review layout', () => {
     expect(screen.queryByTestId('review-layout')).not.toBeInTheDocument()
   })
 })
+
+describe('TaskDetailPage ?tab deep link', () => {
+  it('opens the Diff tab for ?tab=diff', async () => {
+    vi.mocked(api.tasks.get).mockResolvedValue(task())
+    vi.mocked(api.tasks.runs).mockResolvedValue({ items: [], nextCursor: null })
+    vi.mocked(api.workflows.get).mockResolvedValue(workflow())
+    render(
+      <MemoryRouter initialEntries={['/tasks/task-1?tab=diff']}>
+        <Routes>
+          <Route path="/tasks/:id" element={<TaskDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(await screen.findByTestId('diff-review-pane')).toBeInTheDocument()
+  })
+})

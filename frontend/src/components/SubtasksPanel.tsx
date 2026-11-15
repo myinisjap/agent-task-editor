@@ -3,15 +3,18 @@ import Icon from './ui/Icon'
 import { labelDisplayNameByName } from '../lib/labelDisplay'
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import type { Task, WorkflowLabel } from '../api/client'
+import type { ChangeSet, Task, WorkflowLabel } from '../api/client'
 import { api } from '../api/client'
 import { wsClient } from '../api/ws'
+import { ChangeSetLine, ChangeSetPanel } from './task-detail/ChangeSetPanel'
 
 // mergeBadge renders a child's merge-back status.
 function mergeBadge(status?: string) {
   if (status === 'merged') return <span className="text-[10px] text-success inline-flex items-center gap-1"><Icon icon={Check} size="xs" />merged</span>
   if (status === 'merge_conflict') return <span className="text-[10px] text-danger inline-flex items-center gap-1"><Icon icon={TriangleAlert} size="xs" />conflict</span>
   if (status === 'pending') return <span className="text-[10px] text-warning inline-flex items-center gap-1"><Icon icon={Hourglass} size="xs" />pending</span>
+  if (status === 'pr_open') return <span className="text-[10px] text-accent-fg inline-flex items-center gap-1"><Icon icon={Hourglass} size="xs" />PR open</span>
+  if (status === 'pr_closed') return <span className="text-[10px] text-danger inline-flex items-center gap-1"><Icon icon={TriangleAlert} size="xs" />PR closed</span>
   return null
 }
 
@@ -64,21 +67,27 @@ export default function SubtasksPanel({
   const [children, setChildren] = useState<Task[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [changeSet, setChangeSet] = useState<ChangeSet | null>(null)
+  const isChild = !!task.parent_task_id
+  const repoCount = task.change_set_repo_count ?? 0
+  const wantsChangeSet = isChild || repoCount >= 2
 
   const load = useCallback(() => {
     api.tasks.subtasks(task.id).then(setChildren).catch(() => setChildren([]))
-  }, [task.id])
+    if (wantsChangeSet) {
+      api.tasks.changeSet(task.id).then(setChangeSet).catch(() => setChangeSet(null))
+    }
+  }, [task.id, wantsChangeSet])
 
   useEffect(load, [load])
   useEffect(() => {
     return wsClient.on((e) => {
-      if (e.type === 'resync' || e.type === 'task.updated' || e.type === 'task.label_changed' || e.type === 'task.created' || e.type === 'task.subtask_conflict') {
+      if (e.type === 'resync' || e.type === 'task.updated' || e.type === 'task.label_changed' || e.type === 'task.created' || e.type === 'task.subtask_conflict' || e.type === 'task.git_state_changed') {
         load()
       }
     })
   }, [load])
 
-  const isChild = !!task.parent_task_id
 
   // Gate labels are agent_ignore; the release target is the first non-gate label.
   const sorted = [...labels].sort((a, b) => a.sort_order - b.sort_order)
@@ -107,6 +116,8 @@ export default function SubtasksPanel({
     <div className="border-t border-border pt-3">
       <p className="text-xs text-fg-subtle mb-2">Subtasks</p>
 
+      {isChild && changeSet?.multi_repo && <ChangeSetLine changeSet={changeSet} taskId={task.id} />}
+
       {isChild && (
         <div className="mb-3 text-xs">
           <button
@@ -128,6 +139,7 @@ export default function SubtasksPanel({
 
       {children.length > 0 && (
         <div>
+          {!isChild && repoCount >= 2 && changeSet?.multi_repo && <ChangeSetPanel changeSet={changeSet} repoCount={repoCount} labels={labels} />}
           <div className="flex items-center justify-between mb-1">
             <p className="text-[11px] uppercase tracking-wide text-fg-subtle">
               Children ({children.filter((c) => mergeIsDone(c)).length}/{children.length})

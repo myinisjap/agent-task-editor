@@ -17,7 +17,7 @@ Agent Task Editor is a self-hosted Kanban board where AI agents automatically wo
 | [task-sources.md](task-sources.md) | Importing GitHub Issues as tasks, write-back, and the optional GitHub webhook |
 | [task-templates.md](task-templates.md) | Task templates and recurring cron-scheduled task creation |
 | [skills.md](skills.md) | Skills library: Agent Skills storage, API and per-provider materialization |
-
+| [multi-repo.md](multi-repo.md) | Multi-repo tasks: change sets, per-repo children, merge order, UI and cost roll-up |
 | [lessons.md](lessons.md) | Repo lessons: curated cross-task knowledge injected into agent prompts |
 | [repo-map.md](repo-map.md) | Repo map: a generated, refreshed codebase guide shown in the UI and offered to planning agents |
 | [api.md](api.md) | REST API reference |

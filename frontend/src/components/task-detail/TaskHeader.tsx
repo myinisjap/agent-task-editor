@@ -398,7 +398,13 @@ export default function TaskHeader({
         )}
         <Row label="Cost">
           <span className="text-xs text-fg">
-            ${cumulativeCost.toFixed(2)}
+            {task.rolled_up_cost_usd != null && (task.change_set_repo_count ?? 0) >= 2 ? (
+              <span title="incl. child tasks">
+                ${task.rolled_up_cost_usd.toFixed(2)} total (change set) · ${cumulativeCost.toFixed(2)} this task
+              </span>
+            ) : (
+              <>${cumulativeCost.toFixed(2)}</>
+            )}
             {task.max_cost_usd ? ` / $${task.max_cost_usd.toFixed(2)} budget` : ''}
           </span>
         </Row>

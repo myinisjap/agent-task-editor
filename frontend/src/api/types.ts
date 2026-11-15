@@ -1743,6 +1743,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/change-set": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Change-set view of a multi-repo task family
+         * @description Read-only, derived on read (ADR 0041). {id} may be the parent or any of its children. For a family with at least one foreign child (a child in a different repo than the parent) it returns every non-archived child in created order with its verify result, diff stats (null when no branch or the diff is unavailable), auto-merge state and 1-based merge position. Otherwise multi_repo is false and children is empty. There is no merged cross-repo diff.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChangeSet"];
+                    };
+                };
+                /** @description Task not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/tasks/{id}/dependencies/{dep_id}": {
         parameters: {
             query?: never;
@@ -8755,6 +8802,47 @@ export interface components {
             /** Format: date-time */
             finished_at?: string | null;
         };
+        ChangeSetParent: {
+            task_id: string;
+            title: string;
+            repo_id: string;
+            label: string;
+            /** Format: double */
+            rolled_up_cost_usd: number;
+        };
+        ChangeSetChild: {
+            task_id: string;
+            title: string;
+            repo_id: string;
+            /** @description In a different repo than the parent. */
+            foreign: boolean;
+            label: string;
+            branch: string;
+            git_state: string;
+            pr_url: string;
+            merge_status: string;
+            /** @enum {string} */
+            verification: "pass" | "fail" | "timeout" | "error" | "not_run";
+            changed: {
+                files?: number;
+                additions?: number;
+                deletions?: number;
+            } | null;
+            auto_merge: {
+                /** @enum {string} */
+                state?: "waiting" | "merging";
+                reason?: string;
+                message?: string;
+            } | null;
+            /** @description 1-based position in the merge order; null when the family has no child-to-child dependency edge. */
+            merge_position: number | null;
+        };
+        ChangeSet: {
+            multi_repo: boolean;
+            parent?: components["schemas"]["ChangeSetParent"];
+            merge_order: string[];
+            children: components["schemas"]["ChangeSetChild"][];
+        };
         /** @description A child created together with its parent by POST /tasks (ADR 0041). */
         CreatedChildTask: {
             id: string;
@@ -8841,6 +8929,15 @@ export interface components {
             subtask_done?: number;
             /** @description Derived: children whose merge-back is in conflict. */
             subtask_conflicts?: number;
+            /** @description Derived: distinct repos across a multi-repo parent and its non-archived children (always >= 2), or 0 for every other task. */
+            change_set_repo_count?: number;
+            /** @description Derived: true when this task is a child whose repo differs from its parent's (a change-set member). */
+            foreign_child?: boolean;
+            /**
+             * Format: double
+             * @description Only on GET /tasks/{id}, for a task with children: the task's own cost plus the cost of every child's runs (archived children included). No cap is enforced (ADR 0041). Omitted otherwise.
+             */
+            rolled_up_cost_usd?: number;
             /** @description A subtask's declared file globs (repo-relative); empty when unscoped. Used for the sibling overlap guard and a post-run out-of-scope warning. */
             file_scope?: string[];
             /** @description Source PR state for a review-only PR task (source github_pr or gitea_pr); null for every other task. Such tasks have no Create PR action: they never push or open pull requests. */
