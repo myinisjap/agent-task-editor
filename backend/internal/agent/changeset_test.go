@@ -152,3 +152,17 @@ func TestCrossRepoSubtasksSection(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderChangeSet_ParentHeaderBounded(t *testing.T) {
+	cs := ChangeSetContext{Role: "parent", SelfRepoName: strings.Repeat("s", 500)}
+	for i := 0; i < 20; i++ {
+		cs.Siblings = append(cs.Siblings, ChangeSetTask{ID: "abcdefghijkl", Title: "t", Description: "d", RepoName: strings.Repeat(string(rune('a'+i)), 200), Branch: "b"})
+	}
+	out := RenderChangeSet(cs)
+	if n := utf8.RuneCountInString(out); n > changeSetMaxChars {
+		t.Fatalf("%d runes", n)
+	}
+	if !strings.HasSuffix(out, changeSetEndMarker+"\n\n---\n\n") || !strings.Contains(out, "and 12 more") {
+		t.Fatalf("bad output:\n%s", out)
+	}
+}
