@@ -1,6 +1,6 @@
 # 41. Multi-repo work is a parent task with one child task per repo
 
-Status: Accepted (stages 1-3 implemented (stage 3: sibling CHANGE SET prompt section and cross-repo planner repo list): `create_subtask` `repo_id`, `cross_repo_subtasks_enabled`, foreign children land via their own PR; parent readiness via the derived `subtask_landed` view - PR open/merged and last verify passed, no verify counts as passed; the visible reason is the `dependency` block reason, a needs-me reason is stage 6; later stages not yet)
+Status: Accepted (stages 1-3 implemented (stage 3: sibling CHANGE SET prompt section and cross-repo planner repo list): `create_subtask` `repo_id`, `cross_repo_subtasks_enabled`, foreign children land via their own PR; parent readiness via the derived `subtask_landed` view - PR open/merged and last verify passed, no verify counts as passed; the visible reason is the `dependency` block reason, a needs-me reason is stage 6; stage 4 implemented: `POST /tasks`, board MCP `create_task` and the New Task dialog accept `related_repo_ids` and `children`; later stages not yet)
 
 The nine design questions raised in the draft have been decided by the human;
 see *Decided questions* at the end. The Decision section and staged plan below
@@ -248,17 +248,21 @@ children by repo and shows PR state per child.
     since there is no creating run's config);
   - depth limit 1: the new task is top-level, and children cannot carry nested
     `children` or a parent;
-  - the opt-in: when any related repo or child repo differs from the task's
-    repo, at least one enabled agent config that serves a label in the task's
-    workflow must have `cross_repo_subtasks_enabled`. Otherwise 403, so the
-    change set cannot stall with no agent allowed to handle it. This is the
-    chosen interpretation of "the opt-in" for human and MCP creation.
+  - the opt-in (**decided at implementation**): a human or API caller naming
+    repos explicitly is itself the opt-in for that task, so no agent-config
+    flag is required to create the task. The named repos (related ids plus
+    foreign children's repos) are stored in `task_related_repos` (migration
+    099); `create_subtask` accepts a foreign `repo_id` when the creating
+    run's config has `cross_repo_subtasks_enabled` **or** the repo is listed
+    there, and the planner prompt lists the named repos either way;
+  - children land on the workflow's `agent_ignore` label: 422 when the
+    workflow has none (stricter than `create_subtask`'s first-label fallback).
 - **New Task dialog** (`NewTaskModal.tsx`): an optional "Also touches"
   multi-select repo picker, listing configured repos except the selected primary
   repo and shown only when more than one repo exists. It sends
   `related_repo_ids`. An optional "Create child tasks now" toggle expands one
   title/description row per picked repo and sends `children` instead. Server
-  errors (opt-in missing, cap) are shown inline.
+  errors (cap, missing gate label) are shown inline.
 - **Back-compat**: both fields are optional. Without them `create_task` behaves
   exactly as today (single repo, no side-table rows). Existing MCP clients and
   the stdio tool list are unaffected.

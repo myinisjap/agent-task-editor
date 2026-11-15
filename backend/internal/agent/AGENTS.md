@@ -12,6 +12,7 @@ The agent package owns the agent runtime core: the provider abstraction, the bou
 | `worktree.go` | Per-task git worktree provisioning, safety-net commit, diff, push, teardown; `RepoGitLock` (per-repo git serialization) |
 | `subtasks.go` | `SubtaskCoordinator` — child→parent branch merge-back, conflict flagging, parent auto-advance (ADR 0016); foreign-child PR landing and readiness (`SubtaskReadiness`, `ReevaluateParent`), `IsForeignChild` / `IsForeignRepo` / `ForeignChildMergeStatus` ([ADR 0041](../../../docs/adr/0041-multi-repo-work-as-parent-with-per-repo-children.md)) |
 | `changeset.go` | CHANGE SET prompt section for foreign children and multi-repo parents (`changeSetSection`, `RenderChangeSet`) and the planner's `crossRepoSubtasksSection` (ADR 0041) |
+| (changeset.go, multi-repo) | `crossRepoSubtasksSection` also renders the `MULTI-REPO CHANGE` block for tasks with `task_related_repos`; `CrossRepoSubtasksAllowed` makes providers expose `create_subtask`'s `repo_id` for them (`agent.Task.RelatedRepoIDs`) |
 | `terminal.go` | `TerminalManager`/`NewTerminalManager` — interactive chat session CLI process management |
 | `errors.go` | `ErrTransient`; typed non-transient escalation signals `ErrMaxTurns` and `ErrCostBudgetExceeded` (detected via `errors.As` in `pool.go#handleProviderError`, routed to `waiting_human`, never retried) |
 | `errclass.go` | `Classification` + `ClassifyLine` — the single table of patterns that classify provider output (ADR 0010). `providers.is429Line`/`isTransientLine` are thin wrappers |

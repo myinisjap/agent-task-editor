@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"github.com/google/uuid"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -164,5 +165,60 @@ func TestRenderChangeSet_ParentHeaderBounded(t *testing.T) {
 	}
 	if !strings.HasSuffix(out, changeSetEndMarker+"\n\n---\n\n") || !strings.Contains(out, "and 12 more") {
 		t.Fatalf("bad output:\n%s", out)
+	}
+}
+
+func TestCrossRepoSubtasksSection_RelatedRepos(t *testing.T) {
+	coord, q, _, parent, _ := setupCoordEnv(t)
+	ctx := context.Background()
+	d := &Dispatcher{q: coord.q}
+	wfID := parent.WorkflowID
+	repoC, err := q.CreateRepo(ctx, gen.CreateRepoParams{ID: uuid.NewString(), Name: "svc-c", Path: initRepo(t), WorkflowID: &wfID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, repoB := setupForeignChild(t, q, parent) // covers repo "b" with a live child
+	for _, id := range []string{repoB.ID, repoC.ID} {
+		if err := q.AddTaskRelatedRepo(ctx, gen.AddTaskRelatedRepoParams{TaskID: parent.ID, RepoID: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Subtasks on, cross-repo flag off: only the named repos are listed.
+	got := d.crossRepoSubtasksSection(ctx, parent, AgentConfig{SubtasksEnabled: true}, "a")
+	for _, want := range []string{"MULTI-REPO CHANGE", "one subtask per listed repo", repoB.ID, repoC.ID, "svc-c", "Already covered", "Only the repos listed above"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "CROSS-REPO SUBTASKS") {
+		t.Errorf("flag off must not list all registered repos:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "---\n\n") {
+		t.Errorf("missing tail: %q", got)
+	}
+
+	// Both flags on: the related block is followed by the full registered list.
+	got = d.crossRepoSubtasksSection(ctx, parent, AgentConfig{SubtasksEnabled: true, CrossRepoSubtasksEnabled: true}, "a")
+	if !strings.Contains(got, "MULTI-REPO CHANGE") || !strings.Contains(got, "CROSS-REPO SUBTASKS") {
+		t.Errorf("want both blocks:\n%s", got)
+	}
+
+	// Subtasks disabled: informational only.
+	got = d.crossRepoSubtasksSection(ctx, parent, AgentConfig{}, "a")
+	if !strings.Contains(got, "cannot create subtasks") || strings.Contains(got, "create_subtask") {
+		t.Errorf("informational variant wrong:\n%s", got)
+	}
+}
+
+func TestCrossRepoSubtasksAllowed(t *testing.T) {
+	if CrossRepoSubtasksAllowed(RunInput{}) {
+		t.Fatal("neither flag nor related repos")
+	}
+	if !CrossRepoSubtasksAllowed(RunInput{AgentConfig: AgentConfig{CrossRepoSubtasksEnabled: true}}) {
+		t.Fatal("flag")
+	}
+	if !CrossRepoSubtasksAllowed(RunInput{Task: Task{RelatedRepoIDs: []string{"x"}}}) {
+		t.Fatal("related repos")
 	}
 }

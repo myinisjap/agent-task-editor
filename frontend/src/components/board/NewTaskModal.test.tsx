@@ -424,3 +424,87 @@ describe('NewTaskModal attachment preview revocation (#350)', () => {
     expect(img).toHaveAttribute('src', realistic)
   })
 })
+
+describe('NewTaskModal multi-repo (ADR 0041 stage 4)', () => {
+  const gateWf = workflow({
+    id: 'wf-default',
+    name: 'Default',
+    labels: [
+      { id: 'l1', workflow_id: 'wf-default', name: 'not_ready', sort_order: 0, agent_ignore: 1, is_terminal: 0 },
+      { id: 'l2', workflow_id: 'wf-default', name: 'work', sort_order: 1, agent_ignore: 0, is_terminal: 0 },
+    ] as Workflow['labels'],
+  })
+
+  beforeEach(() => {
+    reposListMock.mockReset().mockResolvedValue([
+      repo({ id: 'repo-1', name: 'repo-one' }),
+      repo({ id: 'repo-2', name: 'repo-two' }),
+      repo({ id: 'repo-3', name: 'repo-three' }),
+    ])
+    workflowsListMock.mockReset().mockResolvedValue([gateWf])
+    templatesListMock.mockReset().mockResolvedValue([])
+    createMock.mockReset().mockResolvedValue(task({ id: 'new-1' }))
+    useTasksStore.setState({ tasks: [], loading: false, error: null })
+  })
+
+  it('hides the picker when only one repo is registered', async () => {
+    reposListMock.mockResolvedValue([repo({ id: 'repo-1' })])
+    render(<NewTaskModal onClose={() => {}} />)
+    await screen.findByTestId('new-task-repo-select')
+    expect(screen.queryByTestId('new-task-related-repos')).toBeNull()
+  })
+
+  it('excludes the primary repo and drops it from the selection when it becomes primary', async () => {
+    const user = userEvent.setup()
+    render(<NewTaskModal onClose={() => {}} />)
+    await screen.findByTestId('new-task-related-repos')
+    await waitFor(() => expect(screen.queryByTestId('new-task-related-repo-1')).toBeNull())
+    expect(screen.queryByTestId('new-task-related-repo-1')).toBeNull()
+    await user.click(screen.getByTestId('new-task-related-repo-2'))
+    await user.selectOptions(screen.getByTestId('new-task-repo-select'), 'repo-2')
+    expect(screen.queryByTestId('new-task-related-repo-2')).toBeNull()
+    expect((screen.getByTestId('new-task-related-repo-1') as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('sends repeated related_repo_ids and a children JSON, with the auto-start warning', async () => {
+    const user = userEvent.setup()
+    render(<NewTaskModal onClose={() => {}} />)
+    await screen.findByTestId('new-task-related-repos')
+    await user.type(screen.getByPlaceholderText('Short task description'), 'Cross repo')
+    await user.click(screen.getByTestId('new-task-related-repo-2'))
+    await user.click(screen.getByTestId('new-task-related-repo-3'))
+    await user.click(screen.getByTestId('new-task-create-children'))
+    await user.type(screen.getByLabelText('Child title for repo-two'), 'Two half')
+    expect(await screen.findByTestId('new-task-children-warning')).toHaveTextContent('not_ready')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    await waitFor(() => expect(createMock).toHaveBeenCalled())
+    const fd = createMock.mock.calls[0][0] as FormData
+    expect(fd.getAll('related_repo_ids')).toEqual(['repo-2', 'repo-3'])
+    expect(JSON.parse(fd.get('children') as string)).toEqual([{ repo_id: 'repo-2', title: 'Two half', description: '' }])
+  })
+
+  it('sends nothing extra when the feature is unused', async () => {
+    const user = userEvent.setup()
+    render(<NewTaskModal onClose={() => {}} />)
+    await screen.findByTestId('new-task-related-repos')
+    await user.type(screen.getByPlaceholderText('Short task description'), 'Plain')
+    await user.click(screen.getByRole('button', { name: 'Create' }))
+    await waitFor(() => expect(createMock).toHaveBeenCalled())
+    const fd = createMock.mock.calls[0][0] as FormData
+    expect(fd.has('related_repo_ids')).toBe(false)
+    expect(fd.has('children')).toBe(false)
+  })
+
+  it('blocks Create when children have no human-gate label to land on', async () => {
+    const user = userEvent.setup()
+    workflowsListMock.mockResolvedValue([workflow({ id: 'wf-default', name: 'Default', labels: [] })])
+    render(<NewTaskModal onClose={() => {}} />)
+    await screen.findByTestId('new-task-related-repos')
+    await user.type(screen.getByPlaceholderText('Short task description'), 'X')
+    await user.click(screen.getByTestId('new-task-related-repo-2'))
+    await user.click(screen.getByTestId('new-task-create-children'))
+    await user.type(screen.getByLabelText('Child title for repo-two'), 'c')
+    expect(await screen.findByTestId('new-task-children-nogate')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled()
+  })
+})

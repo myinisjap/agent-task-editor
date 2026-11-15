@@ -84,12 +84,8 @@ func (h *SubtasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// child; another repo makes a foreign child that lands via its own PR.
 	foreign := agent.IsForeignRepo(parent.RepoID, body.RepoID)
 	if body.RepoID != "" {
-		if _, rerr := h.q.GetRepo(ctx, body.RepoID); rerr != nil {
-			if errors.Is(rerr, sql.ErrNoRows) {
-				Err(w, http.StatusBadRequest, "repo_id does not reference an existing repo")
-			} else {
-				Err(w, http.StatusInternalServerError, rerr.Error())
-			}
+		if st, msg := validateSubtaskRepo(ctx, h.q, body.RepoID); st != 0 {
+			Err(w, st, msg)
 			return
 		}
 	}
@@ -111,8 +107,11 @@ func (h *SubtasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				if foreign && cfg.CrossRepoSubtasksEnabled == 0 {
-					Err(w, http.StatusForbidden, "this agent config is not permitted to create cross-repo subtasks")
-					return
+					// Per-task opt-in (ADR 0041 stage 4): a repo the task's creator named is allowed.
+					if n, nerr := h.q.TaskRelatedRepoExists(ctx, gen.TaskRelatedRepoExistsParams{TaskID: parentID, RepoID: body.RepoID}); nerr != nil || n == 0 {
+						Err(w, http.StatusForbidden, "this agent config is not permitted to create cross-repo subtasks (and the task does not name this repo)")
+						return
+					}
 				}
 				if cfg.MaxSubtasks > 0 {
 					subtaskCap = cfg.MaxSubtasks
@@ -138,19 +137,9 @@ func (h *SubtasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	gate, first := gateLabel(labels)
-	label := body.Label
-	if label == "" {
-		label = gate
-		if label == "" {
-			label = first
-		}
-	} else if !isAgentIgnoreLabel(labels, label) {
-		Err(w, http.StatusBadRequest, "subtasks may only be created on an agent_ignore (human-gate) label")
-		return
-	}
-	if label == "" {
-		Err(w, http.StatusBadRequest, "workflow has no labels")
+	label, lst, lmsg := resolveSubtaskLabel(labels, body.Label)
+	if lst != 0 {
+		Err(w, lst, lmsg)
 		return
 	}
 
@@ -163,42 +152,11 @@ func (h *SubtasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback() }()
 	tq := h.q.WithTx(tx)
 
-	childID := uuid.NewString()
-	child, err := tq.CreateSubtask(ctx, gen.CreateSubtaskParams{
-		ID:             childID,
-		Title:          body.Title,
-		Description:    body.Description,
-		Type:           body.Type,
-		Label:          label,
-		RepoID:         childRepoID,
-		WorkflowID:     parent.WorkflowID,
-		ParentTaskID:   &parentID,
-		CreatedByRunID: createdByRun,
+	child, overlaps, err := insertSubtaskTx(ctx, tq, parent, subtaskInsert{
+		Title: body.Title, Description: body.Description, Type: body.Type,
+		Label: label, RepoID: childRepoID, Scope: scope, CreatedByRun: createdByRun,
 	})
 	if err != nil {
-		Err(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if err := tq.CreateTaskDependency(ctx, gen.CreateTaskDependencyParams{
-		TaskID:          parentID,
-		DependsOnTaskID: childID,
-	}); err != nil {
-		Err(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if len(scope) > 0 {
-		if err := tq.UpsertTaskFileScope(ctx, gen.UpsertTaskFileScopeParams{TaskID: childID, FileScope: strings.Join(scope, "\n")}); err != nil {
-			Err(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-	}
-	overlaps, err := h.addOverlapDependencies(ctx, tq, childID, parentID, childRepoID, scope)
-	if err != nil {
-		Err(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	// A new child means the parent has to integrate again.
-	if err := tq.SetTaskIntegrationStatus(ctx, gen.SetTaskIntegrationStatusParams{TaskID: parentID, IntegrationStatus: ""}); err != nil {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -207,19 +165,7 @@ func (h *SubtasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.pub != nil {
-		h.pub.Publish(wsevent.TypeTaskCreated, wsevent.TaskCreated{
-			ID:       child.ID,
-			Title:    child.Title,
-			Label:    child.Label,
-			RepoID:   child.RepoID,
-			ParentID: parentID,
-		})
-		h.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: parentID})
-		for _, o := range overlaps {
-			h.pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: o.TaskID})
-		}
-	}
+	publishSubtaskCreated(h.pub, child, parentID, overlaps)
 
 	resp := toTaskResponse(child)
 	resp.FileScope = append([]string{}, scope...)
@@ -243,7 +189,7 @@ type overlapDependency struct {
 // sibling whose file scope overlaps its own (so they run sequentially). An
 // unscoped child is treated as unknown and gets no edges. Cannot form a cycle:
 // the new child has no dependents besides the parent.
-func (h *SubtasksHandler) addOverlapDependencies(ctx context.Context, tq *gen.Queries, childID, parentID, childRepoID string, scope []string) ([]overlapDependency, error) {
+func addOverlapDependencies(ctx context.Context, tq *gen.Queries, childID, parentID, childRepoID string, scope []string) ([]overlapDependency, error) {
 	if len(scope) == 0 {
 		return nil, nil
 	}
@@ -312,4 +258,101 @@ func isAgentIgnoreLabel(labels []gen.WorkflowLabel, name string) bool {
 		}
 	}
 	return false
+}
+
+// validateSubtaskRepo returns a non-zero status when repoID can't be used.
+func validateSubtaskRepo(ctx context.Context, q *gen.Queries, repoID string) (int, string) {
+	if _, err := q.GetRepo(ctx, repoID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return http.StatusBadRequest, "repo_id does not reference an existing repo"
+		}
+		return http.StatusInternalServerError, err.Error()
+	}
+	return 0, ""
+}
+
+// resolveSubtaskLabel picks a child's landing label: it must be an agent_ignore
+// (human-gate) label — dropping children straight into an agent column would
+// defeat the gate. Default to the first agent_ignore label, else the first label.
+func resolveSubtaskLabel(labels []gen.WorkflowLabel, requested string) (string, int, string) {
+	gate, first := gateLabel(labels)
+	label := requested
+	if label == "" {
+		label = gate
+		if label == "" {
+			label = first
+		}
+	} else if !isAgentIgnoreLabel(labels, label) {
+		return "", http.StatusBadRequest, "subtasks may only be created on an agent_ignore (human-gate) label"
+	}
+	if label == "" {
+		return "", http.StatusBadRequest, "workflow has no labels"
+	}
+	return label, 0, ""
+}
+
+// subtaskInsert is the per-child input of insertSubtaskTx.
+type subtaskInsert struct {
+	Title, Description, Type, Label, RepoID string
+	Scope                                   []string
+	CreatedByRun                            *string
+}
+
+// insertSubtaskTx creates a child, its parent→child dependency edge, its file
+// scope and overlap edges, and resets the parent's integration status. tq must
+// be tx-bound; shared by create_subtask and POST /tasks children.
+func insertSubtaskTx(ctx context.Context, tq *gen.Queries, parent gen.Task, in subtaskInsert) (gen.Task, []overlapDependency, error) {
+	childID := uuid.NewString()
+	child, err := tq.CreateSubtask(ctx, gen.CreateSubtaskParams{
+		ID:             childID,
+		Title:          in.Title,
+		Description:    in.Description,
+		Type:           in.Type,
+		Label:          in.Label,
+		RepoID:         in.RepoID,
+		WorkflowID:     parent.WorkflowID,
+		ParentTaskID:   &parent.ID,
+		CreatedByRunID: in.CreatedByRun,
+	})
+	if err != nil {
+		return gen.Task{}, nil, err
+	}
+	if err := tq.CreateTaskDependency(ctx, gen.CreateTaskDependencyParams{
+		TaskID:          parent.ID,
+		DependsOnTaskID: childID,
+	}); err != nil {
+		return gen.Task{}, nil, err
+	}
+	if len(in.Scope) > 0 {
+		if err := tq.UpsertTaskFileScope(ctx, gen.UpsertTaskFileScopeParams{TaskID: childID, FileScope: strings.Join(in.Scope, "\n")}); err != nil {
+			return gen.Task{}, nil, err
+		}
+	}
+	overlaps, err := addOverlapDependencies(ctx, tq, childID, parent.ID, in.RepoID, in.Scope)
+	if err != nil {
+		return gen.Task{}, nil, err
+	}
+	// A new child means the parent has to integrate again.
+	if err := tq.SetTaskIntegrationStatus(ctx, gen.SetTaskIntegrationStatusParams{TaskID: parent.ID, IntegrationStatus: ""}); err != nil {
+		return gen.Task{}, nil, err
+	}
+	return child, overlaps, nil
+}
+
+// publishSubtaskCreated emits the board events for a newly committed child.
+func publishSubtaskCreated(pub TaskEventPublisher, child gen.Task, parentID string, overlaps []overlapDependency) {
+	if pub == nil {
+		return
+	}
+	pub.Publish(wsevent.TypeTaskCreated, wsevent.TaskCreated{
+		ID:       child.ID,
+		Title:    child.Title,
+		Label:    child.Label,
+		RepoID:   child.RepoID,
+		ParentID: parentID,
+	})
+	pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: parentID})
+	for _, o := range overlaps {
+		pub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: o.TaskID})
+	}
 }

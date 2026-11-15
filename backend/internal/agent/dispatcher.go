@@ -1077,7 +1077,7 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 		SelectLessons: d.lessonSelector(t, log),
 		Input: RunInput{
 			RunID:                runID,
-			Task:                 Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Branch: t.Branch, ParentID: derefStr(t.ParentTaskID), ForeignChild: foreignChild, FileScope: fileScope, RepoPath: repo.Path, Attachments: attachmentRels, Source: t.Source},
+			Task:                 Task{ID: t.ID, Title: t.Title, Description: t.Description, Type: t.Type, Label: t.Label, WorkflowID: t.WorkflowID, AgentNotes: t.AgentNotes, Branch: t.Branch, ParentID: derefStr(t.ParentTaskID), ForeignChild: foreignChild, FileScope: fileScope, RepoPath: repo.Path, Attachments: attachmentRels, Source: t.Source, RelatedRepoIDs: d.relatedRepoIDs(ctx, t.ID)},
 			AgentConfig:          agentCfg,
 			RepoPath:             workDir,
 			RepoRemoteURL:        derefStr(repo.RemoteUrl),

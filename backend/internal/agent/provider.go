@@ -274,6 +274,9 @@ type Task struct {
 	// Source is the task source ("github_pr"/"gitea_pr" for review-only PR
 	// tasks, which must never push or open a PR).
 	Source string
+	// RelatedRepoIDs are the repos a human/API caller named when creating the
+	// task (ADR 0041 stage 4): the task-level opt-in for cross-repo subtasks.
+	RelatedRepoIDs []string
 }
 
 // AgentConfig is a minimal copy of storage.AgentConfig.

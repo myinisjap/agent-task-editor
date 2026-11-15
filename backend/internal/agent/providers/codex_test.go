@@ -849,3 +849,10 @@ func TestMCPSidecarEnv_CrossRepoFlag(t *testing.T) {
 		t.Error("flag set without subtasks")
 	}
 }
+
+func TestMCPSidecarEnv_CrossRepoFlagFromRelatedRepos(t *testing.T) {
+	in := agent.RunInput{AgentConfig: agent.AgentConfig{SubtasksEnabled: true}, Task: agent.Task{RelatedRepoIDs: []string{"r2"}}}
+	if mcpSidecarEnv(in, "u", "t", "r")["CROSS_REPO_SUBTASKS_ENABLED"] != "1" {
+		t.Error("task naming related repos must expose repo_id")
+	}
+}

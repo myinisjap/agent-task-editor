@@ -172,14 +172,16 @@ func init() {
 	})
 	register(Tool{
 		Name:        "create_task",
-		Description: "Create a ticket on the board. By default the ticket lands on the \"work\" column so an agent starts on it immediately; pass a different label to stage it elsewhere (e.g. \"not_ready\"). If workflow_id is omitted, the board's default workflow is used (the one named \"Default\", else the alphabetically-first workflow other than the seeded \"PR review\" workflow).",
+		Description: "Create a ticket on the board. By default the ticket lands on the \"work\" column so an agent starts on it immediately; pass a different label to stage it elsewhere (e.g. \"not_ready\"). If workflow_id is omitted, the board's default workflow is used (the one named \"Default\", else the alphabetically-first workflow other than the seeded \"PR review\" workflow). For a change that spans several repos, set repo_id to the primary repo and list the others in related_repo_ids (the planner then creates one child per repo) and/or give explicit children.",
 		InputSchema: obj(map[string]any{
-			"title":       str("Short title of the ticket"),
-			"description": str("What the ticket should accomplish (markdown supported)"),
-			"type":        map[string]any{"type": "string", "enum": []string{"feature", "bug", "chore", "spike"}, "description": "Task type (default feature)"},
-			"repo_id":     str("ID of the repo the ticket belongs to (from list_repos)"),
-			"workflow_id": str("Workflow ID (from list_workflows); defaults to the board's default workflow when omitted"),
-			"label":       str("Column the ticket starts on (default \"work\"). Must be a label in the workflow."),
+			"title":            str("Short title of the ticket"),
+			"description":      str("What the ticket should accomplish (markdown supported)"),
+			"type":             map[string]any{"type": "string", "enum": []string{"feature", "bug", "chore", "spike"}, "description": "Task type (default feature)"},
+			"repo_id":          str("ID of the repo the ticket belongs to (from list_repos)"),
+			"workflow_id":      str("Workflow ID (from list_workflows); defaults to the board's default workflow when omitted"),
+			"label":            str("Column the ticket starts on (default \"work\"). Must be a label in the workflow."),
+			"related_repo_ids": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Other repo ids (from list_repos) this change also touches. repo_id stays the primary repo; the planning agent creates one child per listed repo."},
+			"children":         map[string]any{"type": "array", "description": "Child tasks to create now, one per repo (repo_id may equal the primary repo_id). They land on the workflow's human-gate label even when the parent starts on \"work\"; the parent waits for them.", "items": map[string]any{"type": "object", "properties": map[string]any{"repo_id": str("Repo the child belongs to"), "title": str("Child title"), "description": str("Child description")}, "required": []string{"repo_id", "title"}, "additionalProperties": false}},
 		}, "title", "repo_id"),
 		call: (*Client).createTask,
 	})
@@ -371,12 +373,14 @@ func (c *Client) listWorkflows() (string, bool) {
 
 func (c *Client) createTask(args json.RawMessage) (string, bool) {
 	var a struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		Type        string `json:"type"`
-		RepoID      string `json:"repo_id"`
-		WorkflowID  string `json:"workflow_id"`
-		Label       string `json:"label"`
+		Title          string            `json:"title"`
+		Description    string            `json:"description"`
+		Type           string            `json:"type"`
+		RepoID         string            `json:"repo_id"`
+		WorkflowID     string            `json:"workflow_id"`
+		Label          string            `json:"label"`
+		RelatedRepoIDs []string          `json:"related_repo_ids"`
+		Children       []json.RawMessage `json:"children"`
 	}
 	_ = json.Unmarshal(args, &a)
 	if a.Title == "" {
@@ -402,9 +406,23 @@ func (c *Client) createTask(args json.RawMessage) (string, bool) {
 	if a.WorkflowID != "" {
 		payload["workflow_id"] = a.WorkflowID
 	}
+	if len(a.RelatedRepoIDs) > 0 {
+		payload["related_repo_ids"] = a.RelatedRepoIDs
+	}
+	if len(a.Children) > 0 {
+		payload["children"] = a.Children
+	}
 	var created struct {
-		ID                 string `json:"id"`
-		Label              string `json:"label"`
+		ID             string   `json:"id"`
+		Label          string   `json:"label"`
+		RelatedRepoIDs []string `json:"related_repo_ids"`
+		Children       []struct {
+			ID       string `json:"id"`
+			RepoID   string `json:"repo_id"`
+			RepoName string `json:"repo_name"`
+			Title    string `json:"title"`
+			Label    string `json:"label"`
+		} `json:"children"`
 		PossibleDuplicates []struct {
 			ID    string `json:"id"`
 			Title string `json:"title"`
@@ -418,6 +436,19 @@ func (c *Client) createTask(args json.RawMessage) (string, bool) {
 		msg += " possible_duplicates (open tasks that look similar; the task was still created):"
 		for _, d := range created.PossibleDuplicates {
 			msg += fmt.Sprintf("\n- %s: %s", d.ID, d.Title)
+		}
+	}
+	if len(created.RelatedRepoIDs) > 0 {
+		msg += "\nAlso touches repos: " + strings.Join(created.RelatedRepoIDs, ", ")
+	}
+	if len(created.Children) > 0 {
+		msg += "\nChildren:"
+		for _, ch := range created.Children {
+			repo := ch.RepoName
+			if repo == "" {
+				repo = ch.RepoID
+			}
+			msg += fmt.Sprintf("\n- %s (%s): %s on label %q", ch.ID, repo, ch.Title, ch.Label)
 		}
 	}
 	return msg, false

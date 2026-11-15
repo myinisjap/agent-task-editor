@@ -251,7 +251,7 @@ func (r *CodexRunner) runAttempt(ctx context.Context, input agent.RunInput, logC
 			TaskID:      input.Task.ID,
 			Enabled:     input.AgentConfig.SubtasksEnabled,
 			MaxSubtasks: input.AgentConfig.MaxSubtasks,
-			CrossRepo:   input.AgentConfig.CrossRepoSubtasksEnabled,
+			CrossRepo:   agent.CrossRepoSubtasksAllowed(input),
 			PRReview:    input.PRReview,
 		})
 		if err != nil {
@@ -587,7 +587,7 @@ func mcpSidecarEnv(input agent.RunInput, backendURL, apiToken, resultFile string
 		env["TASK_ID"] = input.Task.ID
 		env["API_TOKEN"] = apiToken
 		env["MAX_SUBTASKS"] = fmt.Sprintf("%d", input.AgentConfig.MaxSubtasks)
-		if input.AgentConfig.CrossRepoSubtasksEnabled {
+		if agent.CrossRepoSubtasksAllowed(input) {
 			env["CROSS_REPO_SUBTASKS_ENABLED"] = "1"
 		}
 	}

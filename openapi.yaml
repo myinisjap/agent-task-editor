@@ -629,6 +629,16 @@ components:
         started_at:            { type: string, format: date-time }
         finished_at:           { type: string, format: date-time, nullable: true }
       required: [task_id, status, trigger, verdict, questions, suggested_type, suggested_workflow_id, duplicate_ids, error, cost_usd, input_tokens, output_tokens, started_at]
+    CreatedChildTask:
+      type: object
+      description: A child created together with its parent by POST /tasks (ADR 0041).
+      required: [id, repo_id, repo_name, title, label]
+      properties:
+        id:        { type: string }
+        repo_id:   { type: string }
+        repo_name: { type: string }
+        title:     { type: string }
+        label:     { type: string, description: "The workflow's human-gate (agent_ignore) label the child landed on." }
     Task:
       type: object
       properties:
@@ -3564,12 +3574,60 @@ paths:
                 workflow_id: { type: string, description: "Optional. Defaults to the board's default workflow (the one named 'Default', else the alphabetically-first workflow) when omitted." }
                 label:       { type: string, description: "Label (column) the task starts on. Empty defaults to the workflow's human-gate label — the lowest sort_order agent_ignore label, else the first label ('not_ready' in the default workflow). Must name a label defined in the workflow; unlike a label move this is initial placement, so it is not restricted to defined transition edges (e.g. a task can be created directly on 'work')." }
                 priority:    { type: integer, enum: [-1, 0, 1, 2], default: 0 }
+                related_repo_ids:
+                  type: array
+                  items: { type: string }
+                  description: >
+                    Other repo ids this change also touches (ADR 0041). repo_id stays the primary repo. Naming repos
+                    is the per-task opt-in for cross-repo create_subtask; the planner prompt lists them and asks for
+                    one child per repo. Entries must exist, be distinct and differ from repo_id.
+                children:
+                  type: array
+                  description: >
+                    Child tasks created in the same transaction as the task, with parent→child dependency edges
+                    (like create_subtask). At most 10. Children land on the workflow's human-gate (agent_ignore)
+                    label; 422 if the workflow has none. Not supported by templates or schedules.
+                  items:
+                    type: object
+                    required: [repo_id, title]
+                    additionalProperties: false
+                    properties:
+                      repo_id:     { type: string, description: "May equal the task's repo_id." }
+                      title:       { type: string }
+                      description: { type: string }
+          multipart/form-data:
+            schema:
+              type: object
+              required: [title, repo_id]
+              description: >
+                Same fields as the JSON body plus image attachments (`files`). Send related_repo_ids as repeated form
+                values and children as one JSON-encoded string.
+              properties:
+                title:            { type: string }
+                description:      { type: string }
+                type:             { type: string }
+                repo_id:          { type: string }
+                workflow_id:      { type: string }
+                label:            { type: string }
+                priority:         { type: integer }
+                related_repo_ids: { type: array, items: { type: string } }
+                children:         { type: string, description: 'JSON array of {repo_id, title, description}' }
       responses:
         "201":
-          description: Created task
+          description: >
+            Created task. When related_repo_ids or children were supplied the body also carries
+            related_repo_ids (every repo stored for the task) and children.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Task" }
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Task"
+                  - type: object
+                    properties:
+                      related_repo_ids: { type: array, items: { type: string } }
+                      children: { type: array, items: { $ref: "#/components/schemas/CreatedChildTask" } }
+        "400": { description: Invalid body, unknown or duplicate repo, empty child title, or a child with keys other than repo_id/title/description }
+        "422": { description: More than 10 children, or the workflow has no agent_ignore label for them }
 
   /tasks/bulk:
     post:

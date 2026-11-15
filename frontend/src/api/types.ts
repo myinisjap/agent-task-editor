@@ -74,18 +74,56 @@ export interface paths {
                          * @enum {integer}
                          */
                         priority?: -1 | 0 | 1 | 2;
+                        /** @description Other repo ids this change also touches (ADR 0041). repo_id stays the primary repo. Naming repos is the per-task opt-in for cross-repo create_subtask; the planner prompt lists them and asks for one child per repo. Entries must exist, be distinct and differ from repo_id. */
+                        related_repo_ids?: string[];
+                        /** @description Child tasks created in the same transaction as the task, with parent→child dependency edges (like create_subtask). At most 10. Children land on the workflow's human-gate (agent_ignore) label; 422 if the workflow has none. Not supported by templates or schedules. */
+                        children?: {
+                            /** @description May equal the task's repo_id. */
+                            repo_id: string;
+                            title: string;
+                            description?: string;
+                        }[];
+                    };
+                    "multipart/form-data": {
+                        title: string;
+                        description?: string;
+                        type?: string;
+                        repo_id: string;
+                        workflow_id?: string;
+                        label?: string;
+                        priority?: number;
+                        related_repo_ids?: string[];
+                        /** @description JSON array of {repo_id, title, description} */
+                        children?: string;
                     };
                 };
             };
             responses: {
-                /** @description Created task */
+                /** @description Created task. When related_repo_ids or children were supplied the body also carries related_repo_ids (every repo stored for the task) and children. */
                 201: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["Task"];
+                        "application/json": components["schemas"]["Task"] & {
+                            related_repo_ids?: string[];
+                            children?: components["schemas"]["CreatedChildTask"][];
+                        };
                     };
+                };
+                /** @description Invalid body */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description More than 10 children */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
                 };
             };
         };
@@ -8698,6 +8736,15 @@ export interface components {
             started_at: string;
             /** Format: date-time */
             finished_at?: string | null;
+        };
+        /** @description A child created together with its parent by POST /tasks (ADR 0041). */
+        CreatedChildTask: {
+            id: string;
+            repo_id: string;
+            repo_name: string;
+            title: string;
+            /** @description The workflow's human-gate (agent_ignore) label the child landed on. */
+            label: string;
         };
         Task: {
             id: string;
