@@ -386,7 +386,7 @@ func (d *Dispatcher) crossRepoSubtasksSection(ctx context.Context, t gen.Task, c
 		}
 		line := fmt.Sprintf("- %s — %s%s: %s\n", r.ID, sanitizeChangeSet(collapseWS(r.Name)), self, desc)
 		if i >= crossRepoMaxRepos || used+runes(line)+60 > crossRepoMaxChars {
-			b.WriteString(fmt.Sprintf("…and %d more\n", len(repos)-i))
+			fmt.Fprintf(&b, "…and %d more\n", len(repos)-i)
 			break
 		}
 		b.WriteString(line)
