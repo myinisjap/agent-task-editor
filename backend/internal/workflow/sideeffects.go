@@ -36,6 +36,9 @@ const (
 	// SideEffectReviewReply posts the agent's resolution of ingested forge review
 	// comments onto their review threads once the branch is pushed.
 	SideEffectReviewReply = "review_reply"
+	// SideEffectChangeSetLinks updates the "Part of change set" section in a
+	// task's PR body (or posts one fallback comment) - ADR 0041 stage 5.
+	SideEffectChangeSetLinks = "change_set_links"
 )
 
 // Side effect statuses. A finished effect has no row, so "done" is absent.
@@ -285,6 +288,12 @@ func (e *Engine) execSideEffect(ctx context.Context, se gen.TaskSideEffect) erro
 			return nil
 		}
 		return e.OnReviewReply(ctx, task)
+	case SideEffectChangeSetLinks:
+		// Runs regardless of label: a merged PR's body can still be updated.
+		if e.OnChangeSetLinks == nil {
+			return nil
+		}
+		return e.OnChangeSetLinks(ctx, task)
 	case SideEffectLeaveNotReady:
 		if e.OnLeaveNotReady == nil {
 			return nil
@@ -353,6 +362,22 @@ func (e *Engine) EnqueueReviewReply(ctx context.Context, taskID string) error {
 		ID: uuid.NewString(), TaskID: taskID, Kind: SideEffectReviewReply,
 	}); err != nil {
 		return fmt.Errorf("enqueue %s side effect: %w", SideEffectReviewReply, err)
+	}
+	e.nudgeWorker()
+	return nil
+}
+
+// EnqueueChangeSetLinks records that a task's PR body needs its change-set
+// section refreshed (idempotent while one is pending) and wakes the worker.
+// No-op when OnChangeSetLinks is not wired.
+func (e *Engine) EnqueueChangeSetLinks(ctx context.Context, taskID string) error {
+	if e.OnChangeSetLinks == nil {
+		return nil
+	}
+	if err := e.sq.EnqueueTaskSideEffect(ctx, gen.EnqueueTaskSideEffectParams{
+		ID: uuid.NewString(), TaskID: taskID, Kind: SideEffectChangeSetLinks,
+	}); err != nil {
+		return fmt.Errorf("enqueue %s side effect: %w", SideEffectChangeSetLinks, err)
 	}
 	e.nudgeWorker()
 	return nil

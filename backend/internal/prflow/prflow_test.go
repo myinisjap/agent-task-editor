@@ -2,6 +2,7 @@ package prflow
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +40,17 @@ func TestBuildBody(t *testing.T) {
 }
 
 type fakeStore struct{ called bool }
+
+func (f *fakeStore) GetTask(context.Context, string) (gen.Task, error) {
+	return gen.Task{}, errors.New("unused")
+}
+func (f *fakeStore) GetRepo(context.Context, string) (gen.Repo, error) {
+	return gen.Repo{}, errors.New("unused")
+}
+func (f *fakeStore) ListSubtasks(context.Context, *string) ([]gen.Task, error) { return nil, nil }
+func (f *fakeStore) ListWorkflowDependencyEdges(context.Context, string) ([]gen.ListWorkflowDependencyEdgesRow, error) {
+	return nil, nil
+}
 
 func (f *fakeStore) SetTaskPR(_ context.Context, _ gen.SetTaskPRParams) (gen.Task, error) {
 	f.called = true

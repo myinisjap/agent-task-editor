@@ -83,10 +83,18 @@ func (h *TasksHandler) PRURL(w http.ResponseWriter, r *http.Request) {
 	gitDir := prflow.GitDir(task, repo)
 	commits := prflow.BranchCommits(r.Context(), gitDir, task.BaseRef, task.Branch)
 
-	body := prflow.BuildBody(task, commits)
+	body := h.prService().Body(r.Context(), task, commits)
 	prURL := f.CompareURL(repoName, base, task.Branch, task.Title, body)
 
 	JSON(w, http.StatusOK, map[string]any{"url": prURL})
+}
+
+// prService returns the injected change-set-aware service or a plain one.
+func (h *TasksHandler) prService() *prflow.Service {
+	if h.pr != nil {
+		return h.pr
+	}
+	return prflow.New(h.q, h.wb)
 }
 
 // CreatePR pushes the task's branch to origin and opens a GitHub pull request
@@ -111,7 +119,7 @@ func (h *TasksHandler) CreatePR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updated, prURL, err := prflow.New(h.q, h.wb).CreateForTask(r.Context(), task, repo)
+	updated, prURL, err := h.prService().CreateForTask(r.Context(), task, repo)
 	if err != nil {
 		Err(w, prCreateStatus(err), err.Error())
 		return

@@ -166,6 +166,10 @@ type Engine struct {
 	// EnqueueReviewReply: it posts the agent's resolutions of ingested forge
 	// review comments onto their threads (see internal/reviewreply).
 	OnReviewReply func(ctx context.Context, task gen.Task) error
+	// OnChangeSetLinks, if set, runs the "change_set_links" side effect enqueued
+	// by EnqueueChangeSetLinks: it refreshes the change-set section of the task's
+	// PR body (see prflow.Service.SyncChangeSetLinks).
+	OnChangeSetLinks func(ctx context.Context, task gen.Task) error
 
 	// SideEffectBackoff returns the delay before the next attempt after the given
 	// number of failed attempts (1-based). Nil uses DefaultSideEffectBackoff.

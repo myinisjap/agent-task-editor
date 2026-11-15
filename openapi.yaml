@@ -969,7 +969,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [terminal, create_pr, leave_not_ready, auto_merge, pr_review_post, review_reply]
+          enum: [terminal, create_pr, leave_not_ready, auto_merge, pr_review_post, review_reply, change_set_links]
           description: >
             auto_merge = merge the task's PR through the forge (repo auto-merge
             policy; a forge refusal fails it at once, no retries); terminal = push the branch and tear down the worktree (or merge a
@@ -978,7 +978,9 @@ components:
             pr_review_post = post the agent's review on the source pull request
             (review-only PR tasks; idempotent via a hidden marker in the body).
             review_reply = reply on the forge review thread of an ingested
-            comment the agent resolved.
+            comment the agent resolved. change_set_links = update the "Part of
+            change set" section in this task's PR body, or post one fallback
+            comment.
         status:
           type: string
           enum: [pending, running, failed]

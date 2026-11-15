@@ -2,6 +2,7 @@
 package api
 
 import (
+	"github.com/myinisjap/agent-task-editor/backend/internal/prflow"
 	"net/http"
 	"time"
 
@@ -40,6 +41,10 @@ type RouterDeps struct {
 	DB     *storage.DB
 	Engine *workflow.Engine
 	Hub    *ws.Hub
+
+	// PRService, if set, is the change-set-aware PR service the manual "Create PR"
+	// endpoint uses (nil = a plain prflow.New).
+	PRService *prflow.Service
 
 	CORSOrigins  string
 	AllowedHosts string
@@ -117,6 +122,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, deps.Canceller, deps.ReplyDispatcher, deps.BlockReasons)
 	tasksH.SetPublisher(hub)
+	tasksH.SetPRService(deps.PRService)
 	if deps.EventPublisher != nil {
 		tasksH.SetAutonomyPublisher(deps.EventPublisher)
 	}

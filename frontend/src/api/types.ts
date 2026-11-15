@@ -8915,10 +8915,10 @@ export interface components {
         /** @description One outstanding row of the side-effect outbox. A label transition records the work it owes (pushing the branch, opening a PR, updating the source issue) in the same transaction as the move; a background worker runs it with exponential backoff. Rows are deleted on success, so only unfinished work is listed. A pending row with attempts > 0 and a last_error is "failed, retrying"; status failed means the attempt budget is exhausted and it needs a manual retry. */
         TaskSideEffect: {
             /**
-             * @description auto_merge = merge the task's PR through the forge (repo auto-merge policy; a forge refusal fails it at once, no retries); terminal = push the branch and tear down the worktree (or merge a subtask back); create_pr = push and open a pull request; leave_not_ready = apply the in-progress signal to the source issue; pr_review_post = post the agent's review on the source pull request (review-only PR tasks; idempotent via a hidden marker in the body). review_reply = reply on the forge review thread of an ingested comment the agent resolved.
+             * @description auto_merge = merge the task's PR through the forge (repo auto-merge policy; a forge refusal fails it at once, no retries); terminal = push the branch and tear down the worktree (or merge a subtask back); create_pr = push and open a pull request; leave_not_ready = apply the in-progress signal to the source issue; pr_review_post = post the agent's review on the source pull request (review-only PR tasks; idempotent via a hidden marker in the body). review_reply = reply on the forge review thread of an ingested comment the agent resolved. change_set_links = update the "Part of change set" section in this task's PR body, or post one fallback comment.
              * @enum {string}
              */
-            kind: "terminal" | "create_pr" | "leave_not_ready" | "auto_merge" | "pr_review_post" | "review_reply";
+            kind: "terminal" | "create_pr" | "leave_not_ready" | "auto_merge" | "pr_review_post" | "review_reply" | "change_set_links";
             /** @enum {string} */
             status: "pending" | "running" | "failed";
             /** @description Failed attempts so far */

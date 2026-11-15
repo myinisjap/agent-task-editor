@@ -103,7 +103,7 @@ clients should refetch the task rather than rely on payload fields.
 ```
 
 ### `task.side_effect`
-A post-transition side effect (branch push, PR creation, source-issue
+A post-transition side effect (branch push, PR creation, change-set PR cross-link update (`change_set_links`), source-issue
 write-back) ran or failed. These run from a durable outbox after the label
 change commits, with retry and backoff. `status` is `done`, `pending` (the
 attempt failed and will be retried; `last_error` says why) or `failed` (attempts

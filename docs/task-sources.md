@@ -749,6 +749,36 @@ characters, plus the short SHA of the pushed head. Details:
 - ATE's replies are recognised (recorded reply id, or a hidden marker in the
   body) and never re-ingested as review feedback.
 
+### Change-set PR cross-links (multi-repo)
+
+PRs that belong to a multi-repo change set (ADR 0041) are cross-linked so
+reviewers see they belong together. A task is in a change set when it is a
+foreign child, a home child of a parent that has a live foreign child, or such
+a parent. Single-repo PRs (no foreign children) are unchanged.
+
+- **Content.** The PR body gets a generated "Part of change set" section: the
+  parent title and a board link, one line per member (repo, title, PR URL or
+  "not opened yet", "(this PR)" on the current one), and the intended merge
+  order when dependency edges between the children define one. Links are plain
+  URLs, so a change set spanning GitHub and Gitea works.
+- **Board link.** Built from `NOTIFY_BASE_URL` (`<base>/tasks/<parent id>`).
+  Without it the section shows the parent task id instead of a link.
+- **Markers.** The section sits between `<!-- ate:change-set:begin -->` and
+  `<!-- ate:change-set:end -->`. Text outside the markers is never touched;
+  edits inside are overwritten. Titles are sanitised so they cannot break the
+  markers.
+- **Keeping siblings current.** When a task's PR opens, every member that has a
+  PR (including itself) gets a `change_set_links` side effect through the
+  outbox. It reads the PR body, replaces the section and edits the PR only if
+  the result differs, so retries and duplicates are no-ops. A forge outage
+  retries with backoff and never blocks the task. Known limit: a PR a human
+  opens by hand is only linked once a sibling's PR opens through ATE.
+- **Fallback.** If the forge refuses the edit (401/403/404/422) or the markers
+  in the body are malformed, ATE posts one comment carrying a hidden marker
+  (never a second one). That comment is not updated later; the board link
+  shows the current state.
+- A human edit racing the read-modify-write of the body could be lost (small window).
+
 ## GitHub webhook (optional)
 
 By default `ghsync` polls GitHub every `GITHUB_SYNC_INTERVAL` (30s). A webhook

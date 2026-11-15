@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/myinisjap/agent-task-editor/backend/internal/prflow"
 	"log/slog"
 	"net/http"
 	"os"
@@ -94,6 +95,7 @@ type TasksHandler struct {
 	dispatcher   ReplyDispatcher
 	blockReasons BlockReasonResolver
 	wb           *writeback.Writeback
+	pr           *prflow.Service // optional change-set-aware PR service
 	pub          TaskEventPublisher
 	// apub receives autonomy hold/undo events (main passes the fan-out so the
 	// notifier sees task.autonomy_held). Falls back to pub.
@@ -127,6 +129,10 @@ func (h *TasksHandler) SetAutonomyPublisher(pub TaskEventPublisher) { h.apub = p
 func (h *TasksHandler) SetPublisher(pub TaskEventPublisher) {
 	h.pub = pub
 }
+
+// SetPRService sets the change-set-aware PR service used by CreatePR and the
+// compare-URL body (nil = plain prflow.New).
+func (h *TasksHandler) SetPRService(s *prflow.Service) { h.pr = s }
 
 // SetWriteback overrides the handler's writeback instance. Exported only for
 // tests in other packages that need to fake out the underlying `gh` calls

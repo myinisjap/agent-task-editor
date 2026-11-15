@@ -237,8 +237,13 @@ func main() {
 	issueWriteback := writeback.New(termQ)
 	// Foreign subtasks (ADR 0041) land via their own PR; the coordinator lives in
 	// package agent, which cannot import prflow, so the opener is injected.
+	prSvc := prflow.New(termQ, issueWriteback).WithChangeSet(prflow.ChangeSetOptions{
+		BoardBaseURL: cfg.NotifyBaseURL,
+		Enqueue:      engine.EnqueueChangeSetLinks,
+	})
+	engine.OnChangeSetLinks = prSvc.SyncChangeSetLinks
 	subtaskCoord.OpenPR = func(ctx context.Context, t gen.Task, r gen.Repo) (string, error) {
-		u, _, err := prflow.New(termQ, issueWriteback).CreateForTask(ctx, t, r)
+		u, _, err := prSvc.CreateForTask(ctx, t, r)
 		if err != nil {
 			if prflow.IsPrecondition(err) {
 				slog.Warn("foreign subtask: PR skipped", "task_id", t.ID, "err", err)
@@ -268,7 +273,7 @@ func main() {
 		if err != nil {
 			return fmt.Errorf("get repo: %w", err)
 		}
-		if _, _, err := prflow.New(termQ, issueWriteback).CreateForTask(ctx, task, repo); err != nil {
+		if _, _, err := prSvc.CreateForTask(ctx, task, repo); err != nil {
 			if prflow.IsPrecondition(err) {
 				slog.Warn("onCreatePR: skipped", "task_id", task.ID, "err", err)
 				return nil
@@ -512,6 +517,7 @@ func main() {
 
 	listenAddr := fmt.Sprintf(":%s", cfg.Port)
 	router := api.NewRouter(api.RouterDeps{
+		PRService:           prSvc,
 		EventPublisher:      pub,
 		EscapeRecorder:      escapeRec,
 		Proposals:           proposals,

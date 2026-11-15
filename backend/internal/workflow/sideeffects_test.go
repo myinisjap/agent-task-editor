@@ -491,3 +491,34 @@ func TestSideEffects_PRReviewPost(t *testing.T) {
 		}
 	}
 }
+
+func TestSideEffects_ChangeSetLinksEnqueueIsIdempotentAndRuns(t *testing.T) {
+	engine, db, task, _, _ := createPREngine(t, &noopPublisher{})
+	ctx := context.Background()
+	// Nil hook: nothing is enqueued.
+	if err := engine.EnqueueChangeSetLinks(ctx, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rows := sideEffectRows(t, db, task.ID); len(rows) != 0 {
+		t.Fatalf("nil hook must not enqueue, got %+v", rows)
+	}
+	ran := 0
+	engine.OnChangeSetLinks = func(_ context.Context, got gen.Task) error {
+		if got.ID != task.ID {
+			t.Errorf("hook task = %s", got.ID)
+		}
+		ran++
+		return nil
+	}
+	for i := 0; i < 3; i++ {
+		if err := engine.EnqueueChangeSetLinks(ctx, task.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if rows := sideEffectRows(t, db, task.ID); len(rows) != 1 || rows[0].Kind != workflow.SideEffectChangeSetLinks {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if n := engine.DrainSideEffects(ctx); n != 1 || ran != 1 {
+		t.Fatalf("drained %d, ran %d", n, ran)
+	}
+}

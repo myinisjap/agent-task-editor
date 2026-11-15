@@ -146,6 +146,10 @@ var (
 	// longer matches the expected SHA (or the forge reports a merge conflict
 	// on the merge attempt). The caller should re-evaluate on the next refresh.
 	ErrHeadMoved = errors.New("pull request head changed since it was evaluated")
+	// ErrPRBodyEditRefused is wrapped by EditPRBody when the forge answered
+	// 401/403/404/422 (no permission, or the PR is not editable). Callers fall
+	// back to a comment; other errors are transient and worth retrying.
+	ErrPRBodyEditRefused = errors.New("forge refused editing the pull request body")
 )
 
 // Issue is an open issue/ticket as returned by a forge's issue-list API.
@@ -251,6 +255,10 @@ type Forge interface {
 	// protection, required reviews, not mergeable) returns an error wrapping
 	// ErrMergeRefused whose text is the forge's own explanation.
 	MergePullRequest(ctx context.Context, repoName string, prNumber int, method MergeMethod, expectedHeadSHA string) error
+
+	// EditPRBody replaces the PR/MR description with body. A refusal (401/403/404/422)
+	// wraps ErrPRBodyEditRefused; any other error is returned plain.
+	EditPRBody(ctx context.Context, repoName string, prNumber int, body string) error
 
 	// ListOpenIssues returns every open issue for repoName, optionally
 	// filtered to issues carrying the given label (empty = all open issues).
