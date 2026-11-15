@@ -92,7 +92,7 @@ const (
 )
 
 // SubtaskReadiness reports whether a terminal child has landed, and if not what
-// it is waiting on. It mirrors the subtask_landed SQL view (migration 097)
+// it is waiting on. It mirrors the subtask_landed SQL view (migration 098)
 // exactly; keep both in sync (a parity test guards this). lastVerify is the
 // child's latest run_verifications status, "" when none (no verify configured
 // counts as passed). Home: merge_status merged/merge_conflict. Foreign: PR open
