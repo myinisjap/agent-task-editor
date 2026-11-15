@@ -311,3 +311,72 @@ func TestDependencies_Add_BlockerWorkflowWithoutTerminalLabel_400(t *testing.T) 
 		t.Errorf("expected 'no terminal label' error, got %s", w.Body.String())
 	}
 }
+
+// TestDependencies_ForeignSubtaskBlocker: a subtask living in another repo
+// satisfies the parent's edge once its PR is open and its verify passed (ADR
+// 0041); a closed-unmerged PR or a failed verify does not.
+func TestDependencies_ForeignSubtaskBlocker(t *testing.T) {
+	r, _, q, wfID, repoID := setupDepRouter(t)
+	ctx := context.Background()
+	repoB := uuid.NewString()
+	if _, err := q.CreateRepo(ctx, gen.CreateRepoParams{ID: repoB, Name: "b", Path: t.TempDir(), WorkflowID: &wfID}); err != nil {
+		t.Fatal(err)
+	}
+	parent := mkTask(t, q, wfID, repoID, "parent", "work")
+	child := uuid.NewString()
+	if _, err := q.CreateSubtask(ctx, gen.CreateSubtaskParams{ID: child, Title: "fc", Type: "feature", Label: "done", RepoID: repoB, WorkflowID: wfID, ParentTaskID: &parent.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.CreateTaskDependency(ctx, gen.CreateTaskDependencyParams{TaskID: parent.ID, DependsOnTaskID: child}); err != nil {
+		t.Fatal(err)
+	}
+	satisfied := func() bool {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/tasks/"+parent.ID+"/dependencies", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		var resp struct {
+			BlockedBy []struct {
+				Satisfied bool `json:"satisfied"`
+			} `json:"blocked_by"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil || len(resp.BlockedBy) != 1 {
+			t.Fatalf("decode: %v %s", err, w.Body.String())
+		}
+		return resp.BlockedBy[0].Satisfied
+	}
+	setMS := func(ms string) {
+		t.Helper()
+		if _, err := q.SetTaskMergeStatus(ctx, gen.SetTaskMergeStatusParams{MergeStatus: ms, ID: child}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setMS("pending")
+	if satisfied() {
+		t.Fatal("pending foreign child must not satisfy")
+	}
+	setMS("pr_open")
+	runID := uuid.NewString()
+	if _, err := q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: runID, TaskID: child}); err != nil {
+		t.Fatal(err)
+	}
+	put := func(status string) {
+		t.Helper()
+		if err := q.UpsertRunVerification(ctx, gen.UpsertRunVerificationParams{RunID: runID, TaskID: child, Command: "c", Status: status}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("pass")
+	if !satisfied() {
+		t.Fatal("pr_open + verify pass must satisfy")
+	}
+	put("fail")
+	if satisfied() {
+		t.Fatal("failed verify must not satisfy")
+	}
+	put("pass")
+	setMS("pr_closed")
+	if satisfied() {
+		t.Fatal("pr_closed must not satisfy")
+	}
+}

@@ -43,6 +43,14 @@ type Syncer struct {
 	// how wb being nil disables write-back.
 	engine *workflow.Engine
 
+	// OnForeignChildPRChange, when non-nil, is called (synchronously, after the
+	// child's merge_status was updated) with the parent task id whenever a
+	// foreign child's PR state changed (ADR 0041), so the parent's readiness is
+	// re-evaluated. Injected because the agent package owns the coordinator
+	// and its per-parent lock (cmd/server wires SubtaskCoordinator.ReevaluateParent).
+	// Lock order: syncMu -> parent lock; the coordinator never takes syncMu.
+	OnForeignChildPRChange func(ctx context.Context, parentID string)
+
 	// getPRHead resolves the PR head (number, head SHA, base ref,
 	// mergeability, normalised state, URL, and last-updated timestamp) for a
 	// branch — the single per-task forge call each sweep makes, backing both
@@ -447,7 +455,9 @@ func (s *Syncer) cleanupMergedBranch(ctx context.Context, task gen.Task, repoPat
 
 // syncForeignChildMergeStatus mirrors a foreign child's PR state into its
 // merge_status (ADR 0041): pr_open / merged / pr_closed. Home children and
-// top-level tasks are untouched. It does not re-evaluate the parent.
+// top-level tasks are untouched. After a change it asks OnForeignChildPRChange
+// to re-evaluate the parent. Both the polling (sweep) and webhook
+// (refreshTask) paths reach this through syncTask.
 func (s *Syncer) syncForeignChildMergeStatus(ctx context.Context, task gen.Task, log *slog.Logger) {
 	if !agent.IsSubtask(task) {
 		return
@@ -466,4 +476,7 @@ func (s *Syncer) syncForeignChildMergeStatus(ctx context.Context, task gen.Task,
 	}
 	s.hub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: task.ID})
 	s.hub.Publish(wsevent.TypeTaskUpdated, wsevent.TaskUpdated{ID: parent.ID})
+	if s.OnForeignChildPRChange != nil {
+		s.OnForeignChildPRChange(ctx, parent.ID)
+	}
 }

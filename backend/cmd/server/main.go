@@ -503,6 +503,8 @@ func main() {
 	// engine is passed through so a repo can opt into auto-transitioning a
 	// task back to its failure-path label when new feedback arrives.
 	ghSyncer := ghsync.New(db.SQL(), pub, cfg.GitHubSyncInterval, engine)
+	// A foreign child's PR changing state re-checks its parent's readiness (ADR 0041).
+	ghSyncer.OnForeignChildPRChange = subtaskCoord.ReevaluateParent
 	slog.Info("github sync enabled", "interval", cfg.GitHubSyncInterval)
 	if cfg.GitHubWebhookSecret != "" {
 		slog.Info("github webhook receiver enabled", "path", "/api/v1/github/webhook")

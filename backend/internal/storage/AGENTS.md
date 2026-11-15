@@ -54,6 +54,7 @@ Long or paginated queries use positional `?N` params, not `@named` (ADR 0020). A
 **Pickup (ADR 0027)**
 - `ListAgentPickupTasks` filters: `active_agent_run_id IS NULL`, `paused = 0`, not archived, `next_retry_at` not in the future, no unsatisfied blocker (`NOT EXISTS`, derived, never a column); orders `priority DESC, created_at ASC`. It is the only query whose `ORDER BY` affects dispatch order.
 - Dependency edges (`task_dependencies`, FKs `ON DELETE CASCADE`) are added in a transaction with cycle detection before `CreateTaskDependency`. `ListTaskDependencyCountsForTasks` / `ListSubtaskRollupsForParents` are the `sqlc.slice` variants scoped to returned ids; use them on hot read paths, not the unscoped originals.
+- Subtask satisfaction (home: merged back; foreign child, ADR 0041: PR open/merged and latest verify passed, no verify = pass) lives only in the `subtask_landed` view (migration 098), used by the pickup/dependency queries; `ListLatestVerifyStatusForTasks` batches latest verify status. Go mirror: `agent.SubtaskReadiness`.
 - Subtasks: `tasks.parent_task_id` (`ON DELETE SET NULL`), `created_by_run_id`, `merge_status` (``/`pending`/`merged`/`merge_conflict`, plus `pr_open`/`pr_closed` for foreign children in another repo, ADR 0041); `agent_configs.cross_repo_subtasks_enabled` gates cross-repo `create_subtask`; `create_subtask` inserts the child and the dependency edge in one transaction.
 - `SearchTasks`: every param treats `''` as "no filter"; sqlc types them `interface{}`, pass strings; `archived` is tri-state.
 

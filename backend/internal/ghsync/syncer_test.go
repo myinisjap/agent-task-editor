@@ -828,8 +828,13 @@ func TestSyncTask_ForeignChildMergeStatus(t *testing.T) {
 	foreign, home := mkChild(repoB), mkChild(repoA)
 	top := newTestTask(t, q, repoA, wfID, label, "top-br", "", "pr_open", "")
 
+	var hookCalls []string
+	s.OnForeignChildPRChange = func(_ context.Context, parentID string) { hookCalls = append(hookCalls, parentID) }
 	for _, tk := range []gen.Task{foreign, home, top} {
 		s.syncTask(ctx, tk, repoInfo{ghName: "acme/widgets", path: t.TempDir()})
+	}
+	if len(hookCalls) != 1 || hookCalls[0] != parent.ID {
+		t.Errorf("OnForeignChildPRChange calls = %v, want exactly [%s]", hookCalls, parent.ID)
 	}
 	want := map[string]string{foreign.ID: "merged", home.ID: "", top.ID: ""}
 	for id, ms := range want {
