@@ -11,7 +11,7 @@ export function autoMergeText(am: AutoMerge): string {
 /** "Auto-merge when green" chip; renders nothing when the policy does not apply. */
 export default function AutoMergeBadge({ autoMerge }: { autoMerge?: Task['auto_merge'] }) {
   if (!autoMerge) return null
-  const refused = autoMerge.reason === 'merge_refused'
+  const refused = autoMerge.reason === 'merge_refused' || autoMerge.reason === 'change_set_sibling_failed'
   return (
     <span
       className={`text-xs px-1.5 py-0.5 rounded ${refused ? 'bg-red-900/40 text-red-300' : 'bg-teal-900/50 text-teal-200'}`}

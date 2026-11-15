@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
+	"github.com/myinisjap/agent-task-editor/backend/internal/automerge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/intakecheck"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -78,6 +79,10 @@ type taskResponse struct {
 	// ("Auto-merge when green" state and, when blocked, why). Nil when the
 	// repo's auto-merge policy does not apply to the task.
 	AutoMerge *autoMergeResponse `json:"auto_merge"`
+	// MergeOrderPending lists change-set predecessors whose PR has not merged
+	// yet, for a foreign child whose own PR is open (ADR 0041 stage 6). Advisory
+	// only: manual merges are never blocked. Always an array.
+	MergeOrderPending []mergeOrderPred `json:"merge_order_pending"`
 	// SourcePendingUpdate is an upstream issue edit the importer held back
 	// because a human had already approved the task. Nil when none is pending.
 	// Applied or discarded via /tasks/{id}/source-update.
@@ -210,7 +215,7 @@ func toTaskResponse(t gen.Task) taskResponse {
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		raw = json.RawMessage("[]")
 	}
-	return taskResponse{Task: t, Attachments: raw, Paused: t.Paused != 0, Archived: t.Archived != 0, AlwaysAsk: t.AlwaysAsk != 0, SideEffects: []sideEffectResponse{}, FileScope: []string{}, PossibleDuplicates: []intakecheck.Match{}}
+	return taskResponse{Task: t, Attachments: raw, Paused: t.Paused != 0, Archived: t.Archived != 0, AlwaysAsk: t.AlwaysAsk != 0, SideEffects: []sideEffectResponse{}, MergeOrderPending: []mergeOrderPred{}, FileScope: []string{}, PossibleDuplicates: []intakecheck.Match{}}
 }
 
 // toTaskResponses converts a slice of gen.Task values.
@@ -475,6 +480,48 @@ func (h *TasksHandler) prReviewMap(ctx context.Context, ids []string) map[string
 func applyPRReview(resp taskResponse, m map[string]prReviewResponse) taskResponse {
 	if p, ok := m[resp.ID]; ok {
 		resp.PRReview = &p
+	}
+	return resp
+}
+
+// mergeOrderPred is one unmerged predecessor in a change set's merge order.
+type mergeOrderPred struct {
+	TaskID string `json:"task_id"`
+	Title  string `json:"title"`
+	PRURL  string `json:"pr_url"`
+}
+
+// mergeOrderMap computes, for foreign-child tasks with an open PR, the
+// predecessors whose PR has not merged yet. Uses the same definition as
+// auto-merge (automerge.PendingPredecessors). Returns nil when nothing applies.
+func (h *TasksHandler) mergeOrderMap(ctx context.Context, tasks []gen.Task) map[string][]mergeOrderPred {
+	var ids []string
+	for _, t := range tasks {
+		if t.ParentTaskID != nil && t.GitState == "pr_open" && t.Archived == 0 {
+			ids = append(ids, t.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := h.q.ListChangeSetPredecessorsForTasks(ctx, ids)
+	if err != nil || len(rows) == 0 {
+		return nil
+	}
+	m := map[string][]mergeOrderPred{}
+	for _, id := range ids {
+		for _, p := range automerge.PendingPredecessors(rows, id) {
+			// Home tasks (same repo as the parent) are not change-set members.
+			m[id] = append(m[id], mergeOrderPred{TaskID: p.TaskID, Title: p.Title, PRURL: p.PRURL})
+		}
+	}
+	return m
+}
+
+// applyMergeOrder sets merge_order_pending on a response.
+func applyMergeOrder(resp taskResponse, m map[string][]mergeOrderPred) taskResponse {
+	if v, ok := m[resp.ID]; ok {
+		resp.MergeOrderPending = v
 	}
 	return resp
 }

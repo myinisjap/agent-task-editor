@@ -31,6 +31,7 @@ import (
 	"github.com/myinisjap/agent-task-editor/backend/internal/lessons/distill"
 	"github.com/myinisjap/agent-task-editor/backend/internal/logretention"
 	"github.com/myinisjap/agent-task-editor/backend/internal/memguard"
+	"github.com/myinisjap/agent-task-editor/backend/internal/needsme"
 	"github.com/myinisjap/agent-task-editor/backend/internal/notify"
 	"github.com/myinisjap/agent-task-editor/backend/internal/prflow"
 	"github.com/myinisjap/agent-task-editor/backend/internal/remotemcp"
@@ -509,7 +510,16 @@ func main() {
 	// task back to its failure-path label when new feedback arrives.
 	ghSyncer := ghsync.New(db.SQL(), pub, cfg.GitHubSyncInterval, engine)
 	// A foreign child's PR changing state re-checks its parent's readiness (ADR 0041).
-	ghSyncer.OnForeignChildPRChange = subtaskCoord.ReevaluateParent
+	csAnn := needsme.NewChangeSetAnnouncer(termQ, pub)
+	ghSyncer.OnForeignChildPRChange = func(ctx context.Context, parentID string) {
+		subtaskCoord.ReevaluateParent(ctx, parentID)
+		csAnn.Check(ctx, parentID) // partial change set? (stage 6)
+	}
+	engine.OnSideEffectFailed = func(ctx context.Context, taskID string) {
+		if t, err := termQ.GetTask(ctx, taskID); err == nil && t.ParentTaskID != nil {
+			csAnn.Check(ctx, *t.ParentTaskID)
+		}
+	}
 	slog.Info("github sync enabled", "interval", cfg.GitHubSyncInterval)
 	if cfg.GitHubWebhookSecret != "" {
 		slog.Info("github webhook receiver enabled", "path", "/api/v1/github/webhook")
@@ -519,6 +529,7 @@ func main() {
 	router := api.NewRouter(api.RouterDeps{
 		PRService:           prSvc,
 		EventPublisher:      pub,
+		ChangeSets:          csAnn,
 		EscapeRecorder:      escapeRec,
 		Proposals:           proposals,
 		Intake:              intake,

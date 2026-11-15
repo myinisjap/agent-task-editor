@@ -58,6 +58,8 @@ Key fields returned by task endpoints:
 | `queue_position` | integer? | Derived, read-time 0-based rank in the current agent-pickup queue (priority desc, then oldest first). Only set when the task is eligible for dispatch **and** the worker pool has no free slot (all `MAX_WORKERS` busy); `null` when the task isn't pickup-eligible or the pool has idle capacity |
 | `cumulative_cost_usd` | number | Task's lifetime recorded cost across every run regardless of status (matching the dispatcher's cost-budget guard). Only populated on `GET /tasks/{id}`, since `GET /tasks/{id}/runs` is paginated — omitted (`0`) on list responses |
 | `block_reason` | object? | Derived, read-time explanation of why a pickup-eligible task isn't currently being dispatched: `{code, message, clears_at, detail}`, where `code` is one of `paused`, `cost_budget_global`, `agent_ignore`, `dependency`, `retry_backoff`, `no_config`, `repo_concurrency`, `rate_limited`, `cost_budget`, `wip_limit`. Only the first reason the dispatcher would actually hit is reported, evaluated in that same order, so it never drifts from real dispatch behavior. `clears_at` is set only for the transient reasons (`rate_limited`, `retry_backoff`). `cost_budget_global` (the server's daily/monthly spend ceiling — see [agents.md#global-cost-ceiling](agents.md#global-cost-ceiling)) is checked second, right after `paused`, since it blocks every dispatch-eligible task at once rather than being task-specific. `null`/absent when the task isn't currently a dispatch candidate, or is a candidate with nothing blocking it (see `queue_position`, a separate concern) — see [agents.md#dispatcher](agents.md#dispatcher) |
+| `auto_merge` | object? | Latest auto-merge verdict `{state, reason, message}` when the repo is `when_green`; blocking `reason`s include `change_set_order` (a change-set predecessor PR has not merged) and `change_set_sibling_failed` (a sibling PR is closed or failing); see [task-sources.md](task-sources.md#auto-merge-when-green-opt-in) |
+| `merge_order_pending` | array | Foreign child with an open PR: change-set predecessors whose PR has not merged, `[{task_id, title, pr_url}]`. Advisory (manual merges are never blocked); always an array |
 
 ---
 
@@ -1391,7 +1393,7 @@ Returns aggregated statistics:
 
 The single server-side definition of "needs me". Returns `{ "items": [...] }`,
 oldest first (`since` ascending). Each task appears at most once with one
-primary `reason`; precedence is `waiting_human` > `pr_conflict` > `auto_approving` > `human_gate`.
+primary `reason`; precedence is `waiting_human` > `change_set_partial` > `pr_conflict` > `auto_approving` > `human_gate`.
 The response also carries `approved_by_policy`: policy approvals from the last 24h
 (`task_id, task_title, repo_id, workflow_id, label, gate_label, approved_at, note,
 decision_id, pr_url?, undoable, changed?`; `changed` is the diff size `{files, additions, deletions}` when computable), latest per task, always an array.
@@ -1408,6 +1410,7 @@ decision_id, pr_url?, undoable, changed?`; `changed` is the diff size `{files, a
 
 - `waiting_human` — the task's active run is `waiting_human`; `run_id` and
   `message` (run feedback, else notes) are set when present.
+- `change_set_partial` — reported on a multi-repo **parent** (ADR 0041): at least one foreign child's PR is merged and another failed (PR closed unmerged, or never landed after a permanent push/PR failure). Item carries `message` and `change_set: { merged: [...], failed: [...] }`, each entry `{ task_id, title, repo_id, pr_url?, state }` with `state` `pr_merged`, `pr_closed` or `land_failed`. Shown even when the parent is paused or terminal. ATE never reverts merged work; rerun the failed child or archive it to clear.
 - `pr_conflict` — `git_state` is `pr_open` and `pr_mergeable` is `conflicting`.
 - `auto_approving` — a pending auto-approval exists for the task's current gate
   label; `due_at` is when it will be approved and `decision_id` the decision.

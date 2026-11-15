@@ -279,5 +279,12 @@ func (h *TasksHandler) UpdateGitState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A foreign child going pr_merged/pr_closed may make its parent a partial
+	// change set (ADR 0041 stage 6). merge_status is left to ghsync, whose change
+	// detection also re-evaluates the parent's readiness.
+	if h.changeSets != nil && task.ParentTaskID != nil {
+		h.changeSets.Check(r.Context(), *task.ParentTaskID)
+	}
+
 	JSON(w, http.StatusOK, toTaskResponse(task))
 }

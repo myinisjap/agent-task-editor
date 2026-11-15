@@ -64,6 +64,84 @@ func (q *Queries) GetTaskDependency(ctx context.Context, arg GetTaskDependencyPa
 	return i, err
 }
 
+const listChangeSetPredecessorsForTasks = `-- name: ListChangeSetPredecessorsForTasks :many
+SELECT
+    d.task_id AS task_id,
+    p.id AS pred_id,
+    p.title AS pred_title,
+    p.repo_id AS pred_repo_id,
+    p.git_state AS pred_git_state,
+    p.pr_url AS pred_pr_url,
+    p.archived AS pred_archived,
+    pt.repo_id AS parent_repo_id,
+    pt.git_state AS parent_git_state
+FROM task_dependencies d
+JOIN tasks c ON c.id = d.task_id
+JOIN tasks_full p ON p.id = d.depends_on_task_id AND p.parent_task_id = c.parent_task_id
+JOIN tasks_full pt ON pt.id = c.parent_task_id
+WHERE d.task_id IN (/*SLICE:task_ids*/?)
+ORDER BY p.created_at ASC, p.id ASC
+`
+
+type ListChangeSetPredecessorsForTasksRow struct {
+	TaskID         string `json:"task_id"`
+	PredID         string `json:"pred_id"`
+	PredTitle      string `json:"pred_title"`
+	PredRepoID     string `json:"pred_repo_id"`
+	PredGitState   string `json:"pred_git_state"`
+	PredPrUrl      string `json:"pred_pr_url"`
+	PredArchived   int64  `json:"pred_archived"`
+	ParentRepoID   string `json:"parent_repo_id"`
+	ParentGitState string `json:"parent_git_state"`
+}
+
+// Change-set merge order (ADR 0041 stage 6): for every task in task_ids, one
+// row per sibling predecessor (a task_dependencies edge to a task with the same
+// parent), with the predecessor's PR facts and the parent's. git_state and
+// pr_url come through tasks_full (task_git side table).
+func (q *Queries) ListChangeSetPredecessorsForTasks(ctx context.Context, taskIds []string) ([]ListChangeSetPredecessorsForTasksRow, error) {
+	query := listChangeSetPredecessorsForTasks
+	var queryParams []interface{}
+	if len(taskIds) > 0 {
+		for _, v := range taskIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:task_ids*/?", strings.Repeat(",?", len(taskIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:task_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListChangeSetPredecessorsForTasksRow
+	for rows.Next() {
+		var i ListChangeSetPredecessorsForTasksRow
+		if err := rows.Scan(
+			&i.TaskID,
+			&i.PredID,
+			&i.PredTitle,
+			&i.PredRepoID,
+			&i.PredGitState,
+			&i.PredPrUrl,
+			&i.PredArchived,
+			&i.ParentRepoID,
+			&i.ParentGitState,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTaskBlockers = `-- name: ListTaskBlockers :many
 SELECT
     d.depends_on_task_id AS task_id,

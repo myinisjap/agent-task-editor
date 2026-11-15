@@ -218,6 +218,9 @@ func (e *Engine) runSideEffect(ctx context.Context, se gen.TaskSideEffect) {
 			slog.Warn("side effects: mark failed", "id", se.ID, "err", ferr)
 		}
 		e.publishSideEffect(se, SideEffectFailed, msg)
+		if e.OnSideEffectFailed != nil && (se.Kind == SideEffectTerminal || se.Kind == SideEffectCreatePR) {
+			e.OnSideEffectFailed(bg, se.TaskID)
+		}
 		return
 	}
 	backoff := e.SideEffectBackoff

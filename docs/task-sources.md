@@ -680,6 +680,13 @@ The merge goes through the side-effect outbox and is pinned to the evaluated hea
 
 Task Detail and the board card show "Auto-merge when green" with the blocking reason while the PR is not yet eligible.
 
+**Change sets (ADR 0041 stage 6).** For a foreign child (a child in a different repo than its parent) two more conditions apply, both read from stored facts (no cross-repo forge call):
+
+- **Order.** Merge order comes from `task_dependencies` edges between the children of one parent (the same edges the PR bodies render). The PR waits (`change_set_order`, "waiting for X to merge first") until every non-archived predecessor's PR is merged (`git_state` `pr_merged`). A predecessor in the parent's own repo (a home child) counts as merged when the **parent's** PR is merged, since its work lands through that PR. The parent's own PR is not gated in this stage.
+- **Sibling red.** While any other foreign sibling's PR is closed unmerged, or its latest recorded checks at the current head failed, the PR is not auto-merged (`change_set_sibling_failed`). This reports before the order reason.
+
+Both are blocking reasons shown like the others on Task Detail and the board card. The outbox merge re-checks them. Single-repo tasks and top-level tasks are unaffected.
+
 > **Warning:** with no `verify_command`, or with a gate upstream on Auto, a PR can be opened and merged with no human involved. The repo edit form warns about both.
 
 By default, newly-ingested PR feedback is surfaced in the prompt but the task
@@ -778,6 +785,16 @@ a parent. Single-repo PRs (no foreign children) are unchanged.
   (never a second one). That comment is not updated later; the board link
   shows the current state.
 - A human edit racing the read-modify-write of the body could be lost (small window).
+
+#### Merge order and partial merges
+
+Merge order is the dependency edges between the children (e.g. the client depends on the API). Auto-merge enforces it (see above). **Manual merges are never blocked**, but a foreign child with an open PR whose predecessor has not merged shows a "Merge after: ..." warning next to its PR link (Task Detail) and on the board card; the Task API exposes it as `merge_order_pending` (always an array).
+
+**Partial merge.** When at least one foreign child's PR is merged and at least one other has failed, the **parent** gets a needs-me entry with reason `change_set_partial` (listing which PRs merged and which did not), a `task.needs_human` event (reason `change_set_partial`, empty `run_id`) and the usual `needs_human` outbound webhook. The definition lives in one place (`internal/needsme`). A child counts as **failed** when it is not archived, sits on a terminal label, and either its PR was closed unmerged, or its PR never landed and its push / PR-creation side effect failed permanently. Nothing is stored: the entry is derived, so it clears by itself when you **rerun** the child (move it back to a work label; the usual feedback loop) or **close** it (archive it). The event is edge-triggered and deduplicated in memory, so after a server restart a still-partial parent can announce once more; the needs-me list is unaffected.
+
+**Accepted risk.** ATE never reverts merged work and has no revert helper. If the API side merged and the client side failed, the repos stay out of sync until a human resolves it. Mitigation: make the first-merged side backward compatible (for example, merge the API change that accepts both old and new clients first) and encode that order with a dependency edge, so ATE merges that side first and an out-of-sync window is harmless.
+
+**Known limits.** Rerunning a child whose PR was closed relies on the existing closed-PR behaviour (the terminal push is skipped while `git_state` is `pr_closed`, and closed PRs are not polled); if a rerun cannot open a fresh PR, reopen the PR on the forge or archive the child. A manual `git-state` edit announces the partial state but leaves `merge_status` to the next PR sync.
 
 ## GitHub webhook (optional)
 

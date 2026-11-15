@@ -20,6 +20,7 @@ triggers the "Release" workflow the same way.
 ## [Unreleased]
 
 ### Added
+- **Multi-repo stage 6 (ADR 0041): merge ordering and partial-merge escalation.** Auto-merge of a foreign child's PR now waits for its dependency-edge predecessors to merge (`change_set_order`) and holds back while a sibling PR is closed or failing (`change_set_sibling_failed`). A parent with some PRs merged and a failed sibling gets the needs-me reason `change_set_partial` (single definition in `internal/needsme`, `task.needs_human` event, outbound webhook, Inbox preview); rerun or archive the failed child to clear it. Manual merges are never blocked, but the board warns ("Merge after: ...", Task API `merge_order_pending`). ATE never reverts merged work; see the accepted risk in `docs/task-sources.md`. ghsync now clears the stored failed-check fingerprint when checks go green.
 - **Multi-repo stage 5 (ADR 0041): cross-linked PRs.** PRs of a change set get a generated "Part of change set" section (parent title + board link, sibling repos/PR URLs or "not opened yet", intended merge order from child dependencies); when a later sibling's PR opens, earlier siblings' PR bodies are updated between HTML markers (human text outside is untouched) via the new `change_set_links` outbox effect (migration 100), falling back to one marker-deduped comment if the forge refuses the edit. New `forge.Forge.EditPRBody` (GitHub, Gitea). Single-repo PRs are unchanged.
 
 ### Fixed

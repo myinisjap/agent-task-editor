@@ -165,7 +165,7 @@ watchdog — see `docs/agents.md#cost-budgets`) or retry-budget exhaustion (see
 items as `escalation_reason`): `agent_question`, `auth_required`,
 `repeated_failure`, `rework_loop`, `cost_budget`, `cost_unknown`,
 `provider_missing`, `runtime_prep`, `max_turns`, `transient_exhausted`,
-`no_outcome`, `rejected_transition` or `verify_error`. Note that `request_human` is only one
+`no_outcome`, `rejected_transition`, `verify_error` or `change_set_partial`. The last is published for a multi-repo **parent** task when its change set merged only partly (`run_id` is empty; `message` lists merged and unmerged PRs); it is sent once per distinct partial state. Note that `request_human` is only one
 cause; the UI uses the code to pick the primary action (Reply for a question,
 Retry or a link to the relevant settings page otherwise).
 

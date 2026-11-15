@@ -110,6 +110,7 @@ export function sectionFor(item: NeedsMeItem): InboxSectionKey {
   if (item.reason === 'human_gate') return 'decide'
   if (item.reason === 'auto_approving') return 'auto_approving'
   if (item.reason === 'pr_conflict') return 'fix'
+  if (item.reason === 'change_set_partial') return 'fix'
   return escalationInfo(item.escalation_reason).action === 'reply' ? 'answer' : 'fix'
 }
 
@@ -171,6 +172,8 @@ export function itemActions(item: NeedsMeItem, workflow: Workflow | undefined): 
   // Pending auto-approvals have their own Hold / Review now buttons.
   if (item.reason === 'auto_approving') return { approve: false, requestChanges: false, retry: false, reply: false }
   if (item.reason === 'pr_conflict') return { approve: false, requestChanges: false, retry: false, reply: false }
+  // Partly merged change set: the action is on the failed child task, not the parent.
+  if (item.reason === 'change_set_partial') return { approve: false, requestChanges: false, retry: false, reply: false }
   const { canApprove, canReject } = humanActionsFor(workflow, item.label)
   if (item.reason === 'human_gate') return { approve: canApprove, requestChanges: canReject, retry: false, reply: false }
   // waiting_human

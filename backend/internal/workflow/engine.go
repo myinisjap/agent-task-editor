@@ -144,6 +144,11 @@ type Engine struct {
 	// its worktree. The task passed in is re-read when the effect runs. A
 	// returned error is recorded and the effect retried with backoff.
 	OnTerminal func(ctx context.Context, task gen.Task) error
+	// OnSideEffectFailed, if set, is called after a terminal or create_pr
+	// effect is parked as permanently failed (ADR 0041 stage 6: a foreign
+	// child whose PR could not land may make its parent a partial change set).
+	// Runs synchronously on the worker; keep it cheap.
+	OnSideEffectFailed func(ctx context.Context, taskID string)
 	// OnLeaveNotReady, if set, makes a transition off the workflow's human-gate
 	// label (the label GateLabel resolves to, "not_ready" for the default
 	// workflow) enqueue a "leave_not_ready" side effect. Used to apply an "agent

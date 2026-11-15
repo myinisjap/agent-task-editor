@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { NeedsMeItem, Task, Workflow } from '../api/client'
-import { buildInbox, entryKey, isCountedEntry, failedEffectTasks, flattenInbox, inboxCount, itemActions, neighborKey, nextAfterRemoval, resolveSelection, sourceEditTasks } from './inbox'
+import { buildInbox, entryKey, isCountedEntry, failedEffectTasks, flattenInbox, inboxCount, itemActions, sectionFor, neighborKey, nextAfterRemoval, resolveSelection, sourceEditTasks } from './inbox'
 import { formatRelativeAge } from './format'
 
 const item = (over: Partial<NeedsMeItem>): NeedsMeItem => ({
@@ -105,6 +105,10 @@ describe('itemActions', () => {
   })
   it('pr conflict is link only', () => {
     expect(itemActions(item({ reason: 'pr_conflict' }), undefined)).toMatchObject({ approve: false, retry: false, reply: false })
+  })
+  it('change_set_partial is a fix item with no one-click actions', () => {
+    expect(sectionFor(item({ reason: 'change_set_partial' }))).toBe('fix')
+    expect(itemActions(item({ reason: 'change_set_partial' }), undefined)).toEqual({ approve: false, requestChanges: false, retry: false, reply: false })
   })
   it('waiting run: question replies, retry-type escalation retries, fix-type links', () => {
     expect(itemActions(item({ reason: 'waiting_human', escalation_reason: 'agent_question' }), undefined).reply).toBe(true)

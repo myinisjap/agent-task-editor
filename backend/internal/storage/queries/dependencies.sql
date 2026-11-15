@@ -148,3 +148,25 @@ WHERE d.task_id IN (sqlc.slice('task_ids'))
         AND (dt.parent_task_id IS NULL OR EXISTS (SELECT 1 FROM subtask_landed sl WHERE sl.task_id = dt.id))
   )
 ORDER BY d.task_id, dt.created_at ASC;
+
+-- name: ListChangeSetPredecessorsForTasks :many
+-- Change-set merge order (ADR 0041 stage 6): for every task in task_ids, one
+-- row per sibling predecessor (a task_dependencies edge to a task with the same
+-- parent), with the predecessor's PR facts and the parent's. git_state and
+-- pr_url come through tasks_full (task_git side table).
+SELECT
+    d.task_id AS task_id,
+    p.id AS pred_id,
+    p.title AS pred_title,
+    p.repo_id AS pred_repo_id,
+    p.git_state AS pred_git_state,
+    p.pr_url AS pred_pr_url,
+    p.archived AS pred_archived,
+    pt.repo_id AS parent_repo_id,
+    pt.git_state AS parent_git_state
+FROM task_dependencies d
+JOIN tasks c ON c.id = d.task_id
+JOIN tasks_full p ON p.id = d.depends_on_task_id AND p.parent_task_id = c.parent_task_id
+JOIN tasks_full pt ON pt.id = c.parent_task_id
+WHERE d.task_id IN (sqlc.slice('task_ids'))
+ORDER BY p.created_at ASC, p.id ASC;

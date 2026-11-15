@@ -55,7 +55,7 @@ components:
         label: { type: string }
         reason:
           type: string
-          enum: [waiting_human, pr_conflict, human_gate, auto_approving]
+          enum: [waiting_human, change_set_partial, pr_conflict, human_gate, auto_approving]
         message:
           type: string
           description: Waiting run feedback or notes text, when present.
@@ -111,6 +111,28 @@ components:
         preview_count:
           type: integer
           description: Images in the latest preview capture. human_gate and auto_approving items only, when the review brief could be built; omitted when 0.
+        change_set:
+          $ref: "#/components/schemas/NeedsMeChangeSet"
+    NeedsMeChangeSetPR:
+      type: object
+      required: [task_id, title, repo_id, state]
+      properties:
+        task_id: { type: string, description: The child task }
+        title: { type: string }
+        repo_id: { type: string }
+        pr_url: { type: string }
+        state: { type: string, enum: [pr_merged, pr_closed, land_failed], description: "pr_merged = merged; pr_closed = closed unmerged; land_failed = the PR never landed (push/PR creation failed for good)" }
+    NeedsMeChangeSet:
+      type: object
+      description: change_set_partial items only. Which PRs of the change set merged and which did not.
+      required: [merged, failed]
+      properties:
+        merged:
+          type: array
+          items: { $ref: "#/components/schemas/NeedsMeChangeSetPR" }
+        failed:
+          type: array
+          items: { $ref: "#/components/schemas/NeedsMeChangeSetPR" }
     LabelAutonomy:
       type: object
       properties:
@@ -926,9 +948,22 @@ components:
             auto_merge_mode is when_green. null when it does not apply.
           properties:
             state: { type: string, enum: [waiting, merging], description: "waiting = blocked (see reason/message); merging = merge queued" }
-            reason: { type: string, description: "Blocking code, e.g. checks_pending, checks_failed, conflict, changes_requested, draft, always_ask, paused, active_run, no_checks, merge_refused; empty when merging" }
+            reason: { type: string, description: "Blocking code, e.g. checks_pending, checks_failed, conflict, changes_requested, draft, always_ask, paused, active_run, no_checks, merge_refused, change_set_order (a predecessor in the change set has not merged yet), change_set_sibling_failed (a sibling PR in the change set is closed or failing); empty when merging" }
             message: { type: string, description: Human-readable explanation of reason }
           required: [state, reason, message]
+        merge_order_pending:
+          type: array
+          description: >
+            Change-set predecessors (ADR 0041) whose PR has not merged yet, set only on
+            a foreign child whose own PR is open. Advisory: manual merges are never
+            blocked; the board shows a warning. Always an array, empty when none.
+          items:
+            type: object
+            required: [task_id, title, pr_url]
+            properties:
+              task_id: { type: string }
+              title: { type: string }
+              pr_url: { type: string }
         source_pending_update:
           nullable: true
           allOf:
@@ -3082,8 +3117,8 @@ components:
         run_id:  { type: string }
         reason:
           type: string
-          enum: [agent_question, auth_required, repeated_failure, rework_loop, cost_budget, cost_unknown, provider_missing, runtime_prep, max_turns, transient_exhausted, no_outcome, rejected_transition, verify_error]
-          description: Same code as AgentRun.escalation_reason.
+          enum: [agent_question, auth_required, repeated_failure, rework_loop, cost_budget, cost_unknown, provider_missing, runtime_prep, max_turns, transient_exhausted, no_outcome, rejected_transition, verify_error, change_set_partial]
+          description: Same code as AgentRun.escalation_reason, or change_set_partial (published for a parent task whose change set merged only partly; run_id is empty).
         message: { type: string }
       required: [task_id, run_id, reason, message]
 
@@ -6468,8 +6503,13 @@ paths:
       description: >
         The single server-side definition of "needs me". Each task appears at
         most once with one primary reason; precedence is waiting_human >
-        pr_conflict > auto_approving > human_gate. waiting_human: the task's active run is
-        waiting for input (run_id and message set). pr_conflict: the task has
+        change_set_partial > pr_conflict > auto_approving > human_gate. waiting_human: the task's active run is
+        waiting for input (run_id and message set). change_set_partial: a parent
+        task whose change set (ADR 0041) has at least one merged foreign-child PR and at
+        least one failed one (PR closed unmerged, or the PR never landed after a
+        permanent push/PR failure); shown even when paused or terminal, with a
+        change_set listing both groups. ATE never reverts merged work; rerun the failed
+        child or archive it to clear. pr_conflict: the task has
         an open PR marked as conflicting. human_gate: the task sits on a
         non-terminal, non-agent_ignore label with no agent-triggerable
         outbound transition and at least one human transition, with no live

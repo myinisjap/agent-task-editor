@@ -6,6 +6,7 @@ import { api, authedRawFetch, type Task, type Repo, type WorkflowLabel, type Wor
 import GitStateBadge from '../board/GitStateBadge'
 import SideEffectBadge from '../shared/SideEffectBadge'
 import AutoMergeBadge from '../shared/AutoMergeBadge'
+import MergeOrderBadge from '../shared/MergeOrderBadge'
 import GitHubAuthWarning from '../shared/GitHubAuthWarning'
 import { PRIORITY_LEVELS, priorityLabel } from '../../lib/priority'
 import AgentNotesModal from './AgentNotesModal'
@@ -443,14 +444,17 @@ export default function TaskHeader({
             </Row>
             <Row label="PR">
               {task.pr_url ? (
-                <a
-                  href={task.pr_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-xs text-accent-fg transition-colors truncate"
-                >
-                  {task.pr_url.replace('https://github.com/', '')} ↗
-                </a>
+                <span className="flex items-center gap-2 min-w-0">
+                  <a
+                    href={task.pr_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-xs text-accent-fg transition-colors truncate"
+                  >
+                    {task.pr_url.replace('https://github.com/', '')} ↗
+                  </a>
+                  <MergeOrderBadge task={task} />
+                </span>
               ) : isReviewSource(task.source) ? (
                 <span className="text-xs text-fg-subtle">review-only: never opens a PR</span>
               ) : (

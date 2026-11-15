@@ -55,6 +55,32 @@ type needsMeItem struct {
 	// DueAt and DecisionID are set for auto_approving items.
 	DueAt      *string `json:"due_at,omitempty"`
 	DecisionID string  `json:"decision_id,omitempty"`
+	// ChangeSet lists merged and failed PRs; change_set_partial items only.
+	ChangeSet *needsMeChangeSet `json:"change_set,omitempty"`
+}
+
+type needsMeChangeSetPR struct {
+	TaskID string `json:"task_id"`
+	Title  string `json:"title"`
+	RepoID string `json:"repo_id"`
+	PRURL  string `json:"pr_url,omitempty"`
+	State  string `json:"state"`
+}
+
+type needsMeChangeSet struct {
+	Merged []needsMeChangeSetPR `json:"merged"`
+	Failed []needsMeChangeSetPR `json:"failed"`
+}
+
+func toNeedsMeChangeSet(cs *needsme.ChangeSetPartial) *needsMeChangeSet {
+	conv := func(ps []needsme.ChangeSetPR) []needsMeChangeSetPR {
+		out := make([]needsMeChangeSetPR, 0, len(ps))
+		for _, p := range ps {
+			out = append(out, needsMeChangeSetPR{TaskID: p.TaskID, Title: p.Title, RepoID: p.RepoID, PRURL: p.PRURL, State: p.State})
+		}
+		return out
+	}
+	return &needsMeChangeSet{Merged: conv(cs.Merged), Failed: conv(cs.Failed)}
 }
 
 type policyApprovalItem struct {
@@ -103,6 +129,9 @@ func (h *NeedsMeHandler) List(w http.ResponseWriter, r *http.Request) {
 		if it.EscalationReason != "" {
 			er := it.EscalationReason
 			v.EscalationReason = &er
+		}
+		if it.ChangeSet != nil {
+			v.ChangeSet = toNeedsMeChangeSet(it.ChangeSet)
 		}
 		if it.Reason == needsme.ReasonAutoApproving {
 			v.DecisionID = it.DecisionID

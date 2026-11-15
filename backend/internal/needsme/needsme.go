@@ -62,6 +62,8 @@ type Item struct {
 	Note       string
 	PRURL      string
 	Undoable   bool
+	// ChangeSet is set for ReasonChangeSetPartial items.
+	ChangeSet *ChangeSetPartial
 }
 
 // WorkflowDef is the label/transition graph of one workflow.
@@ -72,10 +74,12 @@ type WorkflowDef struct {
 
 // Classify returns the primary needs-me item for a task, or ok=false.
 // run is the task's active run (nil when none). Precedence:
-// waiting_human > pr_conflict > auto_approving > human_gate. pending is the
+// waiting_human > change_set_partial > pr_conflict > auto_approving >
+// human_gate. cs is the parent's partial change set (nil when none); it is
+// shown even when the task is paused, running or terminal. pending is the
 // task's pending autonomy auto-approval (nil when none); it only counts when it
 // is for the task's current label.
-func Classify(task gen.Task, run *gen.AgentRun, wf WorkflowDef, pending *gen.AutonomyDecision) (Item, bool) {
+func Classify(task gen.Task, run *gen.AgentRun, wf WorkflowDef, pending *gen.AutonomyDecision, cs *ChangeSetPartial) (Item, bool) {
 	if task.Archived != 0 {
 		return Item{}, false
 	}
@@ -89,6 +93,16 @@ func Classify(task gen.Task, run *gen.AgentRun, wf WorkflowDef, pending *gen.Aut
 		it.Message = firstNonEmpty(run.Feedback, run.Notes)
 		if run.EscalationReason != nil {
 			it.EscalationReason = *run.EscalationReason
+		}
+		return it, true
+	}
+	if cs != nil {
+		it := base
+		it.Reason = ReasonChangeSetPartial
+		it.ChangeSet = cs
+		it.Message = ChangeSetMessage(cs)
+		if !cs.Since.IsZero() {
+			it.Since = cs.Since
 		}
 		return it, true
 	}
@@ -164,23 +178,57 @@ func Compute(ctx context.Context, q *gen.Queries) ([]Item, error) {
 		pending[pendingRows[i].TaskID] = &pendingRows[i]
 	}
 	wfs := map[string]WorkflowDef{}
+	loadWF := func(id string) (WorkflowDef, error) {
+		if wf, ok := wfs[id]; ok {
+			return wf, nil
+		}
+		labels, err := q.ListWorkflowLabels(ctx, id)
+		if err != nil {
+			return WorkflowDef{}, err
+		}
+		trans, err := q.ListWorkflowTransitions(ctx, id)
+		if err != nil {
+			return WorkflowDef{}, err
+		}
+		wf := WorkflowDef{Labels: labels, Transitions: trans}
+		wfs[id] = wf
+		return wf, nil
+	}
+	// Partial change sets, keyed by parent id (ADR 0041 stage 6).
+	byID := map[string]gen.Task{}
+	for _, t := range tasks {
+		byID[t.ID] = t
+	}
+	children := map[string][]gen.Task{}
+	for _, t := range tasks {
+		if t.ParentTaskID == nil {
+			continue
+		}
+		if p, ok := byID[*t.ParentTaskID]; ok && p.RepoID != t.RepoID {
+			children[p.ID] = append(children[p.ID], t)
+		}
+	}
+	partials := map[string]*ChangeSetPartial{}
+	for pid, kids := range children {
+		cs, ok, err := classifyParent(ctx, q, byID[pid], kids, func(id string) ([]gen.WorkflowLabel, error) {
+			wf, err := loadWF(id)
+			return wf.Labels, err
+		})
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			partials[pid] = cs
+		}
+	}
 	out := []Item{}
 	for _, t := range tasks {
 		if t.Archived != 0 {
 			continue
 		}
-		wf, ok := wfs[t.WorkflowID]
-		if !ok {
-			labels, err := q.ListWorkflowLabels(ctx, t.WorkflowID)
-			if err != nil {
-				return nil, err
-			}
-			trans, err := q.ListWorkflowTransitions(ctx, t.WorkflowID)
-			if err != nil {
-				return nil, err
-			}
-			wf = WorkflowDef{Labels: labels, Transitions: trans}
-			wfs[t.WorkflowID] = wf
+		wf, err := loadWF(t.WorkflowID)
+		if err != nil {
+			return nil, err
 		}
 		var run *gen.AgentRun
 		if t.ActiveAgentRunID != nil {
@@ -192,7 +240,7 @@ func Compute(ctx context.Context, q *gen.Queries) ([]Item, error) {
 				run = &r
 			}
 		}
-		if it, ok := Classify(t, run, wf, pending[t.ID]); ok {
+		if it, ok := Classify(t, run, wf, pending[t.ID], partials[t.ID]); ok {
 			out = append(out, it)
 		}
 	}

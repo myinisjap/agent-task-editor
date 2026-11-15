@@ -663,3 +663,29 @@ func TestIngestReviewComments_SkipsOwnReplies(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+func TestIngestFailedChecks_ClearsFingerprintWhenGreen(t *testing.T) {
+	failing := true
+	getChecks := func(ctx context.Context, repo repoInfo, prNumber int) ([]forge.Check, error) {
+		if failing {
+			return []forge.Check{{Name: "ci", Bucket: "fail"}}, nil
+		}
+		return nil, nil
+	}
+	s, _, _ := newTestSyncerFull(t, nil, nil, nil, getChecks, false)
+	state := &gen.TaskPrReviewState{}
+	log := slog.Default()
+	if ok, parts := s.ingestFailedChecks(context.Background(), gen.Task{}, repoInfo{}, 1, "sha1", state, log); !ok || len(parts) == 0 {
+		t.Fatalf("first failing sweep: ok=%v parts=%v", ok, parts)
+	}
+	if state.LastFailedCheckSha == nil || *state.LastFailedCheckSha != "sha1|ci" {
+		t.Fatalf("fingerprint = %v, want sha1|ci", state.LastFailedCheckSha)
+	}
+	failing = false
+	if ok, _ := s.ingestFailedChecks(context.Background(), gen.Task{}, repoInfo{}, 1, "sha1", state, log); !ok {
+		t.Fatal("green sweep not ok")
+	}
+	if state.LastFailedCheckSha != nil {
+		t.Fatalf("fingerprint should clear on green, got %v", *state.LastFailedCheckSha)
+	}
+}
