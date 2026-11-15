@@ -72,6 +72,15 @@ describe('HomeRoute', () => {
     expect(await screen.findByText('DASH')).toBeInTheDocument()
   })
 
+  it('shows the Dashboard on an established install with an unstaffed label', async () => {
+    m.repos.mockResolvedValue([{ id: 'r' }])
+    m.providers.mockResolvedValue([{ id: 'p' }])
+    m.agents.mockResolvedValue([])
+    m.tasks.mockResolvedValue({ items: [{ id: 't' }], nextCursor: null })
+    renderHome()
+    expect(await screen.findByText('DASH')).toBeInTheDocument()
+  })
+
   it('shows the Dashboard when the checklist was dismissed', async () => {
     localStorage.setItem('board.onboarding.dismissed', 'true')
     renderHome()
