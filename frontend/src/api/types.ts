@@ -6516,7 +6516,7 @@ export interface paths {
         };
         /**
          * Tasks that need a human, oldest first
-         * @description The single server-side definition of "needs me". Each task appears at most once with one primary reason; precedence is waiting_human > pr_conflict > auto_approving > human_gate. waiting_human: the task's active run is waiting for input (run_id and message set). pr_conflict: the task has an open PR marked as conflicting. human_gate: the task sits on a non-terminal, non-agent_ignore label with no agent-triggerable outbound transition and at least one human transition, with no live run. auto_approving: a human_gate task with a pending autonomy auto-approval (due_at set); it is never also reported as human_gate. The separate approved_by_policy list holds tasks the policy approved in the last 24 hours. Archived and (for pr_conflict/human_gate) paused tasks are excluded.
+         * @description The single server-side definition of "needs me". Each task appears at most once with one primary reason; precedence is waiting_human > change_set_partial > pr_conflict > auto_approving > human_gate. waiting_human: the task's active run is waiting for input (run_id and message set). change_set_partial: a parent task whose change set (ADR 0041) has at least one merged foreign-child PR and at least one failed one (PR closed unmerged, or the PR never landed after a permanent push/PR failure); shown even when paused or terminal, with a change_set listing both groups. ATE never reverts merged work; rerun the failed child or archive it to clear. pr_conflict: the task has an open PR marked as conflicting. human_gate: the task sits on a non-terminal, non-agent_ignore label with no agent-triggerable outbound transition and at least one human transition, with no live run. auto_approving: a human_gate task with a pending autonomy auto-approval (due_at set); it is never also reported as human_gate. The separate approved_by_policy list holds tasks the policy approved in the last 24 hours. Archived and (for pr_conflict/human_gate) paused tasks are excluded.
          */
         get: {
             parameters: {
@@ -8247,7 +8247,7 @@ export interface components {
             workflow_id: string;
             label: string;
             /** @enum {string} */
-            reason: "waiting_human" | "pr_conflict" | "human_gate" | "auto_approving";
+            reason: "waiting_human" | "change_set_partial" | "pr_conflict" | "human_gate" | "auto_approving";
             /** @description Waiting run feedback or notes text, when present. */
             message?: string;
             /**
@@ -8293,6 +8293,24 @@ export interface components {
             verification?: "pass" | "fail" | "timeout" | "error" | "not_run";
             /** @description Images in the latest preview capture. human_gate and auto_approving items only, when the review brief could be built; omitted when 0. */
             preview_count?: number;
+            change_set?: components["schemas"]["NeedsMeChangeSet"];
+        };
+        NeedsMeChangeSetPR: {
+            /** @description The child task */
+            task_id: string;
+            title: string;
+            repo_id: string;
+            pr_url?: string;
+            /**
+             * @description pr_merged = merged; pr_closed = closed unmerged; land_failed = the PR never landed (push/PR creation failed for good)
+             * @enum {string}
+             */
+            state: "pr_merged" | "pr_closed" | "land_failed";
+        };
+        /** @description change_set_partial items only. Which PRs of the change set merged and which did not. */
+        NeedsMeChangeSet: {
+            merged: components["schemas"]["NeedsMeChangeSetPR"][];
+            failed: components["schemas"]["NeedsMeChangeSetPR"][];
         };
         LabelAutonomy: {
             /** @enum {string} */
@@ -8887,11 +8905,17 @@ export interface components {
                  * @enum {string}
                  */
                 state: "waiting" | "merging";
-                /** @description Blocking code, e.g. checks_pending, checks_failed, conflict, changes_requested, draft, always_ask, paused, active_run, no_checks, merge_refused; empty when merging */
+                /** @description Blocking code, e.g. checks_pending, checks_failed, conflict, changes_requested, draft, always_ask, paused, active_run, no_checks, merge_refused, change_set_order (a predecessor in the change set has not merged yet), change_set_sibling_failed (a sibling PR in the change set is closed or failing); empty when merging */
                 reason: string;
                 /** @description Human-readable explanation of reason */
                 message: string;
             } | null;
+            /** @description Change-set predecessors (ADR 0041) whose PR has not merged yet, set only on a foreign child whose own PR is open. Advisory: manual merges are never blocked; the board shows a warning. Always an array, empty when none. */
+            merge_order_pending?: {
+                task_id: string;
+                title: string;
+                pr_url: string;
+            }[];
             /** @description An edit to the source issue that the sync importer held back because a human had already approved the task (it passed a human gate). Null when none is pending. Apply or discard it via /tasks/{id}/source-update. Populated on GET /tasks and GET /tasks/{id} and the source-update responses. */
             source_pending_update?: components["schemas"]["TaskSourcePendingUpdate"] | null;
             /** @description Per-task override: when true the autonomy policy always asks a human at gates (a hard stop). Set via PATCH /tasks/{id}/always-ask. */
@@ -10274,10 +10298,10 @@ export interface components {
             task_id: string;
             run_id: string;
             /**
-             * @description Same code as AgentRun.escalation_reason.
+             * @description Same code as AgentRun.escalation_reason, or change_set_partial (published for a parent task whose change set merged only partly; run_id is empty).
              * @enum {string}
              */
-            reason: "agent_question" | "auth_required" | "repeated_failure" | "rework_loop" | "cost_budget" | "cost_unknown" | "provider_missing" | "runtime_prep" | "max_turns" | "transient_exhausted" | "no_outcome" | "rejected_transition" | "verify_error";
+            reason: "agent_question" | "auth_required" | "repeated_failure" | "rework_loop" | "cost_budget" | "cost_unknown" | "provider_missing" | "runtime_prep" | "max_turns" | "transient_exhausted" | "no_outcome" | "rejected_transition" | "verify_error" | "change_set_partial";
             message: string;
         };
         WsTaskAutonomyPendingEvent: {

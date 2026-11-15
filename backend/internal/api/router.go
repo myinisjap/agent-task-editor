@@ -93,6 +93,9 @@ type RouterDeps struct {
 	// EventPublisher is the full fan-out (hub + notifier + policy), used for
 	// autonomy hold/undo events. Optional.
 	EventPublisher handlers.TaskEventPublisher
+	// ChangeSets announces partial change sets after a manual git-state edit
+	// (ADR 0041 stage 6); nil disables the announcement.
+	ChangeSets handlers.ChangeSetChecker
 	// EscapeRecorder records autonomy escapes and applies the step-down. Optional;
 	// the router builds one from the DB and EventPublisher when nil.
 	EscapeRecorder *escape.Recorder
@@ -123,6 +126,9 @@ func NewRouter(deps RouterDeps) http.Handler {
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, deps.Canceller, deps.ReplyDispatcher, deps.BlockReasons)
 	tasksH.SetPublisher(hub)
 	tasksH.SetPRService(deps.PRService)
+	if deps.ChangeSets != nil {
+		tasksH.SetChangeSetAnnouncer(deps.ChangeSets)
+	}
 	if deps.EventPublisher != nil {
 		tasksH.SetAutonomyPublisher(deps.EventPublisher)
 	}

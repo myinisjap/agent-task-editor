@@ -160,6 +160,42 @@ export default function InboxPreview(p: InboxPreviewProps) {
             </div>
           </>
         )
+      } else if (item.reason === 'change_set_partial') {
+        const cs = item.change_set
+        const prList = (label: string, prs: NonNullable<typeof cs>['merged']) =>
+          prs.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-fg-muted">{label}</p>
+              <ul className="text-sm text-fg list-disc pl-5">
+                {prs.map((pr) => (
+                  <li key={pr.task_id} className="break-words">
+                    <Link to={`/tasks/`} className="text-accent-fg hover:underline">{pr.title}</Link>
+                    <span className="text-fg-muted"> · {pr.repo_id}</span>
+                    {pr.state === 'pr_closed' && <span className="text-danger"> · PR closed</span>}
+                    {pr.state === 'land_failed' && <span className="text-danger"> · PR could not be opened</span>}
+                    {pr.pr_url && (
+                      <>
+                        {' '}
+                        <a href={pr.pr_url} target="_blank" rel="noreferrer" className="text-xs text-accent-fg hover:underline">PR</a>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )
+        body = (
+          <>
+            <p className="text-sm text-fg">
+              Part of this change set merged while another PR did not. ATE never reverts merged work. Rerun the failed child (move it back to work) or archive it.
+            </p>
+            {cs && prList('Merged', cs.merged)}
+            {cs && prList('Not merged', cs.failed)}
+            <div className="flex flex-wrap gap-2">
+              <Link to={openTo} className={PRIMARY}>Open</Link>
+            </div>
+          </>
+        )
       } else if (item.reason === 'waiting_human' && a.reply) {
         body = (
           <>

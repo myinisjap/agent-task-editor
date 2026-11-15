@@ -44,22 +44,26 @@ const (
 
 // Reason codes for a blocked evaluation (task_auto_merge.reason).
 const (
-	ReasonPaused            = "paused"
-	ReasonAlwaysAsk         = "always_ask"
-	ReasonActiveRun         = "active_run"
-	ReasonDraft             = "draft"
-	ReasonConflict          = "conflict"
-	ReasonMergeableUnknown  = "mergeable_unknown"
-	ReasonChangesRequested  = "changes_requested"
-	ReasonChecksFailed      = "checks_failed"
-	ReasonChecksPending     = "checks_pending"
-	ReasonNoChecks          = "no_checks"
-	ReasonHeadMoved         = "head_moved"
-	ReasonMergeRefused      = "merge_refused"
-	noChecksGrace           = 3 * time.Minute
-	liveRunStatusPending    = "pending"
-	liveRunStatusRunning    = "running"
-	liveRunStatusWaitingHum = "waiting_human"
+	ReasonPaused           = "paused"
+	ReasonAlwaysAsk        = "always_ask"
+	ReasonActiveRun        = "active_run"
+	ReasonDraft            = "draft"
+	ReasonConflict         = "conflict"
+	ReasonMergeableUnknown = "mergeable_unknown"
+	ReasonChangesRequested = "changes_requested"
+	ReasonChecksFailed     = "checks_failed"
+	ReasonChecksPending    = "checks_pending"
+	ReasonNoChecks         = "no_checks"
+	ReasonHeadMoved        = "head_moved"
+	ReasonMergeRefused     = "merge_refused"
+	// ReasonChangeSetOrder: a predecessor in the change set has not merged yet.
+	ReasonChangeSetOrder = "change_set_order"
+	// ReasonChangeSetSiblingFailed: a sibling PR is closed unmerged or failing.
+	ReasonChangeSetSiblingFailed = "change_set_sibling_failed"
+	noChecksGrace                = 3 * time.Minute
+	liveRunStatusPending         = "pending"
+	liveRunStatusRunning         = "running"
+	liveRunStatusWaitingHum      = "waiting_human"
 )
 
 // Decision is the outcome of evaluating one task's PR.
@@ -92,6 +96,8 @@ type Input struct {
 	// NoChecksSettled is true once the head commit has reported zero checks for
 	// longer than the grace period, i.e. the repo evidently has no CI.
 	NoChecksSettled bool
+	// ChangeSet holds stored change-set facts (zero for single-repo tasks).
+	ChangeSet ChangeSetFacts
 }
 
 // Mode returns the repo's effective mode (empty reads as off).
@@ -127,6 +133,10 @@ func Precheck(in Input) Decision {
 		return blocked(ReasonActiveRun, "an agent run is still active")
 	case in.PR.Draft:
 		return blocked(ReasonDraft, "PR is a draft")
+	case len(in.ChangeSet.RedSiblings) > 0:
+		return blocked(ReasonChangeSetSiblingFailed, "a sibling PR in the change set is closed or failing: "+titleList(in.ChangeSet.RedSiblings))
+	case len(in.ChangeSet.PendingPredecessors) > 0:
+		return blocked(ReasonChangeSetOrder, "waiting for "+titleList(in.ChangeSet.PendingPredecessors)+" to merge first (change set order)")
 	case in.PR.Mergeable == forge.MergeableConflicting:
 		return blocked(ReasonConflict, "PR has merge conflicts")
 	case in.PR.Mergeable != forge.MergeableClean:
@@ -205,6 +215,13 @@ func Assess(ctx context.Context, q *gen.Queries, src Source, task gen.Task, repo
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return Decision{}, fmt.Errorf("get current run: %w", err)
 		}
+	}
+	if Mode(repo) == ModeWhenGreen && task.ParentTaskID != nil && head.State == "pr_open" {
+		cs, err := LoadChangeSetFacts(ctx, q, task)
+		if err != nil {
+			return Decision{}, err
+		}
+		in.ChangeSet = cs
 	}
 	if d := Precheck(in); !d.Applies || !d.Eligible {
 		return d, nil

@@ -16,6 +16,8 @@ export function needsMeReasonLabel(reason: NeedsMeReason, escalationReason?: str
       return 'Auto-approving'
     case 'pr_conflict':
       return 'PR has conflicts'
+    case 'change_set_partial':
+      return 'Change set partly merged'
     default:
       return 'Needs you'
   }

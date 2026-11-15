@@ -414,6 +414,10 @@ func (s *Syncer) ingestFailedChecks(ctx context.Context, task gen.Task, repo rep
 		return false, nil
 	}
 	if len(checks) == 0 {
+		// Nothing failing any more: clear the fingerprint so the stored fact
+		// ("this head has failing checks", read by change-set auto-merge) goes
+		// away on a green re-run at the same head.
+		state.LastFailedCheckSha = nil
 		return true, nil
 	}
 

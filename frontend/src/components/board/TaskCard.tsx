@@ -14,6 +14,7 @@ import GitStateBadge from './GitStateBadge'
 import { prReviewBadge } from '../../lib/prReview'
 import SideEffectBadge from '../shared/SideEffectBadge'
 import AutoMergeBadge from '../shared/AutoMergeBadge'
+import MergeOrderBadge from '../shared/MergeOrderBadge'
 import { PRIORITY_LEVELS, priorityLabel, toPriority, type PriorityValue } from '../../lib/priority'
 import { useNeedsMeStore } from '../../stores/needsMe'
 import { needsMeReasonLabel } from '../../lib/needsMe'
@@ -586,6 +587,7 @@ function TaskCard({
         </span>
         <span className="text-xs text-fg-subtle truncate">{task.id.slice(0, 8)}</span>
         <GitStateBadge branch={task.branch} gitState={task.git_state} prMergeable={task.pr_mergeable} />
+        <MergeOrderBadge task={task} />
         {repoName && (
           <span className="text-xs text-fg-muted truncate max-w-[80px] ml-auto" title={repoName}>
             {repoName}

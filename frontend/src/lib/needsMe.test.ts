@@ -6,6 +6,7 @@ describe('needsMeReasonLabel', () => {
     expect(needsMeReasonLabel('waiting_human')).toBe('Agent asked a question')
     expect(needsMeReasonLabel('human_gate')).toBe('Waiting for your review')
     expect(needsMeReasonLabel('pr_conflict')).toBe('PR has conflicts')
+    expect(needsMeReasonLabel('change_set_partial')).toBe('Change set partly merged')
   })
 
   it('uses the escalation reason for waiting_human when recorded', () => {
