@@ -43,7 +43,6 @@ type csFixture struct {
 	db           *storage.DB
 	q            *gen.Queries
 	parent, b, c gen.Task
-	home         gen.Task
 	repoB, repoC gen.Repo
 }
 
