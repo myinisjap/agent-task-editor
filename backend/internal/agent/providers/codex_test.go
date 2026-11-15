@@ -834,3 +834,18 @@ func TestCodexRunner_Run_UnsetModelPricedFromRollout(t *testing.T) {
 		t.Error("expected a log line naming the model codex used")
 	}
 }
+
+func TestMCPSidecarEnv_CrossRepoFlag(t *testing.T) {
+	in := agent.RunInput{AgentConfig: agent.AgentConfig{SubtasksEnabled: true}}
+	if _, ok := mcpSidecarEnv(in, "u", "t", "r")["CROSS_REPO_SUBTASKS_ENABLED"]; ok {
+		t.Error("flag set without cross-repo")
+	}
+	in.AgentConfig.CrossRepoSubtasksEnabled = true
+	if mcpSidecarEnv(in, "u", "t", "r")["CROSS_REPO_SUBTASKS_ENABLED"] != "1" {
+		t.Error("flag missing")
+	}
+	in.AgentConfig.SubtasksEnabled = false
+	if _, ok := mcpSidecarEnv(in, "u", "t", "r")["CROSS_REPO_SUBTASKS_ENABLED"]; ok {
+		t.Error("flag set without subtasks")
+	}
+}

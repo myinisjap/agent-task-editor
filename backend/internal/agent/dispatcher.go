@@ -1099,6 +1099,8 @@ func (d *Dispatcher) startRun(ctx context.Context, t gen.Task, matched gen.Agent
 			CostWarnRatio:        d.resolveCostWarnRatio(ctx),
 			Runtime:              runtimeSpec,
 			RepoMap:              d.repoMapSection(ctx, t, matched.ID),
+			ChangeSet:            d.changeSetSection(ctx, t, matched.ID),
+			CrossRepoSubtasks:    d.crossRepoSubtasksSection(ctx, t, agentCfg, matched.ID),
 			PRReview:             prReview,
 		},
 	})

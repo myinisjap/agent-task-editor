@@ -415,3 +415,30 @@ type timeT = time.Time
 func nowPlus(hours int) time.Time {
 	return time.Now().UTC().Add(time.Duration(hours) * time.Hour)
 }
+
+func TestExcerpt(t *testing.T) {
+	g := &fakeGen{text: goodText()}
+	s, repo, q := setup(t, g)
+	ctx := context.Background()
+	if s.Excerpt(ctx, repo.ID, "a1").OK {
+		t.Fatal("disabled repo must not give an excerpt")
+	}
+	enable(t, q, repo.ID)
+	if s.Excerpt(ctx, repo.ID, "a1").OK {
+		t.Fatal("no map yet")
+	}
+	if _, err := s.RunRepo(ctx, repo.ID, TriggerManual, "me"); err != nil {
+		t.Fatal(err)
+	}
+	ex := s.Excerpt(ctx, repo.ID, "a1")
+	if !ex.OK || ex.OneLine != "An app." || len(ex.SHA) != 40 || !strings.Contains(ex.Body, "src/") {
+		t.Fatalf("excerpt = %+v", ex)
+	}
+	// inject_labels (default "plan") is ignored; agent exclusion is honoured.
+	if _, err := q.UpdateRepoMapGlobal(ctx, gen.UpdateRepoMapGlobalParams{InjectLabels: "nothing", ExcludedAgentIds: `["a2"]`}); err != nil {
+		t.Fatal(err)
+	}
+	if !s.Excerpt(ctx, repo.ID, "a1").OK || s.Excerpt(ctx, repo.ID, "a2").OK {
+		t.Fatal("exclusion handling wrong")
+	}
+}

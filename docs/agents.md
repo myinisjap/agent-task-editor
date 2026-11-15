@@ -30,7 +30,7 @@ references by id. See [Provider Configs](#provider-configs) below.
 | `command_denylist` | JSON array of shell-command glob patterns (`"*"` wildcard). Commands matching any pattern here are always denied, checked before `command_allowlist`. Defaults to `[]` (no restriction). **Not enforced for `codex_cli`.** Enforced for `qwen_code` via `--exclude-tools` and for `opencode` via a `permission.bash` map (see caveats below). See [Command Allowlist / Denylist](#command-allowlist--denylist) below. |
 | `resume_sessions` | Whether new runs for a task resume the previous run's provider session instead of starting cold. **`claude`, `qwen_code`, `codex_cli`, and `opencode`** — see [Session Resume](#session-resume) below. Default on. |
 | `subtasks_enabled` | Whether this config's runs may decompose their task into subtasks via the `create_subtask` MCP tool. **`claude`/`qwen_code`/`codex_cli` only.** Off by default — grant it to a specific agent (typically the planner). See [Subtasks](workflows.md#subtasks-agent-driven-decomposition); when to fan out: [Planner prompt guidance](workflows.md#planner-prompt-guidance). |
-| `cross_repo_subtasks_enabled` | Additionally lets `create_subtask` take a `repo_id` for another configured repo ([ADR 0041](adr/0041-multi-repo-work-as-parent-with-per-repo-children.md)); each such child gets its own branch and PR instead of merging back. Requires `subtasks_enabled`. Off by default. Restoring a version created before this flag existed turns it off. |
+| `cross_repo_subtasks_enabled` | Additionally lets `create_subtask` take a `repo_id` for another configured repo ([ADR 0041](adr/0041-multi-repo-work-as-parent-with-per-repo-children.md)); each such child gets its own branch and PR instead of merging back. The planner prompt then lists registered repos and documents `repo_id`. Requires `subtasks_enabled`. Off by default. Restoring a version created before this flag existed turns it off. |
 | `max_subtasks` | Per-parent cap on children a run may create. Default 10. |
 | `max_cost_usd` | Advisory per-task cost budget cap in USD (cumulative across all runs of a task, not per run), checked by the dispatcher before each dispatch. `0` disables the cap (unlimited). Default `0`. On `claude`/`qwen_code`, also enforced mid-run as a kill switch that cancels an in-flight run over budget. See [Cost Budgets](#cost-budgets) below. |
 | `effort` | Optional reasoning effort level: `""` (default/unset), `low`, `medium`, `high`, `xhigh`, or `max`. **`claude` (full), `codex_cli` (partial, clamped), and `opencode` (partial, pass-through via `--variant`)** — see [Effort](#effort) below. Ignored by `qwen_code`. |
@@ -834,6 +834,10 @@ The user prompt sent to the agent is assembled as:
 ---]
 (active repo + global lessons, filtered by stage/path globs, max 15 / ~2,000 chars; see [lessons.md](lessons.md). Not sent on resumed sessions.)
 
+[CHANGE SET (multi-repo only) …]
+[CROSS-REPO SUBTASKS (planner, flag on) …]
+(see "Change-set context" below; both sit above the task, cold prompts only)
+
 
 [NOTES FROM PRIOR AGENT:
 <agent_notes from the task, if any>
@@ -848,6 +852,10 @@ Task: <title>
 - .task_attachments/<filename>
 ...]
 ```
+
+### Change-set context (multi-repo, ADR 0041)
+
+A task gets a `CHANGE SET` section when it is a foreign child (a subtask in another repo than its parent), or a parent with at least one non-archived foreign child. It lists the parent title and plan (children only), each sibling's repo, title, description excerpt, branch and PR URL, and an Overview + Layout excerpt (with SHA and a staleness note) of each other repo whose repo map is enabled (`inject_labels` do not apply; `excluded_agent_ids` do). The whole section is capped at 3,000 characters with per-sibling truncation, is fenced as generated, untrusted data that never overrides the task, and tells the agent to write only in its own repo and to put what a sibling needs into its notes or a `request_human` question. It appears on cold prompts only (not resumed sessions). Known v1 limit: home children of a multi-repo parent do not get it. With `cross_repo_subtasks_enabled`, top-level tasks of the planner also get a `CROSS-REPO SUBTASKS` section listing registered repos (id, name, one-line description) and documenting `repo_id`. Implemented in `backend/internal/agent/changeset.go`.
 
 The `"NOTES FROM PRIOR AGENT:"` section contains the task's `agent_notes` field — content that prior agents wrote via `update_task_notes`. This is the primary handoff mechanism between agents in a multi-step workflow.
 
