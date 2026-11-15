@@ -234,3 +234,56 @@ func TestNeedsMeCancelRerun(t *testing.T) {
 		t.Errorf("last call = %v", last)
 	}
 }
+
+func TestCreateTask_MultiRepoFields(t *testing.T) {
+	c, calls := stubAPI(t, map[string]string{
+		"POST /api/v1/tasks": `{"id":"t9","label":"work","related_repo_ids":["r2"],"children":[{"id":"c1","repo_id":"r2","repo_name":"api","title":"API half","label":"not_ready"}]}`,
+	})
+	args := `{"title":"x","repo_id":"r1","related_repo_ids":["r2"],"children":[{"repo_id":"r2","title":"API half"}]}`
+	text, isErr := c.Call(Select(RemoteTools), "create_task", json.RawMessage(args))
+	if isErr {
+		t.Fatalf("err: %q", text)
+	}
+	for _, want := range []string{"t9", "Also touches repos: r2", "Children:", "c1 (api): API half", `"not_ready"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q in %q", want, text)
+		}
+	}
+	body := (*calls)[len(*calls)-1].body
+	if body["related_repo_ids"] == nil || body["children"] == nil || body["label"] != "work" {
+		t.Errorf("payload = %v", body)
+	}
+
+	// Back-compat: no fields -> neither key is sent and the text is unchanged.
+	c2, calls2 := stubAPI(t, map[string]string{"POST /api/v1/tasks": `{"id":"t1","label":"work"}`})
+	text, _ = c2.Call(Select(RemoteTools), "create_task", json.RawMessage(`{"title":"x","repo_id":"r1"}`))
+	if text != `Created task t1 on label "work".` {
+		t.Errorf("text = %q", text)
+	}
+	b := (*calls2)[0].body
+	if _, ok := b["related_repo_ids"]; ok {
+		t.Errorf("related_repo_ids sent: %v", b)
+	}
+	if _, ok := b["children"]; ok {
+		t.Errorf("children sent: %v", b)
+	}
+}
+
+func TestCreateTask_SchemaExposedInProfiles(t *testing.T) {
+	for name, profile := range map[string][]string{"stdio": StdioTools, "full": RemoteTools, "admin": AdminRemoteTools, "readonly": ReadOnlyRemoteTools} {
+		found := false
+		for _, d := range Defs(Select(profile)) {
+			if d["name"] != "create_task" {
+				continue
+			}
+			found = true
+			props := d["inputSchema"].(map[string]any)["properties"].(map[string]any)
+			if props["related_repo_ids"] == nil || props["children"] == nil {
+				t.Errorf("%s: create_task lacks multi-repo properties", name)
+			}
+		}
+		if found == (name == "readonly") {
+			t.Errorf("%s: create_task present=%v", name, found)
+		}
+	}
+}

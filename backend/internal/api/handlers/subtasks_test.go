@@ -537,3 +537,22 @@ func TestSubtasks_OverlapOnlySameRepo(t *testing.T) {
 		t.Fatalf("same-repo sibling should still overlap-serialize (and skip the foreign one): %v", od)
 	}
 }
+
+// A repo the task's creator named is allowed for cross-repo create_subtask
+// even when the agent config's flag is off (ADR 0041 stage 4).
+func TestSubtasks_NamedRepoAllowedWithFlagOff(t *testing.T) {
+	r, _, q, wfID, repoID := setupSubtaskRouter(t)
+	named := seedSecondRepo(t, q)
+	unnamed := seedSecondRepo(t, q)
+	parent := mkTask(t, q, wfID, repoID, "parent", "plan")
+	activeRunWithFlags(t, q, parent.ID, 1, 0)
+	if err := q.AddTaskRelatedRepo(context.Background(), gen.AddTaskRelatedRepoParams{TaskID: parent.ID, RepoID: named}); err != nil {
+		t.Fatal(err)
+	}
+	if w := postSubtask(t, r, parent.ID, map[string]any{"title": "c", "repo_id": named}); w.Code != http.StatusCreated {
+		t.Fatalf("named repo: %d %s", w.Code, w.Body.String())
+	}
+	if w := postSubtask(t, r, parent.ID, map[string]any{"title": "c", "repo_id": unnamed}); w.Code != http.StatusForbidden {
+		t.Fatalf("unnamed repo: %d %s", w.Code, w.Body.String())
+	}
+}

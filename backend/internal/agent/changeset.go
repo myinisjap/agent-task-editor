@@ -350,22 +350,30 @@ func (d *Dispatcher) changeSetSection(ctx context.Context, t gen.Task, agentConf
 // registered repos for the planner. "" unless the agent has both flags on, the
 // task is top level and another repo exists.
 func (d *Dispatcher) crossRepoSubtasksSection(ctx context.Context, t gen.Task, cfg AgentConfig, agentConfigID string) string {
-	if !cfg.SubtasksEnabled || !cfg.CrossRepoSubtasksEnabled {
+	if t.ParentTaskID != nil && *t.ParentTaskID != "" {
 		return ""
 	}
-	if t.ParentTaskID != nil && *t.ParentTaskID != "" {
+	related := d.relatedRepoIDs(ctx, t.ID)
+	prefix := ""
+	if len(related) > 0 {
+		prefix = d.multiRepoSection(ctx, t, cfg, related)
+		if !cfg.SubtasksEnabled || !cfg.CrossRepoSubtasksEnabled {
+			return prefix
+		}
+	} else if !cfg.SubtasksEnabled || !cfg.CrossRepoSubtasksEnabled {
 		return ""
 	}
 	repos, err := d.q.ListRepos(ctx)
 	if err != nil {
 		slog.Warn("crossrepo: list repos", "err", err)
-		return ""
+		return prefixOnly(prefix)
 	}
 	if !slices.ContainsFunc(repos, func(r gen.Repo) bool { return r.ID != t.RepoID }) {
-		return ""
+		return prefixOnly(prefix)
 	}
 	src, _ := d.RepoMap.(RepoMapExcerptSource)
 	var b strings.Builder
+	b.WriteString(prefix)
 	b.WriteString("CROSS-REPO SUBTASKS (your create_subtask tool accepts an optional repo_id): to split work across repos, create one subtask per repo and pass that repo's id as repo_id. A child in another repo uses this task's workflow, runs on its own branch from that repo's base, and lands via its own pull request instead of merging into this task's branch. Omit repo_id for this repo. Registered repos:\n")
 	used := runes(b.String())
 	const tail = "---\n\n"
@@ -394,4 +402,98 @@ func (d *Dispatcher) crossRepoSubtasksSection(ctx context.Context, t gen.Task, c
 	}
 	b.WriteString(tail)
 	return b.String()
+}
+
+// relatedRepoIDs returns the repos a human/API caller named when creating the
+// task (ADR 0041 stage 4; task_related_repos). Best-effort: errors log and
+// yield none.
+func (d *Dispatcher) relatedRepoIDs(ctx context.Context, taskID string) []string {
+	ids, err := d.q.ListTaskRelatedRepos(ctx, taskID)
+	if err != nil {
+		slog.Warn("crossrepo: list related repos", "task_id", taskID, "err", err)
+		return nil
+	}
+	return ids
+}
+
+// CrossRepoSubtasksAllowed reports whether create_subtask should expose repo_id:
+// the agent config opts in, or the task names related repos (the per-task opt-in).
+// The backend still restricts a config without the flag to the named repos.
+func CrossRepoSubtasksAllowed(in RunInput) bool {
+	return in.AgentConfig.CrossRepoSubtasksEnabled || len(in.Task.RelatedRepoIDs) > 0
+}
+
+// multiRepoSection renders the "this change spans these repos" block for a
+// top-level task that was created with related repos. The planner (with
+// subtasks enabled) is told to create one child per listed repo, minus repos an
+// existing live child already covers.
+func (d *Dispatcher) multiRepoSection(ctx context.Context, t gen.Task, cfg AgentConfig, related []string) string {
+	name := func(id string) string {
+		if r, err := d.q.GetRepo(ctx, id); err == nil && r.Name != "" {
+			return truncRunes(collapseWS(sanitizeChangeSet(r.Name)), crossRepoOneLineMax)
+		}
+		return short8(id)
+	}
+	covered := map[string]bool{}
+	if kids, err := d.q.ListSubtasks(ctx, &t.ID); err == nil {
+		for _, k := range kids {
+			if k.Archived == 0 {
+				covered[k.RepoID] = true
+			}
+		}
+	}
+	var b strings.Builder
+	if !cfg.SubtasksEnabled {
+		names := make([]string, 0, len(related))
+		for _, id := range related {
+			names = append(names, name(id))
+		}
+		fmt.Fprintf(&b, "MULTI-REPO CHANGE: a human said this change also spans these repos: %s. This agent cannot create subtasks, so describe the changes needed in each repo in your plan.\n---\n\n", strings.Join(names, ", "))
+		return b.String()
+	}
+	b.WriteString("MULTI-REPO CHANGE: a human named these repos when creating this task, so this change spans all of them. Create one subtask per listed repo with create_subtask, passing that repo's id as repo_id (you may also add subtasks in this task's own repo). Repos:\n")
+	used := runes(b.String())
+	repoIDs := append([]string{t.RepoID}, related...)
+	var open, done []string
+	for i, id := range repoIDs {
+		self := ""
+		if id == t.RepoID {
+			self = " (this task's repo, primary — omit repo_id for it)"
+		}
+		line := fmt.Sprintf("- %s — %s%s\n", id, name(id), self)
+		if used+runes(line)+300 > crossRepoMaxChars {
+			fmt.Fprintf(&b, "…and %d more\n", len(repoIDs)-i)
+			break
+		}
+		b.WriteString(line)
+		used += runes(line)
+		if id != t.RepoID {
+			if covered[id] {
+				done = append(done, name(id))
+			} else {
+				open = append(open, name(id))
+			}
+		}
+	}
+	if len(done) > 0 {
+		fmt.Fprintf(&b, "Already covered by an existing child (do not create another for these): %s.\n", strings.Join(done, ", "))
+	}
+	if len(open) == 0 {
+		b.WriteString("Every listed repo already has a child.\n")
+	}
+	if !cfg.CrossRepoSubtasksEnabled {
+		b.WriteString("Only the repos listed above may receive cross-repo subtasks.\n")
+	}
+	if !cfg.CrossRepoSubtasksEnabled {
+		b.WriteString("---\n\n")
+	}
+	return b.String()
+}
+
+// prefixOnly closes a multi-repo block that has no registered-repo list after it.
+func prefixOnly(prefix string) string {
+	if prefix == "" {
+		return ""
+	}
+	return prefix + "---\n\n"
 }

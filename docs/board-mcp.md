@@ -78,11 +78,15 @@ Creates a ticket on the board.
 | `type` | — | `feature` (default) \| `bug` \| `chore` \| `spike` |
 | `workflow_id` | — | Workflow the task is created under (from `list_workflows`). Defaults to the board's default workflow (the one named "Default", else the alphabetically-first workflow other than the seeded "PR review" one) when omitted — it is **not** derived from the repo. |
 | `label` | — | Column the ticket starts on. **Defaults to `work`** so an agent picks it up immediately; pass e.g. `not_ready` to stage it for manual review first |
+| `related_repo_ids` | — | Other repo ids (from `list_repos`) the change also touches; `repo_id` stays the primary repo. The planning agent is told to create one child per listed repo |
+| `children` | — | `[{repo_id, title, description}]` children created together with the ticket (one per repo; `repo_id` may equal the primary). They land on the workflow's human-gate (`agent_ignore`) label even when the parent starts on `work`; the parent waits for them |
 
 Landing a ticket directly on a column is *initial placement*, not a workflow
 transition — so a ticket can be created straight on `work` even though the
 workflow has no `not_ready → work` edge. The label must still be a real label in
 the workflow, or the backend returns a 400.
+
+For multi-repo work ([ADR 0041](adr/0041-multi-repo-work-as-parent-with-per-repo-children.md)) set `repo_id` to the primary repo and use `related_repo_ids` and/or `children`. The result text then also lists the created children (id, repo, title, label). With neither field the call and its result are unchanged. Task templates and schedules cannot create multi-repo tasks.
 
 > **Heads up:** every ticket created on `work` (or any agent-triggerable column)
 > starts an agent run as soon as the dispatcher picks it up. If you want to

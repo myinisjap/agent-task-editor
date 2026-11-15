@@ -157,3 +157,5 @@ recipe. The Board MCP `admin` profile has `list_recipes` / `install_recipe` (no 
 
 See [task-sources.md](task-sources.md#recipe-webhooks) for the payload shapes and the GitHub
 Actions step.
+
+> **Multi-repo:** templates and schedules cannot create multi-repo tasks (`related_repo_ids` / `children`, [ADR 0041](adr/0041-multi-repo-work-as-parent-with-per-repo-children.md)); use the New Task dialog, `POST /tasks` or the board MCP `create_task` for those.

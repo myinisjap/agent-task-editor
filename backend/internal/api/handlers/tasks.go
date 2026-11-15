@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,10 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/api/middleware"
 	"github.com/myinisjap/agent-task-editor/backend/internal/autonomy/escape"
@@ -250,149 +247,6 @@ func taskIDs(tasks []gen.Task) []string {
 		ids[i] = t.ID
 	}
 	return ids
-}
-
-func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
-	contentType := r.Header.Get("Content-Type")
-
-	var title, description, taskType, repoID, workflowID string
-	var attachmentPaths []string
-
-	if strings.HasPrefix(contentType, "multipart/form-data") {
-		// Parse multipart form (max 50 MB total)
-		if err := r.ParseMultipartForm(maxUploadSize); err != nil {
-			Err(w, http.StatusBadRequest, "failed to parse multipart form: "+err.Error())
-			return
-		}
-		title = r.FormValue("title")
-		description = r.FormValue("description")
-		taskType = r.FormValue("type")
-		repoID = r.FormValue("repo_id")
-		workflowID = r.FormValue("workflow_id")
-		label := r.FormValue("label")
-
-		priority := PriorityNormal
-		if raw := r.FormValue("priority"); raw != "" {
-			p, perr := strconv.Atoi(raw)
-			if perr != nil || !validPriority(p) {
-				Err(w, http.StatusBadRequest, "priority must be one of -1 (low), 0 (normal), 1 (high), 2 (urgent)")
-				return
-			}
-			priority = p
-		}
-
-		// We need a task ID before saving files
-		taskID := uuid.NewString()
-
-		// Handle uploaded image files
-		paths, ok := h.saveUploadedAttachments(w, r, taskID)
-		if !ok {
-			return
-		}
-		attachmentPaths = paths
-
-		// Marshal attachments to JSON
-		attachmentsJSON, err := json.Marshal(attachmentPaths)
-		if err != nil {
-			Err(w, http.StatusInternalServerError, "failed to marshal attachments")
-			return
-		}
-
-		if title == "" || repoID == "" {
-			Err(w, http.StatusBadRequest, "title and repo_id are required")
-			return
-		}
-		if workflowID == "" {
-			resolved, werr := h.resolveDefaultWorkflowID(r.Context())
-			if werr != nil {
-				Err(w, http.StatusBadRequest, werr.Error())
-				return
-			}
-			workflowID = resolved
-		}
-		if taskType == "" {
-			taskType = "feature"
-		}
-		label, lerr := h.resolveInitialLabel(r.Context(), workflowID, label)
-		if lerr != nil {
-			Err(w, http.StatusBadRequest, lerr.Error())
-			return
-		}
-
-		task, err := h.q.CreateTask(r.Context(), gen.CreateTaskParams{
-			ID:          taskID,
-			Title:       title,
-			Description: description,
-			Type:        taskType,
-			Label:       label,
-			RepoID:      repoID,
-			WorkflowID:  workflowID,
-			Attachments: string(attachmentsJSON),
-			Priority:    int64(priority),
-		})
-		if err != nil {
-			Err(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		JSON(w, http.StatusCreated, h.withIntake(r.Context(), toTaskResponse(task), task))
-		return
-	}
-
-	// Fallback: JSON body (no attachments)
-	var body struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		Type        string `json:"type"`
-		RepoID      string `json:"repo_id"`
-		WorkflowID  string `json:"workflow_id"`
-		Label       string `json:"label"`
-		Priority    int    `json:"priority"`
-	}
-	if err := decode(r, &body); err != nil {
-		Err(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if body.Title == "" || body.RepoID == "" {
-		Err(w, http.StatusBadRequest, "title and repo_id are required")
-		return
-	}
-	if body.WorkflowID == "" {
-		resolved, werr := h.resolveDefaultWorkflowID(r.Context())
-		if werr != nil {
-			Err(w, http.StatusBadRequest, werr.Error())
-			return
-		}
-		body.WorkflowID = resolved
-	}
-	if body.Type == "" {
-		body.Type = "feature"
-	}
-	if !validPriority(body.Priority) {
-		Err(w, http.StatusBadRequest, "priority must be one of -1 (low), 0 (normal), 1 (high), 2 (urgent)")
-		return
-	}
-	label, lerr := h.resolveInitialLabel(r.Context(), body.WorkflowID, body.Label)
-	if lerr != nil {
-		Err(w, http.StatusBadRequest, lerr.Error())
-		return
-	}
-
-	task, err := h.q.CreateTask(r.Context(), gen.CreateTaskParams{
-		ID:          uuid.NewString(),
-		Title:       body.Title,
-		Description: body.Description,
-		Type:        body.Type,
-		Label:       label,
-		RepoID:      body.RepoID,
-		WorkflowID:  body.WorkflowID,
-		Attachments: "[]",
-		Priority:    int64(body.Priority),
-	})
-	if err != nil {
-		Err(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	JSON(w, http.StatusCreated, h.withIntake(r.Context(), toTaskResponse(task), task))
 }
 
 // resolveDefaultWorkflowID picks the workflow a task lands on when the

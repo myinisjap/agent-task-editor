@@ -701,6 +701,12 @@ type TaskPreviewImage struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type TaskRelatedRepo struct {
+	TaskID    string    `json:"task_id"`
+	RepoID    string    `json:"repo_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type TaskReviewComment struct {
 	ID              string     `json:"id"`
 	TaskID          string     `json:"task_id"`

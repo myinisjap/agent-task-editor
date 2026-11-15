@@ -94,6 +94,11 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
   const [confirmingDeleteTemplate, setConfirmingDeleteTemplate] = useState(false)
   const [templateError, setTemplateError] = useState('')
   const [templateId, setTemplateId] = useState('')
+  // Multi-repo (ADR 0041 stage 4): extra repos the change touches, and optional
+  // children created together with the task (one editor row per repo).
+  const [relatedRepoIds, setRelatedRepoIds] = useState<string[]>([])
+  const [createChildren, setCreateChildren] = useState(false)
+  const [childDrafts, setChildDrafts] = useState<Record<string, { title: string; description: string }>>({})
   const titleRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   // Mirrors `attachmentPreviews` so the unmount-only cleanup effect below can
@@ -142,6 +147,31 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
       ctrl.abort()
     }
   }, [title, repoId])
+
+  // Repos the change spans: the primary plus every "Also touches" pick.
+  const spanRepoIds = repoId ? [repoId, ...relatedRepoIds] : []
+  const childRows = createChildren
+    ? spanRepoIds
+        .map((id) => ({ id, name: repos.find((r) => r.id === id)?.name ?? id, ...(childDrafts[id] ?? { title: '', description: '' }) }))
+    : []
+  const childrenToSend = childRows.filter((c) => c.title.trim() !== '')
+  const gateLabel = (workflows.find((w) => w.id === workflowId)?.labels ?? [])
+    .filter((l) => l.agent_ignore)
+    .sort((a, b) => a.sort_order - b.sort_order)[0]
+  const noGate = childrenToSend.length > 0 && workflows.length > 0 && !gateLabel
+
+  function changePrimaryRepo(id: string) {
+    setRepoId(id)
+    setRelatedRepoIds((prev) => prev.filter((r) => r !== id))
+  }
+
+  function toggleRelated(id: string) {
+    setRelatedRepoIds((prev) => (prev.includes(id) ? prev.filter((r) => r !== id) : [...prev, id]))
+  }
+
+  function setChildDraft(id: string, patch: Partial<{ title: string; description: string }>) {
+    setChildDrafts((prev) => ({ ...prev, [id]: { ...(prev[id] ?? { title: '', description: '' }), ...patch } }))
+  }
 
   function applyTemplate(id: string) {
     setTemplateId(id)
@@ -236,6 +266,13 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
       fd.append('priority', String(priority))
       fd.append('repo_id', repoId)
       if (workflowId) fd.append('workflow_id', workflowId)
+      relatedRepoIds.forEach((id) => fd.append('related_repo_ids', id))
+      if (childrenToSend.length > 0) {
+        fd.append(
+          'children',
+          JSON.stringify(childrenToSend.map((c) => ({ repo_id: c.id, title: c.title.trim(), description: c.description.trim() }))),
+        )
+      }
       attachments.forEach((f) => fd.append('attachments', f))
 
       const task = await api.tasks.create(fd)
@@ -391,7 +428,7 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
               <select
                 data-testid="new-task-repo-select"
                 value={repoId}
-                onChange={(e) => setRepoId(e.target.value)}
+                onChange={(e) => changePrimaryRepo(e.target.value)}
                 className="w-full min-w-0 bg-surface-sunken border border-border rounded-lg px-3 py-2 text-sm text-fg focus:outline-none focus:ring-1 focus:ring-accent"
               >
                 {repos.map((r) => (
@@ -419,6 +456,77 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
             )}
           </div>
         </div>
+
+        {repos.length > 1 && (
+          <div className="flex flex-col gap-1.5" data-testid="new-task-related-repos">
+            <label className="text-xs font-medium text-fg-muted">Also touches</label>
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              {repos
+                .filter((r) => r.id !== repoId)
+                .map((r) => (
+                  <label key={r.id} className="flex items-center gap-1.5 text-xs text-fg">
+                    <input
+                      type="checkbox"
+                      checked={relatedRepoIds.includes(r.id)}
+                      onChange={() => toggleRelated(r.id)}
+                      data-testid={`new-task-related-${r.id}`}
+                    />
+                    {r.name}
+                  </label>
+                ))}
+            </div>
+            {relatedRepoIds.length > 0 && (
+              <>
+                <p className="text-xs text-fg-subtle">
+                  The planning agent is told this change spans these repos and creates one child task per repo.
+                </p>
+                <label className="flex items-center gap-1.5 text-xs text-fg">
+                  <input
+                    type="checkbox"
+                    checked={createChildren}
+                    onChange={(e) => setCreateChildren(e.target.checked)}
+                    data-testid="new-task-create-children"
+                  />
+                  Create child tasks now
+                </label>
+              </>
+            )}
+            {createChildren && relatedRepoIds.length > 0 && (
+              <div className="flex flex-col gap-2">
+                {childRows.map((c) => (
+                  <div key={c.id} className="flex flex-col gap-1 border border-border rounded-lg p-2" data-testid={`new-task-child-${c.id}`}>
+                    <span className="text-xs font-medium text-fg-muted">{c.name}</span>
+                    <input
+                      aria-label={`Child title for ${c.name}`}
+                      value={c.title}
+                      onChange={(e) => setChildDraft(c.id, { title: e.target.value })}
+                      placeholder="Child title (leave empty to let the planner decide)"
+                      className="bg-surface-sunken border border-border rounded px-2 py-1 text-xs text-fg"
+                    />
+                    <textarea
+                      aria-label={`Child description for ${c.name}`}
+                      value={c.description}
+                      onChange={(e) => setChildDraft(c.id, { description: e.target.value })}
+                      placeholder="Description (optional)"
+                      rows={2}
+                      className="bg-surface-sunken border border-border rounded px-2 py-1 text-xs text-fg resize-none"
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+            {childrenToSend.length > 0 && !noGate && (
+              <p role="status" className="text-xs text-amber-400" data-testid="new-task-children-warning">
+                Children land on “{gateLabel?.name}”. Moving one to an agent column starts an agent in that child&apos;s repo (using that repo&apos;s own verify). The parent waits for all children.
+              </p>
+            )}
+            {noGate && (
+              <p role="alert" className="text-xs text-danger" data-testid="new-task-children-nogate">
+                This workflow has no human-gate (agent_ignore) label for the children to land on; pick another workflow or clear the child titles.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Image Attachments */}
         <div className="flex flex-col gap-1.5">
@@ -538,7 +646,7 @@ export default function NewTaskModal({ workflow, source, onClose }: Props) {
           </button>
           <button
             type="submit"
-            disabled={submitting || !title.trim() || !repoId}
+            disabled={submitting || !title.trim() || !repoId || noGate}
             className="px-4 py-1.5 text-sm bg-accent hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed text-on-accent rounded-lg transition-colors"
           >
             {submitting ? 'Creating…' : 'Create'}

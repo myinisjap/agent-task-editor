@@ -13,7 +13,7 @@ same wire protocol as `cmd/mcp-server`.
 
 - `list_repos()` — `GET /api/v1/repos`; returns id, name, workflow_id, clone_status
 - `list_workflows()` — `GET /api/v1/workflows`; returns id, name, and label names
-- `create_task(title, repo_id, [description], [type], [workflow_id], [label])` —
+- `create_task(title, repo_id, [description], [type], [workflow_id], [label], [related_repo_ids], [children])` —
   `POST /api/v1/tasks`. Defaults `label` to `"work"` so a ticket is immediately
   agent-eligible; pass another label (e.g. `"not_ready"`) to stage it. When
   `workflow_id` is omitted, it is left out of the request entirely and the
