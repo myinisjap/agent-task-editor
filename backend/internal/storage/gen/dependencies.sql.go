@@ -23,8 +23,9 @@ type CreateTaskDependencyParams struct {
 
 // Peer task dependency edges. A task is "blocked" by an edge until the
 // depended-on task reaches a terminal label (workflow_labels.is_terminal != 0)
-// or is archived (a blocker that is a subtask must also have finished merging
-// back: merge_status merged or merge_conflict). Blocked-ness is derived at read time, never stored.
+// or is archived (a blocker that is a subtask must also have landed: see the
+// subtask_landed view. Home child: merge_status merged/merge_conflict. Foreign
+// child, ADR 0041: PR open or merged and latest verify passed). Blocked-ness is derived at read time, never stored.
 func (q *Queries) CreateTaskDependency(ctx context.Context, arg CreateTaskDependencyParams) error {
 	_, err := q.db.ExecContext(ctx, createTaskDependency, arg.TaskID, arg.DependsOnTaskID)
 	return err
@@ -76,7 +77,7 @@ SELECT
             WHERE wl.workflow_id = dt.workflow_id
               AND wl.name = dt.label
               AND wl.is_terminal != 0
-              AND (dt.parent_task_id IS NULL OR dt.merge_status IN ('merged', 'merge_conflict'))
+              AND (dt.parent_task_id IS NULL OR EXISTS (SELECT 1 FROM subtask_landed sl WHERE sl.task_id = dt.id))
         ) THEN 1
         ELSE 0
     END AS satisfied
@@ -138,7 +139,7 @@ SELECT
               WHERE wl.workflow_id = dt.workflow_id
                 AND wl.name = dt.label
                 AND wl.is_terminal != 0
-                AND (dt.parent_task_id IS NULL OR dt.merge_status IN ('merged', 'merge_conflict'))
+                AND (dt.parent_task_id IS NULL OR EXISTS (SELECT 1 FROM subtask_landed sl WHERE sl.task_id = dt.id))
           )
     ) AS blocked_by_count,
     (
@@ -197,7 +198,7 @@ SELECT
               WHERE wl.workflow_id = dt.workflow_id
                 AND wl.name = dt.label
                 AND wl.is_terminal != 0
-                AND (dt.parent_task_id IS NULL OR dt.merge_status IN ('merged', 'merge_conflict'))
+                AND (dt.parent_task_id IS NULL OR EXISTS (SELECT 1 FROM subtask_landed sl WHERE sl.task_id = dt.id))
           )
     ) AS blocked_by_count,
     (
@@ -305,9 +306,15 @@ SELECT
     d.task_id AS task_id,
     d.depends_on_task_id AS blocker_task_id,
     dt.title AS blocker_title,
-    dt.label AS blocker_label
+    dt.label AS blocker_label,
+    dt.parent_task_id AS blocker_parent_id,
+    dt.repo_id AS blocker_repo_id,
+    dt.merge_status AS blocker_merge_status,
+    bp.repo_id AS blocker_parent_repo_id,
+    CAST(EXISTS (SELECT 1 FROM workflow_labels wt WHERE wt.workflow_id = dt.workflow_id AND wt.name = dt.label AND wt.is_terminal != 0) AS INTEGER) AS blocker_terminal
 FROM task_dependencies d
 JOIN tasks dt ON dt.id = d.depends_on_task_id
+LEFT JOIN tasks bp ON bp.id = dt.parent_task_id
 WHERE d.task_id IN (/*SLICE:task_ids*/?)
   AND dt.archived = 0
   AND NOT EXISTS (
@@ -315,16 +322,21 @@ WHERE d.task_id IN (/*SLICE:task_ids*/?)
       WHERE wl.workflow_id = dt.workflow_id
         AND wl.name = dt.label
         AND wl.is_terminal != 0
-        AND (dt.parent_task_id IS NULL OR dt.merge_status IN ('merged', 'merge_conflict'))
+        AND (dt.parent_task_id IS NULL OR EXISTS (SELECT 1 FROM subtask_landed sl WHERE sl.task_id = dt.id))
   )
 ORDER BY d.task_id, dt.created_at ASC
 `
 
 type ListUnsatisfiedBlockersForTasksRow struct {
-	TaskID        string `json:"task_id"`
-	BlockerTaskID string `json:"blocker_task_id"`
-	BlockerTitle  string `json:"blocker_title"`
-	BlockerLabel  string `json:"blocker_label"`
+	TaskID              string  `json:"task_id"`
+	BlockerTaskID       string  `json:"blocker_task_id"`
+	BlockerTitle        string  `json:"blocker_title"`
+	BlockerLabel        string  `json:"blocker_label"`
+	BlockerParentID     *string `json:"blocker_parent_id"`
+	BlockerRepoID       string  `json:"blocker_repo_id"`
+	BlockerMergeStatus  string  `json:"blocker_merge_status"`
+	BlockerParentRepoID *string `json:"blocker_parent_repo_id"`
+	BlockerTerminal     int64   `json:"blocker_terminal"`
 }
 
 // Batched mirror of the NOT EXISTS dependency gate in ListAgentPickupTasks:
@@ -357,6 +369,11 @@ func (q *Queries) ListUnsatisfiedBlockersForTasks(ctx context.Context, taskIds [
 			&i.BlockerTaskID,
 			&i.BlockerTitle,
 			&i.BlockerLabel,
+			&i.BlockerParentID,
+			&i.BlockerRepoID,
+			&i.BlockerMergeStatus,
+			&i.BlockerParentRepoID,
+			&i.BlockerTerminal,
 		); err != nil {
 			return nil, err
 		}

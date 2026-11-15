@@ -481,6 +481,10 @@ type Skill struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+type SubtaskLanded struct {
+	TaskID string `json:"task_id"`
+}
+
 type Task struct {
 	ID                      string     `json:"id"`
 	Title                   string     `json:"title"`

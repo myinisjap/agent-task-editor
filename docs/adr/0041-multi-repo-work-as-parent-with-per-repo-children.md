@@ -1,6 +1,6 @@
 # 41. Multi-repo work is a parent task with one child task per repo
 
-Status: Accepted (stage 1 implemented: `create_subtask` `repo_id`, `cross_repo_subtasks_enabled`, foreign children land via their own PR; later stages not yet)
+Status: Accepted (stages 1-2 implemented: `create_subtask` `repo_id`, `cross_repo_subtasks_enabled`, foreign children land via their own PR; parent readiness via the derived `subtask_landed` view - PR open/merged and last verify passed, no verify counts as passed; the visible reason is the `dependency` block reason, a needs-me reason is stage 6; later stages not yet)
 
 The nine design questions raised in the draft have been decided by the human;
 see *Decided questions* at the end. The Decision section and staged plan below

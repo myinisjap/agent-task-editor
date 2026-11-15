@@ -241,7 +241,7 @@ AND NOT EXISTS (
           WHERE wl.workflow_id = dt.workflow_id
             AND wl.name = dt.label
             AND wl.is_terminal != 0
-            AND (dt.parent_task_id IS NULL OR dt.merge_status IN ('merged', 'merge_conflict'))
+            AND (dt.parent_task_id IS NULL OR EXISTS (SELECT 1 FROM subtask_landed sl WHERE sl.task_id = dt.id))
       )
 )
 ORDER BY t.priority DESC, t.created_at ASC;

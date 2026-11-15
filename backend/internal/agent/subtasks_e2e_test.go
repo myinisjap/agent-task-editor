@@ -397,11 +397,8 @@ func TestE2E_ForeignSubtaskFlow(t *testing.T) {
 		t.Fatalf("home child file missing from parent branch")
 	}
 
-	// Stage 1 readiness: the parent does not auto-advance while the foreign
-	// child is only pr_open.
-	time.Sleep(300 * time.Millisecond)
-	p, _ := h.q.GetTask(ctx, parentID)
-	if p.Label != "assemble" {
-		t.Fatalf("parent advanced to %q while foreign child is pr_open", p.Label)
-	}
+	// Stage 2 readiness (ADR 0041): the home child is merged back and the
+	// foreign child's PR is open (no verify configured = passed), so the parent
+	// advances without waiting for the PR to merge.
+	pollT(t, h.q, parentID, func(tk gen.Task) bool { return tk.Label != "assemble" }, "parent advances once the foreign PR is open")
 }

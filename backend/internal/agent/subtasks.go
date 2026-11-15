@@ -82,6 +82,66 @@ func IsForeignRepo(parentRepoID, childRepoID string) bool {
 	return childRepoID != "" && childRepoID != parentRepoID
 }
 
+// Waiting codes shared by SubtaskReadiness, the dependency block reason and the
+// integration prompt.
+const (
+	SubtaskWaitMergeBack    = "merge_back"
+	SubtaskWaitAwaitingPR   = "awaiting_pr"
+	SubtaskWaitPRClosed     = "pr_closed"
+	SubtaskWaitVerifyFailed = "verify_failed"
+)
+
+// SubtaskReadiness reports whether a terminal child has landed, and if not what
+// it is waiting on. It mirrors the subtask_landed SQL view (migration 097)
+// exactly; keep both in sync (a parity test guards this). lastVerify is the
+// child's latest run_verifications status, "" when none (no verify configured
+// counts as passed). Home: merge_status merged/merge_conflict. Foreign: PR open
+// or merged AND verify passed.
+func SubtaskReadiness(foreign bool, mergeStatus, lastVerify string) (bool, string) {
+	if foreign {
+		if mergeStatus == "pr_closed" {
+			return false, SubtaskWaitPRClosed
+		}
+		if lastVerify != "" && lastVerify != "pass" {
+			return false, SubtaskWaitVerifyFailed
+		}
+		if mergeStatus == "pr_open" || mergeStatus == "merged" {
+			return true, ""
+		}
+		return false, SubtaskWaitAwaitingPR
+	}
+	if mergeStatus == "merged" || mergeStatus == "merge_conflict" {
+		return true, ""
+	}
+	return false, SubtaskWaitMergeBack
+}
+
+// latestVerify returns the latest verify status per task id (absent = none).
+func (c *SubtaskCoordinator) latestVerify(ctx context.Context, ids []string) map[string]string {
+	out := map[string]string{}
+	if len(ids) == 0 {
+		return out
+	}
+	rows, err := c.q.ListLatestVerifyStatusForTasks(ctx, ids)
+	if err != nil {
+		slog.Warn("subtasks: latest verify", "component", "subtasks", "err", err)
+		return out
+	}
+	for _, r := range rows {
+		out[r.TaskID] = r.Status
+	}
+	return out
+}
+
+// ReevaluateParent re-checks a parent's readiness under its lock. ghsync calls
+// it (injected) when a foreign child's PR state changes.
+func (c *SubtaskCoordinator) ReevaluateParent(ctx context.Context, parentID string) {
+	l := c.parentLock(parentID)
+	l.Lock()
+	defer l.Unlock()
+	c.evaluateParent(ctx, parentID)
+}
+
 // IsForeignChild reports whether child is a subtask of parent that lives in a
 // different repo (ADR 0041). Derived from the repo mismatch, never stored.
 func IsForeignChild(parent, child gen.Task) bool {
@@ -355,8 +415,9 @@ func (c *SubtaskCoordinator) mergeChild(ctx context.Context, parentRepoPath stri
 }
 
 // evaluateParent decides what happens once the children settle. "Ready" means
-// every non-archived child is terminal AND its merge-back has finished (merged
-// or merge_conflict). A child that is terminal but not yet merged (its merge is
+// every non-archived child is terminal AND has landed: a home child's merge-back
+// has finished (merged or merge_conflict); a foreign child (ADR 0041) has its
+// PR open or merged with its latest verify passed (SubtaskReadiness). A child that is terminal but not yet merged (its merge is
 // queued behind this parent's lock) is not ready: the merge that completes it
 // re-runs this check.
 //
@@ -372,6 +433,17 @@ func (c *SubtaskCoordinator) evaluateParent(ctx context.Context, parentID string
 	if err != nil || len(children) == 0 {
 		return
 	}
+	parent, err := c.q.GetTask(ctx, parentID)
+	if err != nil {
+		return
+	}
+	var foreignIDs []string
+	for _, ch := range children {
+		if ch.Archived == 0 && IsForeignChild(parent, ch) {
+			foreignIDs = append(foreignIDs, ch.ID)
+		}
+	}
+	verify := c.latestVerify(ctx, foreignIDs)
 	labels, err := c.q.ListWorkflowLabels(ctx, mustWorkflowID(ctx, c.q, parentID))
 	if err != nil {
 		return
@@ -384,6 +456,17 @@ func (c *SubtaskCoordinator) evaluateParent(ctx context.Context, parentID string
 			continue
 		}
 		anyLive = true
+		if IsForeignChild(parent, ch) {
+			// Foreign child (ADR 0041): ready once terminal with its PR open or
+			// merged and its last verify passed. Mirrors the subtask_landed view.
+			if !terminal[ch.Label] {
+				return
+			}
+			if ready, _ := SubtaskReadiness(true, ch.MergeStatus, verify[ch.ID]); !ready {
+				return
+			}
+			continue
+		}
 		if ch.MergeStatus == "merge_conflict" {
 			if !terminal[ch.Label] {
 				return
@@ -399,10 +482,6 @@ func (c *SubtaskCoordinator) evaluateParent(ctx context.Context, parentID string
 		return
 	}
 
-	parent, err := c.q.GetTask(ctx, parentID)
-	if err != nil {
-		return
-	}
 	if c.dispatchableLabel(ctx, parent, labels) {
 		if c.integrationStatus(ctx, parentID) == "" {
 			c.setIntegration(ctx, parentID, "pending")
@@ -495,9 +574,44 @@ func (c *SubtaskCoordinator) BuildIntegrationContext(ctx context.Context, parent
 		}
 	}
 
+	// Multi-repo (ADR 0041): any live foreign child switches to the richer
+	// brief. Single-repo parents keep the legacy text byte for byte.
+	var liveIDs []string
+	multiRepo := false
+	for _, ch := range children {
+		if ch.Archived != 0 {
+			continue
+		}
+		liveIDs = append(liveIDs, ch.ID)
+		if IsForeignChild(parent, ch) {
+			multiRepo = true
+		}
+	}
+	var lastVerify map[string]string
+	repoNames := map[string]string{}
+	repoName := func(id string) string {
+		if n, ok := repoNames[id]; ok {
+			return n
+		}
+		n := short8(id)
+		if r, rerr := c.q.GetRepo(ctx, id); rerr == nil && r.Name != "" {
+			n = r.Name
+		}
+		repoNames[id] = n
+		return n
+	}
+	if multiRepo {
+		lastVerify = c.latestVerify(ctx, liveIDs)
+	}
+
 	var b strings.Builder
-	fmt.Fprintf(&b, "All subtasks of this task have finished. Each subtask branch was merged into this task's branch (%s) as it finished, in completion order; a merge that conflicted was aborted and is listed below for you to resolve.\n\n", parent.Branch)
+	if multiRepo {
+		fmt.Fprintf(&b, "All subtasks of this task have finished. Subtasks in this repo (%s) were merged into this task's branch (%s) in completion order; a merge that conflicted was aborted and is listed below for you to resolve. Subtasks in other repos were NOT merged here: each has its own pull request, which stays open until this change set is reviewed. Nothing has been merged into another repo by ATE yet.\n\n", repoName(parent.RepoID), parent.Branch)
+	} else {
+		fmt.Fprintf(&b, "All subtasks of this task have finished. Each subtask branch was merged into this task's branch (%s) as it finished, in completion order; a merge that conflicted was aborted and is listed below for you to resolve.\n\n", parent.Branch)
+	}
 	for i, ch := range children {
+		foreign := multiRepo && IsForeignChild(parent, ch)
 		state := "merged"
 		switch {
 		case ch.Archived != 0:
@@ -507,7 +621,15 @@ func (c *SubtaskCoordinator) BuildIntegrationContext(ctx context.Context, parent
 		case ch.MergeStatus != "merged":
 			state = ch.MergeStatus
 		}
-		fmt.Fprintf(&b, "%d. %q (%s) — label %s, merge %s\n", i+1, ch.Title, short8(ch.ID), ch.Label, state)
+		if multiRepo {
+			where := "repo " + repoName(ch.RepoID)
+			if foreign {
+				where += " (other repo)"
+			}
+			fmt.Fprintf(&b, "%d. %q (%s) — %s, label %s, merge %s\n", i+1, ch.Title, short8(ch.ID), where, ch.Label, state)
+		} else {
+			fmt.Fprintf(&b, "%d. %q (%s) — label %s, merge %s\n", i+1, ch.Title, short8(ch.ID), ch.Label, state)
+		}
 		scope := splitFileScope(fanout[ch.ID])
 		if len(scope) == 0 {
 			b.WriteString("   Scope: none declared\n")
@@ -516,12 +638,35 @@ func (c *SubtaskCoordinator) BuildIntegrationContext(ctx context.Context, parent
 		}
 		switch {
 		case ch.Archived != 0:
+		case foreign:
+			fmt.Fprintf(&b, "   Branch: %s (own PR, not merged into this branch)\n", ch.Branch)
+			url := ch.PrUrl
+			if url == "" {
+				url = "none"
+			}
+			prState := "not opened"
+			switch ch.GitState {
+			case "pr_open":
+				prState = "open"
+			case "pr_merged":
+				prState = "merged"
+			case "pr_closed":
+				prState = "closed unmerged"
+			}
+			fmt.Fprintf(&b, "   PR: %s, state %s\n", url, prState)
 		case ch.MergeStatus == "merge_conflict":
 			fmt.Fprintf(&b, "   Branch: %s — conflicts when merged into this branch. Run `git merge %s`, resolve the conflicts, and commit.\n", ch.Branch, ch.Branch)
 		case ch.Branch != "":
 			fmt.Fprintf(&b, "   Branch: %s (merged and deleted)\n", ch.Branch)
 		default:
 			b.WriteString("   Branch: none (the subtask never ran)\n")
+		}
+		if multiRepo && ch.Archived == 0 {
+			v := lastVerify[ch.ID]
+			if v == "" {
+				v = "none configured"
+			}
+			fmt.Fprintf(&b, "   Verify: %s\n", v)
 		}
 		if notes := strings.TrimSpace(ch.AgentNotes); notes != "" {
 			notes = strings.ReplaceAll(notes, sourceCommentsEndMarkerForNotes, "")
@@ -548,6 +693,9 @@ func (c *SubtaskCoordinator) BuildIntegrationContext(ctx context.Context, parent
 		"2. Check the combined change for consistency across subtasks (duplicated helpers, mismatched interfaces, missing wiring, docs/CHANGELOG).\n"+
 		"3. Run %s and fix any failures.\n"+
 		"4. Commit, then signal_complete. ate runs the verify command again after you succeed.\n", verify)
+	if multiRepo {
+		b.WriteString("5. Review the whole change set across repos (interfaces/contracts between this repo and the other-repo PRs above). Do not edit other repos; describe any change they need in your summary or ask via request_human.\n")
+	}
 	s := b.String()
 	return &s
 }

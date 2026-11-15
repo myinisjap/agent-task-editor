@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
@@ -86,6 +87,7 @@ type blockSharedState struct {
 	labelsByWF    map[string][]gen.WorkflowLabel
 	transByWF     map[string][]gen.WorkflowTransition
 	unsatBlockers map[string][]gen.ListUnsatisfiedBlockersForTasksRow // task_id -> blockers
+	blockerVerify map[string]string                                   // foreign terminal subtask blocker id -> latest verify status
 }
 
 // ResolveMany computes the first BlockReason for each task in tasks that
@@ -188,9 +190,23 @@ func (r *BlockReasonResolver) gatherState(ctx context.Context, tasks []gen.Task)
 	if berr != nil {
 		return nil, fmt.Errorf("list unsatisfied blockers: %w", berr)
 	}
+	var foreignIDs []string
 	state.unsatBlockers = make(map[string][]gen.ListUnsatisfiedBlockersForTasksRow, len(blockers))
 	for _, b := range blockers {
 		state.unsatBlockers[b.TaskID] = append(state.unsatBlockers[b.TaskID], b)
+		if blockerIsForeignSubtask(b) && b.BlockerTerminal != 0 {
+			foreignIDs = append(foreignIDs, b.BlockerTaskID)
+		}
+	}
+	state.blockerVerify = map[string]string{}
+	if len(foreignIDs) > 0 {
+		vrows, verr := r.q.ListLatestVerifyStatusForTasks(ctx, foreignIDs)
+		if verr != nil {
+			return nil, fmt.Errorf("list blocker verify status: %w", verr)
+		}
+		for _, v := range vrows {
+			state.blockerVerify[v.TaskID] = v.Status
+		}
 	}
 
 	return state, nil
@@ -312,6 +328,16 @@ type blockerDetail struct {
 	TaskID string `json:"task_id"`
 	Title  string `json:"title"`
 	Label  string `json:"label"`
+	// WaitingOn is set for a terminal subtask blocker that has not landed yet
+	// (merge_back|awaiting_pr|pr_closed|verify_failed); see SubtaskReadiness.
+	WaitingOn string `json:"waiting_on,omitempty"`
+}
+
+// blockerIsForeignSubtask reports whether the blocker is a subtask living in a
+// different repo than its parent (ADR 0041).
+func blockerIsForeignSubtask(b gen.ListUnsatisfiedBlockersForTasksRow) bool {
+	return b.BlockerParentID != nil && b.BlockerParentRepoID != nil &&
+		IsForeignRepo(*b.BlockerParentRepoID, b.BlockerRepoID)
 }
 
 func (r *BlockReasonResolver) checkDependency(t gen.Task, state *blockSharedState) *BlockReason {
@@ -320,14 +346,28 @@ func (r *BlockReasonResolver) checkDependency(t gen.Task, state *blockSharedStat
 		return nil
 	}
 	details := make([]blockerDetail, len(blockers))
+	var attention []string
 	for i, b := range blockers {
 		details[i] = blockerDetail{TaskID: b.BlockerTaskID, Title: b.BlockerTitle, Label: b.BlockerLabel}
+		if b.BlockerParentID != nil && b.BlockerTerminal != 0 {
+			foreign := blockerIsForeignSubtask(b)
+			_, details[i].WaitingOn = SubtaskReadiness(foreign, b.BlockerMergeStatus, state.blockerVerify[b.BlockerTaskID])
+			switch details[i].WaitingOn {
+			case SubtaskWaitPRClosed:
+				attention = append(attention, fmt.Sprintf("%q (PR closed unmerged)", b.BlockerTitle))
+			case SubtaskWaitVerifyFailed:
+				attention = append(attention, fmt.Sprintf("%q (verify failed)", b.BlockerTitle))
+			}
+		}
 	}
 	msg := fmt.Sprintf("blocked on %d unresolved dependenc", len(details))
 	if len(details) == 1 {
 		msg += "y"
 	} else {
 		msg += "ies"
+	}
+	if len(attention) > 0 {
+		msg += "; needs attention: " + strings.Join(attention, ", ")
 	}
 	return &BlockReason{
 		Code:    BlockDependency,

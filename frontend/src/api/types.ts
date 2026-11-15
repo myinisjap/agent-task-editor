@@ -8757,7 +8757,7 @@ export interface components {
             matched_rule_id?: string | null;
             /** @description Display name of the intake rule referenced by matched_rule_id, resolved at read time. Only populated on GET /tasks/{id} (not on list responses). Absent/null when matched_rule_id is null or the rule was since deleted. */
             matched_rule_name?: string | null;
-            /** @description Derived (read-time) count of this task's dependency blockers whose edges are still unsatisfied. A task with any unsatisfied blocker is never picked up by the dispatcher. A blocker is satisfied once it reaches a terminal label or is archived; a blocker that is a subtask must also have finished merging back into its parent (merge_status merged or merge_conflict). Zero when the task has no unsatisfied blockers. */
+            /** @description Derived (read-time) count of this task's dependency blockers whose edges are still unsatisfied. A task with any unsatisfied blocker is never picked up by the dispatcher. A blocker is satisfied once it reaches a terminal label or is archived; a blocker that is a subtask must also have landed: in the parent's repo it must be merged back (merge_status merged or merge_conflict); in another repo (ADR 0041) its PR must be open or merged and its latest verify passed. Zero when the task has no unsatisfied blockers. */
             blocked_by_count?: number;
             /** @description Derived (read-time) count of tasks that depend on this task (i.e. this task is a blocker for that many other tasks). */
             blocking_count?: number;
@@ -8898,7 +8898,7 @@ export interface components {
              * @description When this reason is expected to clear on its own (rate-limit reset, next_retry_at). Null for reasons with no natural expiry (e.g. paused, cost_budget, cost_budget_global, wip_limit) — those require a human/config action to clear.
              */
             clears_at?: string | null;
-            /** @description Reason-specific structured context (e.g. blocking task ids/ titles for "dependency"; limit vs. current count for "repo_concurrency"/"wip_limit"; spent vs. budget for "cost_budget"/"cost_budget_global"). Shape varies by code; treat as opaque/optional in generic UI and only key off it for known codes. */
+            /** @description Reason-specific structured context (e.g. blocking task ids/ titles for "dependency", where each item may carry waiting_on = merge_back|awaiting_pr|pr_closed|verify_failed for a terminal subtask that has not landed; limit vs. current count for "repo_concurrency"/"wip_limit"; spent vs. budget for "cost_budget"/"cost_budget_global"). Shape varies by code; treat as opaque/optional in generic UI and only key off it for known codes. */
             detail?: unknown;
         };
         /** @description One end of a task dependency edge (a blocker or a dependent). */
@@ -8908,7 +8908,7 @@ export interface components {
             title: string;
             label: string;
             archived: boolean;
-            /** @description For a blocker: whether the edge is satisfied (the blocker is terminal or archived; a subtask blocker must also be merged/merge_conflict). Not meaningful for dependents (always false there). */
+            /** @description For a blocker: whether the edge is satisfied (the blocker is terminal or archived; a subtask blocker in the parent's repo must also be merged/merge_conflict; a subtask in another repo (ADR 0041) must have its PR open or merged and its latest verify passed - no verify configured counts as passed). Not meaningful for dependents (always false there). */
             satisfied: boolean;
         };
         /** @description Both directions of a task's dependency edges. */

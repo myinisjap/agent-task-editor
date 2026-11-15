@@ -386,7 +386,7 @@ without babysitting the board.
   "blocked by N" badge) until the block clears.
 - **Satisfied = terminal or archived.** A blocker satisfies its edge once it
   reaches a label with `is_terminal = true`, **or** is archived. (A blocker that
-  is a subtask must also have finished merging back; see [Subtasks](#subtasks-agent-driven-decomposition).) Archiving is the
+  is a subtask must also have landed; see [Subtasks](#subtasks-agent-driven-decomposition).) Archiving is the
   existing "this is over" gesture; treating an archived blocker as forever-blocking
   would create an invisible deadlock. (Un-archiving makes the edge unmet again.)
 - **Derived, never stored.** "Blocked" is computed at read time from the blocker's
@@ -428,7 +428,7 @@ leaving prose in `agent_notes`. Subtasks build on the dependency gate above.
   then removed. Children never push to origin or open PRs — the parent's branch
   (and its single eventual PR) is the only outward-facing artifact, and
   `GET /tasks/{parent}/diff` shows the integrated result.
-- **Cross-repo children (ADR 0041).** With `cross_repo_subtasks_enabled` (also needs `subtasks_enabled`), `create_subtask` accepts a `repo_id`. A child in another repo uses this workflow, forks from its own repo's base, and is **not** merged into the parent branch: on a terminal label it is pushed and opens its own PR, and its `merge_status` follows that PR (`pending` → `pr_open` → `merged`/`pr_closed`). Children in the parent's repo behave as above. Parent readiness, integration prompts and UI for foreign children arrive in later stages.
+- **Cross-repo children (ADR 0041).** With `cross_repo_subtasks_enabled` (also needs `subtasks_enabled`), `create_subtask` accepts a `repo_id`. A child in another repo uses this workflow, forks from its own repo's base, and is **not** merged into the parent branch: on a terminal label it is pushed and opens its own PR, and its `merge_status` follows that PR (`pending` → `pr_open` → `merged`/`pr_closed`). Children in the parent's repo behave as above. **Parent readiness:** a foreign child counts as ready once it is terminal, its PR is `pr_open` (or already `merged`) **and** its latest verify passed (no verify row = no verify configured = passed); the parent does not wait for the PR to merge. A closed-unmerged PR or a failed/timed-out verify keeps the parent blocked, shown as the parent's `dependency` block reason with `waiting_on` (`pr_closed` / `verify_failed` / `awaiting_pr` / `merge_back`) and a "needs attention" message (a dedicated needs-me reason is a later stage). The rule lives in the `subtask_landed` SQL view (migration 097), mirrored by `agent.SubtaskReadiness`; ghsync re-evaluates the parent whenever a foreign child's PR state changes (polling and webhook). Known limit: a closed PR that is later reopened is not re-polled. Sibling prompt context, UI panels and creation from UI/MCP arrive in later stages.
 - **Conflicts.** A conflicting merge-back is aborted cleanly and the child is
   flagged `merge_conflict`. Because the child is terminal, the parent's edge is
   satisfied and the parent becomes dispatch-eligible; the dispatcher hands the
@@ -450,8 +450,9 @@ leaving prose in `agent_notes`. Subtasks build on the dependency gate above.
   (terminal) and archived siblings are skipped.
 - **Stricter "satisfied" for subtask blockers.** A blocker that is itself a
   subtask satisfies an edge only once it is archived, or is on a terminal label
-  **and** its merge-back has finished (`merge_status` `merged` or
-  `merge_conflict`). This closes a race where a parent (or an overlap-serialized
+  **and** has landed: a child in the parent's repo has finished merging back
+  (`merge_status` `merged` or `merge_conflict`); a child in another repo has its PR
+  open or merged with its latest verify passed (`subtask_landed` view). This closes a race where a parent (or an overlap-serialized
   sibling) could be dispatched after the child went terminal but before its
   branch was merged, so it never saw the child's work. It applies to every edge
   whose blocker is a subtask, including human-added ones.
@@ -467,6 +468,10 @@ leaving prose in `agent_notes`. Subtasks build on the dependency gate above.
   INTEGRATION** prompt section: each subtask with its label, scope, branch and
   notes, the `git diff --stat` of the merged result, any conflicts to resolve, and
   instructions to check cross-subtask consistency and run the repo verify command.
+  When any child lives in another repo, every child is also listed with its repo,
+  and foreign children show their branch (own PR, not merged here), PR URL, PR
+  state and verify result, so the run can review the whole change set before
+  anything merges. Single-repo parents get the text above unchanged.
   The usual verify command runs again after the agent signals success; on success
   `integration_status = done` and the normal agent-success transition moves the
   parent on (`work → testing`). A failed verify keeps it `pending`, so the rework

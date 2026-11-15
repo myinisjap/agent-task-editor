@@ -7,6 +7,7 @@ package gen
 
 import (
 	"context"
+	"strings"
 )
 
 const getRunVerification = `-- name: GetRunVerification :one
@@ -28,6 +29,52 @@ func (q *Queries) GetRunVerification(ctx context.Context, runID string) (RunVeri
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const listLatestVerifyStatusForTasks = `-- name: ListLatestVerifyStatusForTasks :many
+SELECT v.task_id, v.status FROM run_verifications v
+WHERE v.task_id IN (/*SLICE:task_ids*/?)
+  AND v.run_id = (SELECT v2.run_id FROM run_verifications v2 WHERE v2.task_id = v.task_id
+                  ORDER BY v2.created_at DESC, v2.run_id DESC LIMIT 1)
+`
+
+type ListLatestVerifyStatusForTasksRow struct {
+	TaskID string `json:"task_id"`
+	Status string `json:"status"`
+}
+
+// Latest verify status per task (same ordering as ListTaskVerifications). Tasks with no row are absent (= no verify configured).
+func (q *Queries) ListLatestVerifyStatusForTasks(ctx context.Context, taskIds []string) ([]ListLatestVerifyStatusForTasksRow, error) {
+	query := listLatestVerifyStatusForTasks
+	var queryParams []interface{}
+	if len(taskIds) > 0 {
+		for _, v := range taskIds {
+			queryParams = append(queryParams, v)
+		}
+		query = strings.Replace(query, "/*SLICE:task_ids*/?", strings.Repeat(",?", len(taskIds))[1:], 1)
+	} else {
+		query = strings.Replace(query, "/*SLICE:task_ids*/?", "NULL", 1)
+	}
+	rows, err := q.db.QueryContext(ctx, query, queryParams...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLatestVerifyStatusForTasksRow
+	for rows.Next() {
+		var i ListLatestVerifyStatusForTasksRow
+		if err := rows.Scan(&i.TaskID, &i.Status); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listTaskVerifications = `-- name: ListTaskVerifications :many

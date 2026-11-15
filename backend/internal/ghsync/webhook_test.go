@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/myinisjap/agent-task-editor/backend/internal/forge"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 )
@@ -189,4 +191,55 @@ func TestRefreshMatching_ExcludesReviewSourceTasks(t *testing.T) {
 	}
 	f.s.refreshTask("pr-1")
 	f.expectNoRefresh(t)
+}
+
+// Webhook path (RefreshMatching -> refreshTask -> syncTask) mirrors a foreign
+// child's PR state into merge_status and re-checks the parent (ADR 0041).
+func TestRefreshMatching_ForeignChildMergeStatus(t *testing.T) {
+	for _, tc := range []struct{ forgeState, wantMS string }{
+		{"pr_merged", "merged"},
+		{"pr_closed", "pr_closed"},
+	} {
+		t.Run(tc.forgeState, func(t *testing.T) {
+			ctx := context.Background()
+			s, q, _ := newTestSyncer(t, func(_ context.Context, _ repoInfo, _ string) (forge.PRHead, error) {
+				return fakePRHead(tc.forgeState, "https://github.com/acme/widgets/pull/21", 0), nil
+			})
+			s.debounce = 0
+			wfID, label := newTestWorkflow(t, q)
+			repoA := newTestRepo(t, q, wfID, t.TempDir(), ghURL())
+			repoB := newTestRepo(t, q, wfID, t.TempDir(), ghURL())
+			parent := newTestTask(t, q, repoA, wfID, label, "", "", "", "")
+			id := uuid.NewString()
+			if _, err := q.CreateSubtask(ctx, gen.CreateSubtaskParams{ID: id, Title: "c", Type: "feature", Label: label, RepoID: repoB, WorkflowID: wfID, ParentTaskID: &parent.ID}); err != nil {
+				t.Fatal(err)
+			}
+			if err := q.SetTaskWorktree(ctx, gen.SetTaskWorktreeParams{Branch: "feat-21", BaseRef: "main", ID: id}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := q.SetTaskPR(ctx, gen.SetTaskPRParams{GitState: "pr_open", PrUrl: "https://github.com/acme/widgets/pull/21", ID: id}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := q.SetTaskMergeStatus(ctx, gen.SetTaskMergeStatusParams{MergeStatus: "pr_open", ID: id}); err != nil {
+				t.Fatal(err)
+			}
+			hook := make(chan string, 4)
+			s.OnForeignChildPRChange = func(_ context.Context, parentID string) { hook <- parentID }
+			if n := s.RefreshMatching(ctx, PRRef{Repo: "acme/widgets", Numbers: []int{21}}); n != 1 {
+				t.Fatalf("matched = %d, want 1", n)
+			}
+			select {
+			case got := <-hook:
+				if got != parent.ID {
+					t.Fatalf("hook parent = %q, want %q", got, parent.ID)
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("OnForeignChildPRChange not called")
+			}
+			got, _ := q.GetTask(ctx, id)
+			if got.MergeStatus != tc.wantMS {
+				t.Fatalf("merge_status = %q, want %q", got.MergeStatus, tc.wantMS)
+			}
+		})
+	}
 }

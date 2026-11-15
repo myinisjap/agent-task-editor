@@ -15,3 +15,10 @@ SELECT * FROM run_verifications WHERE run_id = ?;
 
 -- name: ListTaskVerifications :many
 SELECT * FROM run_verifications WHERE task_id = ? ORDER BY created_at DESC, run_id DESC LIMIT ?;
+
+-- name: ListLatestVerifyStatusForTasks :many
+-- Latest verify status per task (same ordering as ListTaskVerifications). Tasks with no row are absent (= no verify configured).
+SELECT v.task_id, v.status FROM run_verifications v
+WHERE v.task_id IN (sqlc.slice('task_ids'))
+  AND v.run_id = (SELECT v2.run_id FROM run_verifications v2 WHERE v2.task_id = v.task_id
+                  ORDER BY v2.created_at DESC, v2.run_id DESC LIMIT 1);

@@ -1,7 +1,8 @@
 -- Peer task dependency edges. A task is "blocked" by an edge until the
 -- depended-on task reaches a terminal label (workflow_labels.is_terminal != 0)
--- or is archived (a blocker that is a subtask must also have finished merging
--- back: merge_status merged or merge_conflict). Blocked-ness is derived at read time, never stored.
+-- or is archived (a blocker that is a subtask must also have landed: see the
+-- subtask_landed view. Home child: merge_status merged/merge_conflict. Foreign
+-- child, ADR 0041: PR open or merged and latest verify passed). Blocked-ness is derived at read time, never stored.
 
 -- name: CreateTaskDependency :exec
 INSERT INTO task_dependencies (task_id, depends_on_task_id)
@@ -40,7 +41,7 @@ SELECT
             WHERE wl.workflow_id = dt.workflow_id
               AND wl.name = dt.label
               AND wl.is_terminal != 0
-              AND (dt.parent_task_id IS NULL OR dt.merge_status IN ('merged', 'merge_conflict'))
+              AND (dt.parent_task_id IS NULL OR EXISTS (SELECT 1 FROM subtask_landed sl WHERE sl.task_id = dt.id))
         ) THEN 1
         ELSE 0
     END AS satisfied
@@ -79,7 +80,7 @@ SELECT
               WHERE wl.workflow_id = dt.workflow_id
                 AND wl.name = dt.label
                 AND wl.is_terminal != 0
-                AND (dt.parent_task_id IS NULL OR dt.merge_status IN ('merged', 'merge_conflict'))
+                AND (dt.parent_task_id IS NULL OR EXISTS (SELECT 1 FROM subtask_landed sl WHERE sl.task_id = dt.id))
           )
     ) AS blocked_by_count,
     (
@@ -106,7 +107,7 @@ SELECT
               WHERE wl.workflow_id = dt.workflow_id
                 AND wl.name = dt.label
                 AND wl.is_terminal != 0
-                AND (dt.parent_task_id IS NULL OR dt.merge_status IN ('merged', 'merge_conflict'))
+                AND (dt.parent_task_id IS NULL OR EXISTS (SELECT 1 FROM subtask_landed sl WHERE sl.task_id = dt.id))
           )
     ) AS blocked_by_count,
     (
@@ -128,9 +129,15 @@ SELECT
     d.task_id AS task_id,
     d.depends_on_task_id AS blocker_task_id,
     dt.title AS blocker_title,
-    dt.label AS blocker_label
+    dt.label AS blocker_label,
+    dt.parent_task_id AS blocker_parent_id,
+    dt.repo_id AS blocker_repo_id,
+    dt.merge_status AS blocker_merge_status,
+    bp.repo_id AS blocker_parent_repo_id,
+    CAST(EXISTS (SELECT 1 FROM workflow_labels wt WHERE wt.workflow_id = dt.workflow_id AND wt.name = dt.label AND wt.is_terminal != 0) AS INTEGER) AS blocker_terminal
 FROM task_dependencies d
 JOIN tasks dt ON dt.id = d.depends_on_task_id
+LEFT JOIN tasks bp ON bp.id = dt.parent_task_id
 WHERE d.task_id IN (sqlc.slice('task_ids'))
   AND dt.archived = 0
   AND NOT EXISTS (
@@ -138,6 +145,6 @@ WHERE d.task_id IN (sqlc.slice('task_ids'))
       WHERE wl.workflow_id = dt.workflow_id
         AND wl.name = dt.label
         AND wl.is_terminal != 0
-        AND (dt.parent_task_id IS NULL OR dt.merge_status IN ('merged', 'merge_conflict'))
+        AND (dt.parent_task_id IS NULL OR EXISTS (SELECT 1 FROM subtask_landed sl WHERE sl.task_id = dt.id))
   )
 ORDER BY d.task_id, dt.created_at ASC;
