@@ -6,13 +6,13 @@ require (
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/golang-migrate/migrate/v4 v4.20.1
 	github.com/google/uuid v1.6.0
-	github.com/mattn/go-sqlite3 v1.14.52
+	github.com/mattn/go-sqlite3 v1.14.53
 	nhooyr.io/websocket v1.8.17
 )
 
 require (
 	github.com/creack/pty v1.1.24
-	golang.org/x/image v0.47.0
+	golang.org/x/image v0.48.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -26,6 +26,6 @@ require (
 	github.com/prometheus/client_model v0.6.3 // indirect
 	github.com/prometheus/common v0.72.0 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
