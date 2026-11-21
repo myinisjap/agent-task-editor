@@ -46,6 +46,10 @@ export default function BoardPage() {
   const { repos, fetch: fetchRepos } = useReposStore()
   const isMobile = useIsMobile()
   const [runningTaskIds, setRunningTaskIds] = useState(() => new Set<string>())
+  // Tasks whose finished run is still running the repo verify command (WS
+  // task.verification status=running until a final status, agent_done or a
+  // label change arrives).
+  const [verifyingTaskIds, setVerifyingTaskIds] = useState(() => new Set<string>())
   // Per-task cumulative cost ($), keyed by task id — powers the "Filtered
   // cost" badge below. Fetched once on mount and refreshed on agent-done
   // events (the only time a task's recorded cost can change).
@@ -210,6 +214,26 @@ export default function BoardPage() {
         pendingRefetchIdsRef.current.add(taskId)
         flushPendingRefetches()
       }
+      if (event.type === 'task.verification') {
+        const id = event.payload.task_id
+        const on = event.payload.status === 'running'
+        setVerifyingTaskIds(prev => {
+          if (prev.has(id) === on) return prev
+          const next = new Set(prev)
+          if (on) next.add(id)
+          else next.delete(id)
+          return next
+        })
+      }
+      if (event.type === 'task.label_changed' || event.type === 'task.agent_done') {
+        const id = event.payload.task_id
+        setVerifyingTaskIds(prev => {
+          if (!prev.has(id)) return prev
+          const next = new Set(prev)
+          next.delete(id)
+          return next
+        })
+      }
       if (event.type === 'task.label_changed') {
         // A label change moves the task to a new lifecycle stage — clear any
         // stale budget-warning badge from a prior stage/run.
@@ -225,6 +249,7 @@ export default function BoardPage() {
         // we just reconnected: anything derived from WS events may be stale.
         // Refetch the board and cost rollup, and drop the WS-derived running
         // set so the task-list effect below re-seeds it from the fresh data.
+        setVerifyingTaskIds(new Set())
         setRunningTaskIds(new Set())
         fetchTasks(showArchived ? { archived: 'all' } : undefined)
         refreshCostByTask()
@@ -313,6 +338,7 @@ export default function BoardPage() {
     return wsClient.onStatusChange((status) => {
       if (status !== 'open') {
         setRunningTaskIds(new Set())
+        setVerifyingTaskIds(new Set())
       }
     })
   }, [])
@@ -730,6 +756,7 @@ export default function BoardPage() {
             labels={labels}
             tasks={filteredTasks}
             runningTaskIds={runningTaskIds}
+            verifyingTaskIds={verifyingTaskIds}
             rateLimitedTaskIds={rateLimitedTaskIds}
             costWarnedTaskIds={costWarnedTaskIds}
             onAddTask={() => setShowNewTask(true)}

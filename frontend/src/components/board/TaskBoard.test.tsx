@@ -290,6 +290,17 @@ describe('TaskBoard running indicator (#249)', () => {
 
     expect(screen.getByTitle('Agent running')).toBeInTheDocument()
   })
+
+  it('shows a Verifying chip instead of the running dot while the verify command runs', () => {
+    render(
+      <MemoryRouter>
+        <TaskBoard labels={labels} tasks={[task()]} runningTaskIds={new Set(['task-1'])} verifyingTaskIds={new Set(['task-1'])} />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByTitle('Running the repo verify command')).toHaveTextContent('Verifying')
+    expect(screen.queryByTitle('Agent running')).not.toBeInTheDocument()
+  })
 })
 
 describe('TaskBoard fit-to-screen layout', () => {

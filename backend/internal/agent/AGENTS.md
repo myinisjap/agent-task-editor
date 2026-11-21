@@ -8,7 +8,7 @@ The agent package owns the agent runtime core: the provider abstraction, the bou
 |---|---|
 | `provider.go` | `Provider` interface, `RunInput`, `Result`, `LogEntry`, `LogEntryType`, `TransitionHint`, `ReviewComment`, `SourceComment`, `AgentConfig`, `Task` — the shared types every provider is built against |
 | `pool.go` | `Pool` — bounded goroutine pool; persists logs, publishes WS events; classifies transient vs genuine failures and drives the per-task retry budget |
-| `dispatcher.go` | `Dispatcher` — periodic DB sweep; matches tasks to configs; submits jobs |
+| `dispatcher.go` | `Dispatcher` — periodic DB sweep; `Wake()` (buffered 1, non-blocking, coalesced) triggers an immediate sweep; matches tasks to configs; submits jobs |
 | `worktree.go` | Per-task git worktree provisioning, safety-net commit, diff, push, teardown; `RepoGitLock` (per-repo git serialization) |
 | `subtasks.go` | `SubtaskCoordinator` — child→parent branch merge-back, conflict flagging, parent auto-advance (ADR 0016); foreign-child PR landing and readiness (`SubtaskReadiness`, `ReevaluateParent`), `IsForeignChild` / `IsForeignRepo` / `ForeignChildMergeStatus` ([ADR 0041](../../../docs/adr/0041-multi-repo-work-as-parent-with-per-repo-children.md)) |
 | `changeset.go` | CHANGE SET prompt section for foreign children and multi-repo parents (`changeSetSection`, `RenderChangeSet`) and the planner's `crossRepoSubtasksSection` (ADR 0041) |
@@ -85,7 +85,11 @@ The pool persists each run's provider session id (`SetAgentRunSession`). `startR
 
 ## Verify Command (ADR 0038)
 
-`verify.go`: for a `completed` + `success` run, `Pool.verifyOutcome` runs the repo's (or the label's, `verify_mode`) command through the `Verifier` seam (`providers.CommandVerifier`; nil verifier = fail closed) before `resolveOutcome`. Fail/timeout rewrites the outcome to `failure` and stores `VERIFICATION FAILED:` feedback (`Result.verify`, pool-internal); no failure path = `holdOnVerifyFailure`; `error` = escalate. Authoritative: never let a success transition through on a non-pass. The command is untrusted repo code, so it must keep going through `newCLICommand`/`agentuser` + `applyRuntime`, never raw exec.
+`verify.go`: for a `completed` + `success` run, `Pool.verifyOutcome` runs the repo's (or the label's, `verify_mode`) command through the `Verifier` seam (`providers.CommandVerifier`; nil verifier = fail closed) before `resolveOutcome`. Fail/timeout rewrites the outcome to `failure` and stores `VERIFICATION FAILED:` feedback (`Result.verify`, pool-internal); no failure path = `holdOnVerifyFailure`; `error` = escalate. Authoritative: never let a success transition through on a non-pass. The command is untrusted repo code, so it must keep going through `newCLICommand`/`agentuser` + `applyRuntime`, never raw exec. Before running, `announceVerifying` writes a `Verifying: <cmd>` system log and publishes `task.verification` `running` (WS-only, never stored). **Reuse**: `reusableVerification` skips the command only when the Verifier is wired, the dir is the real worktree (not the main-clone fallback), HEAD resolves, `git status --porcelain` is empty, and the task's latest `run_verifications` row is a `pass` with the same `head_sha` and `command`; the new row records `reused_from_run_id` (the original executing run, never a chain), `duration_ms` 0 and a `Verification reused` log, and no running event. Invariant: a success transition needs a pass on that exact sha and command; any doubt runs the command. Runtime pins, timeout and ignored files are not part of the key.
+
+## Dispatcher wake
+
+`Dispatcher.Wake()` (buffered chan of 1, select/default send: never blocks, coalesces, safe before `Run` or on a zero value) makes `Run` sweep immediately; the 5s ticker is the backup and sweeps stay serial in the Run goroutine (a wake during a sweep leaves one follow-up sweep). Callers: `Engine.OnTransitioned` (wired in `cmd/server/main.go`), `Pool.OnDispatchable` (end of `runGuarded`, so the lock and worker slot are free, panic path included), `TasksHandler` create/rerun/unpause/bulk resume (`DispatchWaker`), and `ResumeProvider`. Anything new that makes a task dispatchable without a label transition should call it.
 
 ## Dispatch / Active Run Locking (ADR 0001–0003)
 

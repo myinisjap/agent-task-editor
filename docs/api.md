@@ -865,7 +865,9 @@ The task's repo verify-command results, newest first (at most 20); `[]` when
 none. Each element is a `RunVerification`: `run_id`, `task_id`, `command`,
 `status` (`pass`, `fail`, `timeout`, `error`), `exit_code` (null unless the
 process exited on its own), `output` (tail of combined stdout/stderr, max
-16 KiB), `truncated`, `duration_ms`, `created_at`. See
+16 KiB), `truncated`, `duration_ms`, `head_sha` (worktree commit verified, may be
+empty), `reused_from_run_id` (null unless the pass was reused from an earlier
+run on the same commit and command), `created_at`. See
 [workflows.md § Verify commands](workflows.md#verify-commands). Repos carry
 `verify_command` and `verify_timeout_seconds`; workflow labels carry
 `verify_mode` and `verify_command`; they also carry an optional `display_name` (UI title, max 64 chars). Labels may also set `pr_feedback_label` (see [workflows.md](workflows.md)).

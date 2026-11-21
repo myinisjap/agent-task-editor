@@ -2280,9 +2280,11 @@ components:
         exit_code:   { type: integer, nullable: true, description: Null unless the process exited on its own. }
         output:      { type: string, description: "Tail of the combined stdout and stderr, capped at 16 KiB." }
         truncated:   { type: boolean, description: True when earlier output was dropped from output. }
+        head_sha:    { type: string, description: "Worktree HEAD commit the verification ran against (empty if unknown)." }
+        reused_from_run_id: { type: string, nullable: true, description: "Set when this pass was reused from an earlier run's pass on the same commit and command; the command was not re-run." }
         duration_ms: { type: integer }
         created_at:  { type: string, format: date-time }
-      required: [run_id, task_id, command, status, exit_code, output, truncated, duration_ms, created_at]
+      required: [run_id, task_id, command, status, exit_code, output, truncated, duration_ms, head_sha, reused_from_run_id, created_at]
 
     TaskPreviewImage:
       type: object
@@ -3362,11 +3364,14 @@ components:
       required: [type, payload]
     WsTaskVerificationPayload:
       type: object
-      description: A run's repo verify command finished (refetch GET /tasks/{id}/verifications).
+      description: >
+        A run's repo verify command started (status running, never stored; not
+        sent for a reused pass) or finished (refetch GET
+        /tasks/{id}/verifications). A final status always follows running.
       properties:
         task_id: { type: string }
         run_id:  { type: string }
-        status:  { type: string, enum: [pass, fail, timeout, error] }
+        status:  { type: string, enum: [running, pass, fail, timeout, error] }
       required: [task_id, run_id, status]
 
     WsTaskPreviewEvent:

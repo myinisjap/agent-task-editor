@@ -84,6 +84,8 @@ type RouterDeps struct {
 	Canceller handlers.RunCanceller
 	// ReplyDispatcher delivers human replies to waiting runs (the dispatcher).
 	ReplyDispatcher handlers.ReplyDispatcher
+	// DispatchWaker wakes the dispatcher after create/rerun/unpause (optional).
+	DispatchWaker handlers.DispatchWaker
 	// DispatcherLiveness reports dispatch-loop liveness (the dispatcher). It
 	// may also implement handlers.GlobalCostReporter.
 	DispatcherLiveness handlers.DispatcherLiveness
@@ -125,6 +127,9 @@ func NewRouter(deps RouterDeps) http.Handler {
 
 	tasksH := handlers.NewTasksHandler(q, engine, uploadDir, deps.Canceller, deps.ReplyDispatcher, deps.BlockReasons)
 	tasksH.SetPublisher(hub)
+	if deps.DispatchWaker != nil {
+		tasksH.SetDispatchWaker(deps.DispatchWaker)
+	}
 	tasksH.SetPRService(deps.PRService)
 	if deps.ChangeSets != nil {
 		tasksH.SetChangeSetAnnouncer(deps.ChangeSets)
