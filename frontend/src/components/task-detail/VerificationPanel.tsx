@@ -62,7 +62,7 @@ export default function VerificationPanel({ taskId, refreshKey = 0 }: { taskId: 
   const verifyingRow = verifying ? (
     <div className="mb-3 flex items-center gap-2 rounded border border-amber-700 bg-amber-900/30 p-3 text-xs text-amber-300" data-testid="verification-running">
       <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-      Verifying\u2026 running the repo verify command
+      Verifying&hellip; running the repo verify command
     </div>
   ) : null
   if (!latest) return verifyingRow

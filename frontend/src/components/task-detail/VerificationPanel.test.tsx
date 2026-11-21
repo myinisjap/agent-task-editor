@@ -72,7 +72,7 @@ describe('VerificationPanel', () => {
     })
     render(<VerificationPanel taskId="t1" />)
     act(() => handlers.forEach((h) => h({ type: 'task.verification', payload: { task_id: 't1', run_id: 'r', status: 'running' } })))
-    expect(await screen.findByTestId('verification-running')).toBeInTheDocument()
+    expect(await screen.findByTestId('verification-running')).toHaveTextContent('Verifying\u2026 running the repo verify command')
     act(() => handlers.forEach((h) => h({ type: 'task.verification', payload: { task_id: 't1', run_id: 'r', status: 'pass' } })))
     expect(screen.queryByTestId('verification-running')).not.toBeInTheDocument()
     spy.mockRestore()
