@@ -25,6 +25,9 @@ triggers the "Release" workflow the same way.
 ### Changed
 - **Faster stage hand-off.** A passing verification is reused (not re-run) when the worktree is clean and its commit and effective verify command match the task's latest pass (migration 101: `run_verifications.head_sha`, `reused_from_run_id`); the board card and Diff tab show a "Verifying" state while the verify command runs (`task.verification` now also carries `status: "running"`); and the dispatcher is woken immediately on label transitions, finished runs, task create, rerun, unpause and bulk resume instead of waiting for the next 5s tick.
 
+### Fixed
+- **Red PRs on done tasks get fixed instead of stalling auto-merge.** When a task on a terminal label has an open PR whose auto-merge (`when_green`) is blocked by failed checks or a merge conflict, ghsync now routes it to the `pr_feedback_label` of the label that opened the PR (e.g. `pr-fix`), bounded to once per head commit and 3 times per task.
+
 ## [1.1.0] - 2026-11-18
 
 ### Added
