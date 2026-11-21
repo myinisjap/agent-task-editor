@@ -299,8 +299,13 @@ func (s *Syncer) syncTask(ctx context.Context, task gen.Task, repo repoInfo) (ok
 		}
 	}
 
-	if head.Number != 0 && head.State == "pr_open" && !s.reconcileAutoMerge(ctx, task, repo, head) {
-		ok = false
+	if head.Number != 0 && head.State == "pr_open" {
+		decision, amOK := s.reconcileAutoMerge(ctx, task, repo, head)
+		if !amOK {
+			ok = false
+		} else {
+			s.routeTerminalPRToFixer(ctx, task, repo, head, decision)
+		}
 	}
 
 	state := head.State
@@ -388,16 +393,16 @@ func (f funcSource) PRReviews(ctx context.Context, n int) ([]forge.Review, error
 // engine's side-effect outbox. It runs on every PR refresh (polling sweep and
 // webhook alike), never in a loop of its own. A no-op for repos with
 // auto_merge_mode off. Returns false if a forge call failed (for backoff).
-func (s *Syncer) reconcileAutoMerge(ctx context.Context, task gen.Task, repo repoInfo, head forge.PRHead) bool {
+func (s *Syncer) reconcileAutoMerge(ctx context.Context, task gen.Task, repo repoInfo, head forge.PRHead) (automerge.Decision, bool) {
 	if s.q == nil || s.getChecks == nil || s.getReviews == nil {
-		return true
+		return automerge.Decision{}, true
 	}
 	if automerge.Mode(repo.repo) != automerge.ModeWhenGreen {
 		// Off: drop any stale verdict left from when it was on.
 		if _, err := s.q.DeleteTaskAutoMerge(ctx, task.ID); err != nil {
 			slog.Warn("ghsync: clear auto-merge state", "task_id", task.ID, "err", err)
 		}
-		return true
+		return automerge.Decision{}, true
 	}
 	var enq automerge.Enqueuer
 	if s.engine != nil {
@@ -407,11 +412,12 @@ func (s *Syncer) reconcileAutoMerge(ctx context.Context, task gen.Task, repo rep
 	if fresh, err := s.q.GetTask(ctx, task.ID); err == nil {
 		task = fresh
 	}
-	if _, err := automerge.Reconcile(ctx, s.q, enq, s.hub, funcSource{s: s, repo: repo}, task, repo.repo, head); err != nil {
+	decision, err := automerge.Reconcile(ctx, s.q, enq, s.hub, funcSource{s: s, repo: repo}, task, repo.repo, head)
+	if err != nil {
 		slog.Warn("ghsync: auto-merge evaluation failed", "task_id", task.ID, "err", err)
-		return false
+		return automerge.Decision{}, false
 	}
-	return true
+	return decision, true
 }
 
 // cleanupMergedBranch removes the task's worktree (if any is still attached)

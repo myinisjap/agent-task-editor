@@ -667,6 +667,8 @@ The move is recorded in label history with trigger `human`, actor `pr-feedback-s
 
 ### Auto-merge when green (opt-in)
 
+
+If a task already sits on a terminal label and its open PR is blocked by failed checks or a merge conflict, ghsync routes it to the PR fixer instead of leaving it stalled; see [Auto-merge in workflows.md](workflows.md#auto-merge).
 By default the pipeline ends at "PR open" and you merge yourself. A repo can opt in to letting ATE merge the PR:
 
 | Repo field | Meaning |
