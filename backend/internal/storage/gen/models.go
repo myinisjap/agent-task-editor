@@ -36,6 +36,9 @@ type AgentConfig struct {
 	FallbackProviderConfigIds string    `json:"fallback_provider_config_ids"`
 	EscalationLadder          string    `json:"escalation_ladder"`
 	CrossRepoSubtasksEnabled  int64     `json:"cross_repo_subtasks_enabled"`
+	ReviewFanoutEnabled       int64     `json:"review_fanout_enabled"`
+	ReviewFanoutMinLines      int64     `json:"review_fanout_min_lines"`
+	ReviewFanoutMinFiles      int64     `json:"review_fanout_min_files"`
 }
 
 type AgentConfigSkill struct {

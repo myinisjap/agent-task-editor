@@ -98,6 +98,7 @@ sql:
       - "internal/storage/migrations/098_subtask_landed.up.sql"
       - "internal/storage/migrations/099_task_related_repos.up.sql"
       - "internal/storage/migrations/101_verification_reuse.up.sql"
+      - "internal/storage/migrations/102_review_fanout.up.sql"
     gen:
       go:
         package: "gen"

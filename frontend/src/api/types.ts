@@ -9571,6 +9571,9 @@ export interface components {
             resume_sessions?: boolean;
             subtasks_enabled?: boolean;
             cross_repo_subtasks_enabled?: boolean;
+            review_fanout_enabled?: boolean;
+            review_fanout_min_lines?: number;
+            review_fanout_min_files?: number;
             max_subtasks?: number;
             enabled_plugins?: string[];
             enabled_mcp_servers?: string[];
@@ -9709,6 +9712,12 @@ export interface components {
             subtasks_enabled?: boolean;
             /** @description Off by default; also requires subtasks_enabled. Lets create_subtask target another configured repo via repo_id (ADR 0041); each such child lands via its own pull request. */
             cross_repo_subtasks_enabled?: boolean;
+            /** @description Off by default. For the config that handles the agent-review stage: when a review run's diff reaches review_fanout_min_lines changed lines or review_fanout_min_files changed files, the pool runs four focused reviewer passes (correctness, security, tests, conventions) and aggregates them into one pass/fail decision. Smaller diffs use the single reviewer. */
+            review_fanout_enabled?: boolean;
+            /** @description Changed-line threshold for review fan-out (default 400; 0 ignores this criterion). */
+            review_fanout_min_lines?: number;
+            /** @description Changed-file threshold for review fan-out (default 15; 0 ignores this criterion). */
+            review_fanout_min_files?: number;
             /** @description Per-parent cap on children this config may create. Default 10. */
             max_subtasks?: number;
             /** @description JSON array of Claude plugin IDs ("<name>@<marketplace>") enabled for this agent config. Claude-provider only; defaults to "[]" (all plugins off). */

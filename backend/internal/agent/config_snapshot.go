@@ -27,6 +27,9 @@ type ConfigSnapshot struct {
 	ResumeSessions            bool            `json:"resume_sessions"`
 	SubtasksEnabled           bool            `json:"subtasks_enabled"`
 	CrossRepoSubtasksEnabled  bool            `json:"cross_repo_subtasks_enabled"`
+	ReviewFanoutEnabled       bool            `json:"review_fanout_enabled"`
+	ReviewFanoutMinLines      int64           `json:"review_fanout_min_lines"`
+	ReviewFanoutMinFiles      int64           `json:"review_fanout_min_files"`
 	MaxSubtasks               int64           `json:"max_subtasks"`
 	EnabledPlugins            json.RawMessage `json:"enabled_plugins"`
 	EnabledMcpServers         json.RawMessage `json:"enabled_mcp_servers"`
@@ -67,6 +70,9 @@ func SnapshotOf(cfg gen.AgentConfig) ConfigSnapshot {
 		ResumeSessions:            cfg.ResumeSessions != 0,
 		SubtasksEnabled:           cfg.SubtasksEnabled != 0,
 		CrossRepoSubtasksEnabled:  cfg.CrossRepoSubtasksEnabled != 0,
+		ReviewFanoutEnabled:       cfg.ReviewFanoutEnabled != 0,
+		ReviewFanoutMinLines:      cfg.ReviewFanoutMinLines,
+		ReviewFanoutMinFiles:      cfg.ReviewFanoutMinFiles,
 		MaxSubtasks:               cfg.MaxSubtasks,
 		EnabledPlugins:            JSONTextOrEmptyArray(cfg.EnabledPlugins),
 		EnabledMcpServers:         JSONTextOrEmptyArray(cfg.EnabledMcpServers),
@@ -94,6 +100,13 @@ func (s ConfigSnapshot) ApplyTo(cfg gen.AgentConfig) gen.AgentConfig {
 	cfg.ResumeSessions = b2i(s.ResumeSessions)
 	cfg.SubtasksEnabled = b2i(s.SubtasksEnabled)
 	cfg.CrossRepoSubtasksEnabled = b2i(s.CrossRepoSubtasksEnabled)
+	// Snapshots from before review fan-out carry no fields (all zero); keep the
+	// config's current thresholds rather than clobbering them with 0.
+	if s.ReviewFanoutEnabled || s.ReviewFanoutMinLines != 0 || s.ReviewFanoutMinFiles != 0 {
+		cfg.ReviewFanoutEnabled = b2i(s.ReviewFanoutEnabled)
+		cfg.ReviewFanoutMinLines = s.ReviewFanoutMinLines
+		cfg.ReviewFanoutMinFiles = s.ReviewFanoutMinFiles
+	}
 	cfg.MaxSubtasks = s.MaxSubtasks
 	cfg.EnabledPlugins = string(JSONTextOrEmptyArray(string(s.EnabledPlugins)))
 	cfg.EnabledMcpServers = string(JSONTextOrEmptyArray(string(s.EnabledMcpServers)))

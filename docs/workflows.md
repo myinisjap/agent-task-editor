@@ -503,3 +503,5 @@ description and a directory-rooted file_scope (for example
 scopes overlap run one after another. Otherwise do not fan out: write a single
 plan for the whole task.
 ```
+
+> Large diffs can optionally be reviewed by several focused reviewer passes in the `agent-review` stage; see [Review fan-out](agents.md#review-fan-out).

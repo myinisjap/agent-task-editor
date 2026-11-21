@@ -271,6 +271,7 @@ func (r *QwenRunner) runAttempt(ctx context.Context, input agent.RunInput, logCh
 			MaxSubtasks: input.AgentConfig.MaxSubtasks,
 			CrossRepo:   agent.CrossRepoSubtasksAllowed(input),
 			PRReview:    input.PRReview,
+			ReviewPass:  input.ReviewPass != nil,
 		})
 		if err != nil {
 			return agent.Result{Status: "failed"}, info, fmt.Errorf("prepare mcp: %w", err)

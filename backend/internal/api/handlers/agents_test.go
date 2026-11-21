@@ -23,6 +23,7 @@ type agentConfigResponse struct {
 	ResumeSessions           bool `json:"resume_sessions"`
 	SubtasksEnabled          bool `json:"subtasks_enabled"`
 	CrossRepoSubtasksEnabled bool `json:"cross_repo_subtasks_enabled"`
+	ReviewFanoutEnabled      bool `json:"review_fanout_enabled"`
 
 	FallbackProviderConfigIDs []string         `json:"fallback_provider_config_ids"`
 	EscalationLadder          []map[string]any `json:"escalation_ladder"`
@@ -1271,5 +1272,56 @@ func TestAgentsEscalationLadder(t *testing.T) {
 	_ = json.NewDecoder(w.Body).Decode(&cleared)
 	if len(cleared.EscalationLadder) != 0 {
 		t.Errorf("cleared ladder = %#v", cleared.EscalationLadder)
+	}
+}
+
+func TestAgents_ReviewFanoutFields(t *testing.T) {
+	r, q := setupAgentsRouter(t)
+	pcID := mkProviderConfig(t, q)
+
+	decode := func(w *httptest.ResponseRecorder) agentConfigResponse {
+		t.Helper()
+		var c agentConfigResponse
+		if err := json.NewDecoder(w.Body).Decode(&c); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+
+	// Defaults.
+	w := postJSON(t, r, "/agents", map[string]any{"name": "rev", "provider_config_id": pcID})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", w.Code, w.Body)
+	}
+	c := decode(w)
+	if c.ReviewFanoutEnabled || c.ReviewFanoutMinLines != 400 || c.ReviewFanoutMinFiles != 15 {
+		t.Fatalf("bad defaults: %+v", c)
+	}
+
+	// Update round trip; omitted fields keep their value.
+	w = putJSON(t, r, "/agents/"+c.ID, map[string]any{
+		"name": "rev", "provider_config_id": pcID,
+		"review_fanout_enabled": true, "review_fanout_min_lines": 100,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", w.Code, w.Body)
+	}
+	u := decode(w)
+	if !u.ReviewFanoutEnabled || u.ReviewFanoutMinLines != 100 || u.ReviewFanoutMinFiles != 15 {
+		t.Fatalf("bad update: %+v", u)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/agents/"+c.ID, nil)
+	gw := httptest.NewRecorder()
+	r.ServeHTTP(gw, req)
+	if g := decode(gw); !g.ReviewFanoutEnabled || g.ReviewFanoutMinLines != 100 {
+		t.Fatalf("bad get: %+v", g)
+	}
+
+	// Negative minimums are rejected on create and update.
+	if w = postJSON(t, r, "/agents", map[string]any{"name": "x", "provider_config_id": pcID, "review_fanout_min_files": -1}); w.Code != http.StatusBadRequest {
+		t.Fatalf("create negative: %d", w.Code)
+	}
+	if w = putJSON(t, r, "/agents/"+c.ID, map[string]any{"name": "rev", "provider_config_id": pcID, "review_fanout_min_lines": -5}); w.Code != http.StatusBadRequest {
+		t.Fatalf("update negative: %d", w.Code)
 	}
 }

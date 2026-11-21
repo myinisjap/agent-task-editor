@@ -253,6 +253,7 @@ func (r *CodexRunner) runAttempt(ctx context.Context, input agent.RunInput, logC
 			MaxSubtasks: input.AgentConfig.MaxSubtasks,
 			CrossRepo:   agent.CrossRepoSubtasksAllowed(input),
 			PRReview:    input.PRReview,
+			ReviewPass:  input.ReviewPass != nil,
 		})
 		if err != nil {
 			return agent.Result{Status: "failed"}, resumeMissing, fmt.Errorf("prepare mcp: %w", err)
@@ -590,6 +591,9 @@ func mcpSidecarEnv(input agent.RunInput, backendURL, apiToken, resultFile string
 		if agent.CrossRepoSubtasksAllowed(input) {
 			env["CROSS_REPO_SUBTASKS_ENABLED"] = "1"
 		}
+	}
+	if input.ReviewPass != nil {
+		env["REVIEW_PASS"] = "1"
 	}
 	return env
 }

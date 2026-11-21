@@ -19,6 +19,9 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+- **Review fan-out.** Agent configs can run four focused reviewer passes (correctness, security, tests, conventions) on large diffs, aggregated into a single pass/fail decision (`review_fanout_enabled`, `review_fanout_min_lines`, `review_fanout_min_files`). Off by default; small diffs keep the single reviewer. New `submit_review_findings` MCP tool (only exposed to passes via `REVIEW_PASS=1`). Docs: [agents.md](docs/agents.md#review-fan-out).
+
 ### Changed
 - **Faster stage hand-off.** A passing verification is reused (not re-run) when the worktree is clean and its commit and effective verify command match the task's latest pass (migration 101: `run_verifications.head_sha`, `reused_from_run_id`); the board card and Diff tab show a "Verifying" state while the verify command runs (`task.verification` now also carries `status: "running"`); and the dispatcher is woken immediately on label transitions, finished runs, task create, rerun, unpause and bulk resume instead of waiting for the next 5s tick.
 

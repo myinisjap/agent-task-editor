@@ -493,7 +493,7 @@ func (p *Pool) run(ctx context.Context, job Job) {
 		return
 	}
 
-	result, err := p.executeProvider(ctx, job)
+	result, err := p.executeReview(ctx, job, log)
 
 	// A human-requested stop short-circuits all outcome handling: the run is
 	// marked "cancelled" (not failed), consumes no retry budget, and is not

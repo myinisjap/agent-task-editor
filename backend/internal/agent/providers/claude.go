@@ -170,6 +170,7 @@ func (r *ClaudeRunner) Run(ctx context.Context, input agent.RunInput, logCh chan
 			MaxSubtasks: input.AgentConfig.MaxSubtasks,
 			CrossRepo:   agent.CrossRepoSubtasksAllowed(input),
 			PRReview:    input.PRReview,
+			ReviewPass:  input.ReviewPass != nil,
 		})
 		if err != nil {
 			return agent.Result{Status: "failed"}, fmt.Errorf("prepare mcp: %w", err)

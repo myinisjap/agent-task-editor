@@ -372,3 +372,45 @@ func TestCreateSubtaskTool_RepoIDOnlyWithCrossRepo(t *testing.T) {
 		t.Fatal("repo_id missing with cross-repo flag")
 	}
 }
+
+func TestReviewPass_OnlySubmitFindingsAllowed(t *testing.T) {
+	st := &toolState{commentIDs: map[string]bool{}, reviewPass: true}
+	if text, r := dispatchTool("signal_complete", json.RawMessage(`{"outcome":"success","summary":"x"}`), st, nil); r != nil || !strings.Contains(text, "not available") {
+		t.Fatalf("signal_complete allowed in pass mode: %q %v", text, r)
+	}
+	if reviewFindingsTool()["name"] != "submit_review_findings" {
+		t.Fatal("tool name")
+	}
+}
+
+func TestSubmitReviewFindings(t *testing.T) {
+	st := &toolState{commentIDs: map[string]bool{}, reviewPass: true}
+	bad := []string{
+		`{"summary":"","findings":[]}`,
+		`{"summary":"s","findings":[{"severity":"huge","confidence":"high","title":"t","body":"b"}]}`,
+		`{"summary":"s","findings":[{"severity":"major","confidence":"sure","title":"t","body":"b"}]}`,
+		`{"summary":"s","findings":[{"severity":"major","confidence":"high","title":"","body":""}]}`,
+		`{"summary":"s","findings":[{"severity":"major","confidence":"high","title":"t","body":"b","line":-1}]}`,
+	}
+	for _, b := range bad {
+		if _, r := dispatchTool("submit_review_findings", json.RawMessage(b), st, nil); r != nil {
+			t.Errorf("accepted invalid input %s", b)
+		}
+	}
+	text, r := dispatchTool("submit_review_findings", json.RawMessage(
+		`{"summary":"ok","findings":[{"severity":"major","confidence":"high","path":"a.go","line":2,"title":"t","body":"b"}]}`), st, nil)
+	if r == nil || text != "findings recorded" || r.Status != "completed" || r.ReviewFindings == nil || len(r.ReviewFindings.Findings) != 1 {
+		t.Fatalf("got %q %+v", text, r)
+	}
+	data, _ := json.Marshal(r)
+	if !strings.Contains(string(data), `"ReviewFindings"`) {
+		t.Fatalf("result JSON missing ReviewFindings: %s", data)
+	}
+}
+
+func TestSubmitReviewFindings_NotAvailableOutsidePass(t *testing.T) {
+	st := newTestState()
+	if text, r := dispatchTool("submit_review_findings", json.RawMessage(`{}`), st, nil); r != nil || !strings.Contains(text, "unknown tool") {
+		t.Fatalf("got %q", text)
+	}
+}

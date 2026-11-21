@@ -72,6 +72,9 @@ type SubtaskEnv struct {
 	// PRReview, when non-nil, exposes the submit_pr_review tool (PR_REVIEW=1)
 	// and passes the prior finding ids it may mark resolved.
 	PRReview *agent.PRReviewInput
+	// ReviewPass marks a review fan-out pass run (REVIEW_PASS=1): the sidecar
+	// exposes only submit_review_findings.
+	ReviewPass bool
 }
 
 // Prepare creates temp files for one agent run and returns the config.
@@ -177,6 +180,9 @@ func buildSidecarEnv(runID, resultFile string, transitions []agent.TransitionHin
 		}
 		idsJSON, _ := json.Marshal(ids)
 		env["PR_REVIEW_PRIOR_IDS"] = string(idsJSON)
+	}
+	if subtasks != nil && subtasks.ReviewPass {
+		env["REVIEW_PASS"] = "1"
 	}
 	token := ""
 	// Expose create_subtask only when the run's config opted in. The sidecar
