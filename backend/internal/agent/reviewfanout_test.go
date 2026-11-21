@@ -220,7 +220,7 @@ func okPass(cost float64, fs ...ReviewFinding) func() (Result, error) {
 	}
 }
 
-func runPasses(t *testing.T, prov *reviewTestProvider, in RunInput) (Result, error, []LogEntry) {
+func runPasses(t *testing.T, prov *reviewTestProvider, in RunInput) (Result, []LogEntry, error) {
 	t.Helper()
 	logCh := make(chan LogEntry, 64)
 	res, err := runReviewPasses(context.Background(), Job{RunID: "r", Input: in, Provider: prov}, "diff", "stat", logCh)
@@ -229,7 +229,7 @@ func runPasses(t *testing.T, prov *reviewTestProvider, in RunInput) (Result, err
 	for e := range logCh {
 		logs = append(logs, e)
 	}
-	return res, err, logs
+	return res, logs, err
 }
 
 func baseReviewInput() RunInput {
@@ -251,7 +251,7 @@ func TestRunReviewPasses_Basics(t *testing.T) {
 		"tests":       okPass(3),
 		"conventions": okPass(4),
 	}}
-	res, err, logs := runPasses(t, prov, baseReviewInput())
+	res, logs, err := runPasses(t, prov, baseReviewInput())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +296,7 @@ func TestRunReviewPasses_SuccessWhenOnlyNits(t *testing.T) {
 		"correctness": okPass(0, f("nit", "high", "a.go", 1, "nit")),
 		"security":    okPass(0), "tests": okPass(0), "conventions": okPass(0),
 	}}
-	res, err, _ := runPasses(t, prov, baseReviewInput())
+	res, _, err := runPasses(t, prov, baseReviewInput())
 	if err != nil || res.Outcome != "success" {
 		t.Fatalf("got %+v err=%v", res, err)
 	}
@@ -308,7 +308,7 @@ func TestRunReviewPasses_TransientPropagates(t *testing.T) {
 		"security":    func() (Result, error) { return Result{}, &ErrTransient{Cause: errors.New("503")} },
 		"tests":       okPass(0), "conventions": okPass(0),
 	}}
-	_, err, _ := runPasses(t, prov, baseReviewInput())
+	_, _, err := runPasses(t, prov, baseReviewInput())
 	var te *ErrTransient
 	if !errors.As(err, &te) {
 		t.Fatalf("want ErrTransient, got %v", err)
@@ -322,7 +322,7 @@ func TestRunReviewPasses_GenuineErrorUsesRemaining(t *testing.T) {
 		"tests":       func() (Result, error) { return Result{Status: "completed"}, nil }, // no findings submitted
 		"conventions": okPass(0),
 	}}
-	res, err, _ := runPasses(t, prov, baseReviewInput())
+	res, _, err := runPasses(t, prov, baseReviewInput())
 	if err != nil || res.Status != "completed" || res.Outcome != "success" {
 		t.Fatalf("got %+v err=%v", res, err)
 	}
@@ -334,7 +334,7 @@ func TestRunReviewPasses_GenuineErrorUsesRemaining(t *testing.T) {
 func TestRunReviewPasses_AllFail(t *testing.T) {
 	bad := func() (Result, error) { return Result{}, errors.New("crashed") }
 	prov := &reviewTestProvider{byPass: map[string]func() (Result, error){"correctness": bad, "security": bad, "tests": bad, "conventions": bad}}
-	res, err, _ := runPasses(t, prov, baseReviewInput())
+	res, _, err := runPasses(t, prov, baseReviewInput())
 	if err == nil || res.Status != "failed" {
 		t.Fatalf("want genuine failure, got %+v err=%v", res, err)
 	}
@@ -350,7 +350,7 @@ func TestRunReviewPasses_SequentialProvider(t *testing.T) {
 	prov := &reviewTestProvider{byPass: map[string]func() (Result, error){
 		"correctness": okPass(0), "security": okPass(0), "tests": okPass(0), "conventions": okPass(0),
 	}}
-	_, err, _ := runPasses(t, prov, in)
+	_, _, err := runPasses(t, prov, in)
 	if err != nil {
 		t.Fatal(err)
 	}
