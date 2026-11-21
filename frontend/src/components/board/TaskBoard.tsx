@@ -69,6 +69,7 @@ type Props = {
   labels: WorkflowLabel[]
   tasks: Task[]
   runningTaskIds: Set<string>
+  verifyingTaskIds?: Set<string>
   rateLimitedTaskIds?: Map<string, string>
   costWarnedTaskIds?: Set<string>
   onAddTask?: () => void
@@ -88,6 +89,7 @@ function TaskBoardInner({
   labels,
   tasks,
   runningTaskIds,
+  verifyingTaskIds,
   rateLimitedTaskIds,
   costWarnedTaskIds,
   onAddTask,
@@ -345,6 +347,7 @@ function TaskBoardInner({
     const bucketMany = (names: string[]) => names.flatMap((n) => bucket(n))
     const common = {
       runningTaskIds,
+      verifyingTaskIds,
       rateLimitedTaskIds,
       costWarnedTaskIds,
       selectedIds,
@@ -487,6 +490,7 @@ function TaskBoardInner({
                   label={currentGroup.label}
                   tasks={byLabel(currentGroup.label.name)}
                   runningTaskIds={runningTaskIds}
+                  verifyingTaskIds={verifyingTaskIds}
                   rateLimitedTaskIds={rateLimitedTaskIds}
                   costWarnedTaskIds={costWarnedTaskIds}
                   selectedIds={selectedIds}
@@ -503,6 +507,7 @@ function TaskBoardInner({
                   labels={currentGroup.labels}
                   tasks={byLabels(currentGroup.labels.map((l) => l.name))}
                   runningTaskIds={runningTaskIds}
+                  verifyingTaskIds={verifyingTaskIds}
                   rateLimitedTaskIds={rateLimitedTaskIds}
                   costWarnedTaskIds={costWarnedTaskIds}
                   selectedIds={selectedIds}
@@ -545,6 +550,7 @@ function TaskBoardInner({
               label={currentLabel}
               tasks={byLabel(currentLabel.name)}
               runningTaskIds={runningTaskIds}
+              verifyingTaskIds={verifyingTaskIds}
               rateLimitedTaskIds={rateLimitedTaskIds}
               costWarnedTaskIds={costWarnedTaskIds}
               selectedIds={selectedIds}

@@ -693,3 +693,33 @@ func TestForceTransition_FiresOnTerminal(t *testing.T) {
 		t.Errorf("OnTerminal not fired for done, got %q", called)
 	}
 }
+
+func TestTransition_OnTransitionedHook(t *testing.T) {
+	db := setupTestDB(t)
+	wfID := defaultWorkflowID(t, db)
+	engine := workflow.New(db.SQL(), &noopPublisher{})
+	type call struct{ id, from, to string }
+	var calls []call
+	engine.OnTransitioned = func(id, from, to string) { calls = append(calls, call{id, from, to}) }
+
+	task := createTestTask(t, db, "work", wfID)
+
+	// No transition defined: hook must not fire.
+	if err := engine.Transition(context.Background(), task.ID, "done", workflow.TriggerAgent, "", ""); !errors.Is(err, workflow.ErrNoTransition) {
+		t.Fatalf("want ErrNoTransition, got %v", err)
+	}
+	// Stale expected label: hook must not fire.
+	if err := engine.TransitionExpecting(context.Background(), task.ID, "testing", workflow.TriggerAgent, "", "", "plan"); err == nil {
+		t.Fatal("expected stale error")
+	}
+	if len(calls) != 0 {
+		t.Fatalf("hook fired on failed transitions: %v", calls)
+	}
+
+	if err := engine.Transition(context.Background(), task.ID, "testing", workflow.TriggerAgent, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || calls[0] != (call{task.ID, "work", "testing"}) {
+		t.Fatalf("hook calls = %v", calls)
+	}
+}

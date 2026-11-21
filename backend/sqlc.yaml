@@ -97,6 +97,7 @@ sql:
       - "internal/storage/migrations/096_cross_repo_subtasks.up.sql"
       - "internal/storage/migrations/098_subtask_landed.up.sql"
       - "internal/storage/migrations/099_task_related_repos.up.sql"
+      - "internal/storage/migrations/101_verification_reuse.up.sql"
     gen:
       go:
         package: "gen"

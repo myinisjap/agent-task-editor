@@ -44,6 +44,9 @@ func (h *TasksHandler) SetPaused(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if !body.Paused {
+		h.wakeDispatcher()
+	}
 	JSON(w, http.StatusOK, toTaskResponse(task))
 }
 
@@ -178,6 +181,7 @@ func (h *TasksHandler) Bulk(w http.ResponseWriter, r *http.Request) {
 	actor := middleware.ActorFromContext(ctx)
 	results := make([]bulkResult, 0, len(body.IDs))
 	allOk := true
+	anyOk := false
 	for _, id := range body.IDs {
 		var err error
 		switch body.Action {
@@ -210,11 +214,18 @@ func (h *TasksHandler) Bulk(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		res := bulkResult{ID: id, Ok: err == nil}
+		if err == nil {
+			anyOk = true
+		}
 		if err != nil {
 			allOk = false
 			res.Error = bulkErrorMessage(err)
 		}
 		results = append(results, res)
+	}
+	if anyOk && body.Action != "pause" {
+		// move is covered by the engine hook; resume/unarchive make tasks dispatchable.
+		h.wakeDispatcher()
 	}
 
 	status := http.StatusOK

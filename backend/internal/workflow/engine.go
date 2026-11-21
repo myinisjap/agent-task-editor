@@ -144,6 +144,10 @@ type Engine struct {
 	// its worktree. The task passed in is re-read when the effect runs. A
 	// returned error is recorded and the effect retried with backoff.
 	OnTerminal func(ctx context.Context, task gen.Task) error
+	// OnTransitioned, if set, is called after a label transition commits. It
+	// must not block; used to wake the dispatcher so the next stage starts
+	// without waiting for the sweep tick. Set before the engine is shared.
+	OnTransitioned func(taskID, from, to string)
 	// OnSideEffectFailed, if set, is called after a terminal or create_pr
 	// effect is parked as permanently failed (ADR 0041 stage 6: a foreign
 	// child whose PR could not land may make its parent a partial change set).
@@ -369,6 +373,9 @@ func (e *Engine) transition(ctx context.Context, taskID, toLabel string, trigger
 	}
 	if len(effects) > 0 {
 		e.nudgeWorker()
+	}
+	if e.OnTransitioned != nil {
+		e.OnTransitioned(taskID, fromLabel, toLabel)
 	}
 
 	if e.pub != nil {

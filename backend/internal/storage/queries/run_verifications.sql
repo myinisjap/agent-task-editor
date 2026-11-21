@@ -1,6 +1,6 @@
 -- name: UpsertRunVerification :exec
-INSERT INTO run_verifications (run_id, task_id, command, status, exit_code, output, truncated, duration_ms)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO run_verifications (run_id, task_id, command, status, exit_code, output, truncated, duration_ms, head_sha, reused_from_run_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(run_id) DO UPDATE SET
     command = excluded.command,
     status = excluded.status,
@@ -8,10 +8,15 @@ ON CONFLICT(run_id) DO UPDATE SET
     output = excluded.output,
     truncated = excluded.truncated,
     duration_ms = excluded.duration_ms,
+    head_sha = excluded.head_sha,
+    reused_from_run_id = excluded.reused_from_run_id,
     created_at = CURRENT_TIMESTAMP;
 
 -- name: GetRunVerification :one
 SELECT * FROM run_verifications WHERE run_id = ?;
+
+-- name: GetLatestTaskVerification :one
+SELECT * FROM run_verifications WHERE task_id = ? ORDER BY created_at DESC, run_id DESC LIMIT 1;
 
 -- name: ListTaskVerifications :many
 SELECT * FROM run_verifications WHERE task_id = ? ORDER BY created_at DESC, run_id DESC LIMIT ?;

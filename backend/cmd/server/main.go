@@ -452,6 +452,10 @@ func main() {
 		slog.Warn("preview: mark stale captures failed", "err", err)
 	}
 	dispatcher := agent.NewDispatcher(db.SQL(), pool, engine, providerFactory)
+	// Every committed label transition wakes the dispatcher so the next stage
+	// starts without waiting for the 5s tick. No goroutine uses the engine
+	// before this point, so the assignment does not race.
+	engine.OnTransitioned = func(string, string, string) { dispatcher.Wake() }
 	dispatcher.RateLimits = rateLimits
 	dispatcher.ProviderPauses = providerPauses
 	dispatcher.SetUploadDir(uploadDir)
@@ -560,6 +564,7 @@ func main() {
 		MaxWorkers:          maxWorkers,
 		Canceller:           pool,
 		ReplyDispatcher:     dispatcher,
+		DispatchWaker:       dispatcher,
 		DispatcherLiveness:  dispatcher,
 		BlockReasons:        blockReasons,
 		Terminal:            terminal,

@@ -10,8 +10,31 @@ import (
 	"strings"
 )
 
+const getLatestTaskVerification = `-- name: GetLatestTaskVerification :one
+SELECT run_id, task_id, command, status, exit_code, output, truncated, duration_ms, created_at, head_sha, reused_from_run_id FROM run_verifications WHERE task_id = ? ORDER BY created_at DESC, run_id DESC LIMIT 1
+`
+
+func (q *Queries) GetLatestTaskVerification(ctx context.Context, taskID string) (RunVerification, error) {
+	row := q.db.QueryRowContext(ctx, getLatestTaskVerification, taskID)
+	var i RunVerification
+	err := row.Scan(
+		&i.RunID,
+		&i.TaskID,
+		&i.Command,
+		&i.Status,
+		&i.ExitCode,
+		&i.Output,
+		&i.Truncated,
+		&i.DurationMs,
+		&i.CreatedAt,
+		&i.HeadSha,
+		&i.ReusedFromRunID,
+	)
+	return i, err
+}
+
 const getRunVerification = `-- name: GetRunVerification :one
-SELECT run_id, task_id, command, status, exit_code, output, truncated, duration_ms, created_at FROM run_verifications WHERE run_id = ?
+SELECT run_id, task_id, command, status, exit_code, output, truncated, duration_ms, created_at, head_sha, reused_from_run_id FROM run_verifications WHERE run_id = ?
 `
 
 func (q *Queries) GetRunVerification(ctx context.Context, runID string) (RunVerification, error) {
@@ -27,6 +50,8 @@ func (q *Queries) GetRunVerification(ctx context.Context, runID string) (RunVeri
 		&i.Truncated,
 		&i.DurationMs,
 		&i.CreatedAt,
+		&i.HeadSha,
+		&i.ReusedFromRunID,
 	)
 	return i, err
 }
@@ -78,7 +103,7 @@ func (q *Queries) ListLatestVerifyStatusForTasks(ctx context.Context, taskIds []
 }
 
 const listTaskVerifications = `-- name: ListTaskVerifications :many
-SELECT run_id, task_id, command, status, exit_code, output, truncated, duration_ms, created_at FROM run_verifications WHERE task_id = ? ORDER BY created_at DESC, run_id DESC LIMIT ?
+SELECT run_id, task_id, command, status, exit_code, output, truncated, duration_ms, created_at, head_sha, reused_from_run_id FROM run_verifications WHERE task_id = ? ORDER BY created_at DESC, run_id DESC LIMIT ?
 `
 
 type ListTaskVerificationsParams struct {
@@ -105,6 +130,8 @@ func (q *Queries) ListTaskVerifications(ctx context.Context, arg ListTaskVerific
 			&i.Truncated,
 			&i.DurationMs,
 			&i.CreatedAt,
+			&i.HeadSha,
+			&i.ReusedFromRunID,
 		); err != nil {
 			return nil, err
 		}
@@ -120,8 +147,8 @@ func (q *Queries) ListTaskVerifications(ctx context.Context, arg ListTaskVerific
 }
 
 const upsertRunVerification = `-- name: UpsertRunVerification :exec
-INSERT INTO run_verifications (run_id, task_id, command, status, exit_code, output, truncated, duration_ms)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO run_verifications (run_id, task_id, command, status, exit_code, output, truncated, duration_ms, head_sha, reused_from_run_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(run_id) DO UPDATE SET
     command = excluded.command,
     status = excluded.status,
@@ -129,18 +156,22 @@ ON CONFLICT(run_id) DO UPDATE SET
     output = excluded.output,
     truncated = excluded.truncated,
     duration_ms = excluded.duration_ms,
+    head_sha = excluded.head_sha,
+    reused_from_run_id = excluded.reused_from_run_id,
     created_at = CURRENT_TIMESTAMP
 `
 
 type UpsertRunVerificationParams struct {
-	RunID      string `json:"run_id"`
-	TaskID     string `json:"task_id"`
-	Command    string `json:"command"`
-	Status     string `json:"status"`
-	ExitCode   *int64 `json:"exit_code"`
-	Output     string `json:"output"`
-	Truncated  int64  `json:"truncated"`
-	DurationMs int64  `json:"duration_ms"`
+	RunID           string  `json:"run_id"`
+	TaskID          string  `json:"task_id"`
+	Command         string  `json:"command"`
+	Status          string  `json:"status"`
+	ExitCode        *int64  `json:"exit_code"`
+	Output          string  `json:"output"`
+	Truncated       int64   `json:"truncated"`
+	DurationMs      int64   `json:"duration_ms"`
+	HeadSha         string  `json:"head_sha"`
+	ReusedFromRunID *string `json:"reused_from_run_id"`
 }
 
 func (q *Queries) UpsertRunVerification(ctx context.Context, arg UpsertRunVerificationParams) error {
@@ -153,6 +184,8 @@ func (q *Queries) UpsertRunVerification(ctx context.Context, arg UpsertRunVerifi
 		arg.Output,
 		arg.Truncated,
 		arg.DurationMs,
+		arg.HeadSha,
+		arg.ReusedFromRunID,
 	)
 	return err
 }

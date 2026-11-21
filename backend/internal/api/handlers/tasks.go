@@ -94,6 +94,7 @@ type TasksHandler struct {
 	uploadDir    string
 	canceller    RunCanceller
 	dispatcher   ReplyDispatcher
+	waker        DispatchWaker
 	blockReasons BlockReasonResolver
 	wb           *writeback.Writeback
 	pr           *prflow.Service // optional change-set-aware PR service
@@ -110,6 +111,19 @@ type TasksHandler struct {
 	// intake backs possible_duplicates and the intake verdict (SetIntake); nil
 	// leaves both empty.
 	intake *intakecheck.Service
+}
+
+// DispatchWaker requests an immediate dispatcher sweep (the dispatcher).
+type DispatchWaker interface{ Wake() }
+
+// SetDispatchWaker wires the dispatcher wake used after create, rerun and
+// unpause. Nil-safe: without it the 5s sweep tick picks tasks up.
+func (h *TasksHandler) SetDispatchWaker(w DispatchWaker) { h.waker = w }
+
+func (h *TasksHandler) wakeDispatcher() {
+	if h.waker != nil {
+		h.waker.Wake()
+	}
 }
 
 func NewTasksHandler(q *gen.Queries, engine *workflow.Engine, uploadDir string, canceller RunCanceller, dispatcher ReplyDispatcher, blockReasons BlockReasonResolver) *TasksHandler {
@@ -789,6 +803,7 @@ func (h *TasksHandler) Rerun(w http.ResponseWriter, r *http.Request) {
 		Err(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	h.wakeDispatcher()
 	w.WriteHeader(http.StatusNoContent)
 }
 
