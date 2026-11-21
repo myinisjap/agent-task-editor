@@ -52,6 +52,9 @@ type Result struct {
 	// PRReview is the structured review the agent submitted via the MCP
 	// submit_pr_review tool (review-only PR tasks). Nil when not called.
 	PRReview *PRReviewResult
+	// ReviewFindings is the structured output of one review fan-out pass, submitted
+	// via submit_review_findings. Only set for RunInput.ReviewPass runs.
+	ReviewFindings *ReviewFindingsResult
 	// verify is set by the pool (never by providers) when the repo verify
 	// command did not pass; see verify.go.
 	verify *verifyVerdict
@@ -198,6 +201,10 @@ type RunInput struct {
 	// PRReview is set for review-only PR tasks (source github_pr/gitea_pr):
 	// the untrusted PR content, diff and prior findings the prompt fences.
 	PRReview *PRReviewInput
+	// ReviewPass is non-nil only for one focused pass of a review fan-out
+	// (reviewfanout.go): the provider runs a narrow, diff-embedded reviewer that
+	// may only call submit_review_findings.
+	ReviewPass *ReviewPassSpec
 }
 
 // RuntimeSpec carries a repo's resolved toolchain pins into a provider's
@@ -326,6 +333,12 @@ type AgentConfig struct {
 	// CrossRepoSubtasksEnabled additionally lets create_subtask target another
 	// repo (repo_id; ADR 0041). Requires SubtasksEnabled. Off by default.
 	CrossRepoSubtasksEnabled bool
+	// ReviewFanoutEnabled lets the pool split a large-diff review run into
+	// focused passes (reviewfanout.go); the min fields are the thresholds
+	// (0 = ignore that criterion).
+	ReviewFanoutEnabled  bool
+	ReviewFanoutMinLines int64
+	ReviewFanoutMinFiles int64
 	// MaxSubtasks caps how many children a single parent may have; enforced at
 	// the create endpoint. Defaults to 10.
 	MaxSubtasks int64
@@ -420,4 +433,29 @@ type PRReviewComment struct {
 	Line      int    `json:"line"`
 	StartLine int    `json:"start_line,omitempty"`
 	Body      string `json:"body"`
+}
+
+// ReviewPassSpec describes one focused reviewer pass of a review fan-out.
+type ReviewPassSpec struct {
+	Name      string // correctness | security | tests | conventions
+	Title     string
+	Checklist string
+	Diff      string // merge-base diff, possibly truncated
+	DiffStat  string
+}
+
+// ReviewFinding is one finding reported by a review pass.
+type ReviewFinding struct {
+	Severity   string `json:"severity"`   // blocker|major|minor|nit
+	Confidence string `json:"confidence"` // high|medium|low
+	Path       string `json:"path,omitempty"`
+	Line       int    `json:"line,omitempty"`
+	Title      string `json:"title"`
+	Body       string `json:"body"`
+}
+
+// ReviewFindingsResult is what a pass submits via submit_review_findings.
+type ReviewFindingsResult struct {
+	Summary  string          `json:"summary"`
+	Findings []ReviewFinding `json:"findings"`
 }

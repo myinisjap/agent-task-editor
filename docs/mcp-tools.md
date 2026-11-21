@@ -175,3 +175,13 @@ Only listed for review-only PR runs (`PR_REVIEW=1`). Arguments: `summary`,
 diff) and `resolved_prior[ids]` (earlier finding ids now fixed). ATE posts it
 on the PR as a comment-only review. If never called, the run notes are used as
 the summary.
+
+## `submit_review_findings`
+
+Only listed for review fan-out passes (`REVIEW_PASS=1`), where it is the **only**
+tool: `get_task_transitions`, `signal_complete`, `request_human`, `store_info`,
+`update_task_notes`, `resolve_comment`, `create_subtask` and `submit_pr_review`
+are hidden and rejected. Arguments: `summary` and
+`findings[{severity (blocker|major|minor|nit), confidence (high|medium|low), path?, line?, title, body}]`.
+Call once; a second call replaces the first. A pass never decides pass/fail:
+the pool aggregates all passes (see [Review fan-out](agents.md#review-fan-out)).

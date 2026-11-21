@@ -22,6 +22,7 @@ type result struct {
 	StoredInfo       *string           `json:"StoredInfo,omitempty"`
 	ResolvedComments []resolvedComment `json:"ResolvedComments,omitempty"`
 	PRReview         *prReview         `json:"PRReview,omitempty"`
+	ReviewFindings   *reviewFindings   `json:"ReviewFindings,omitempty"`
 }
 
 // resolvedComment mirrors agent.ResolvedComment.
@@ -46,12 +47,16 @@ type reviewComment struct {
 // signal_complete/request_human has fired) so later resolve_comment calls can
 // re-persist it with updated resolutions.
 type toolState struct {
-	notes      string
-	storedInfo string
-	resolved   []resolvedComment
-	terminal   *result
-	commentIDs map[string]bool
-	prReview   *prReview
+	notes          string
+	storedInfo     string
+	resolved       []resolvedComment
+	terminal       *result
+	commentIDs     map[string]bool
+	prReview       *prReview
+	reviewFindings *reviewFindings
+	// reviewPass is true for a review fan-out pass (REVIEW_PASS=1): only
+	// submit_review_findings is callable.
+	reviewPass bool
 	priorIDs   map[string]bool
 }
 
@@ -100,6 +105,7 @@ func main() {
 	// resolve_comment can validate IDs against the set of open comments.
 	st := &toolState{commentIDs: map[string]bool{}, priorIDs: map[string]bool{}}
 	prReviewEnabled := os.Getenv("PR_REVIEW") == "1"
+	st.reviewPass = os.Getenv("REVIEW_PASS") == "1"
 	if raw := os.Getenv("PR_REVIEW_PRIOR_IDS"); raw != "" {
 		var ids []string
 		_ = json.Unmarshal([]byte(raw), &ids)
@@ -169,6 +175,10 @@ func main() {
 			})
 
 		case "tools/list":
+			if st.reviewPass {
+				respond(map[string]any{"tools": []map[string]any{reviewFindingsTool()}})
+				continue
+			}
 			tools := []map[string]any{
 				{
 					"name":        "get_task_transitions",
@@ -313,6 +323,12 @@ func main() {
 // result, and resolve_comment returns the current state so resolutions
 // survive even if the agent never signals completion.
 func dispatchTool(name string, args json.RawMessage, st *toolState, transitions []transitionHint) (string, *result) {
+	if st.reviewPass && name != "submit_review_findings" {
+		return "tool not available in a review pass: only submit_review_findings may be called", nil
+	}
+	if !st.reviewPass && name == "submit_review_findings" {
+		return "unknown tool: " + name, nil
+	}
 	switch name {
 	case "get_task_transitions":
 		if len(transitions) == 0 {
@@ -387,6 +403,34 @@ func dispatchTool(name string, args json.RawMessage, st *toolState, transitions 
 		}
 		st.prReview = &a
 		return "review recorded", st.persist()
+
+	case "submit_review_findings":
+		var a reviewFindings
+		if err := json.Unmarshal(args, &a); err != nil {
+			return "invalid arguments: " + err.Error(), nil
+		}
+		if strings.TrimSpace(a.Summary) == "" {
+			return "summary is required", nil
+		}
+		for i, f := range a.Findings {
+			if strings.TrimSpace(f.Title) == "" && strings.TrimSpace(f.Body) == "" {
+				return fmt.Sprintf("finding %d needs a title or body", i), nil
+			}
+			if !validSeverity[f.Severity] {
+				return fmt.Sprintf("finding %d: severity must be one of blocker, major, minor, nit", i), nil
+			}
+			if !validConfidence[f.Confidence] {
+				return fmt.Sprintf("finding %d: confidence must be one of high, medium, low", i), nil
+			}
+			if f.Line < 0 {
+				return fmt.Sprintf("finding %d: line must be >= 0", i), nil
+			}
+		}
+		st.reviewFindings = &a
+		r := &result{Status: "completed"}
+		st.fill(r)
+		st.terminal = r
+		return "findings recorded", r
 
 	case "resolve_comment":
 		var a struct {
@@ -525,6 +569,9 @@ func (st *toolState) persist() *result {
 
 // fill copies the accumulated notes/stored-info/resolutions onto a terminal result.
 func (st *toolState) fill(r *result) {
+	if st.reviewFindings != nil {
+		r.ReviewFindings = st.reviewFindings
+	}
 	if st.prReview != nil {
 		r.PRReview = st.prReview
 	}
@@ -579,6 +626,54 @@ func createSubtaskTool(cfg subtaskConfig) map[string]any {
 			"type":       "object",
 			"properties": props,
 			"required":   []string{"title", "description"},
+		},
+	}
+}
+
+// reviewFindings mirrors agent.ReviewFindingsResult.
+type reviewFindings struct {
+	Summary  string          `json:"summary"`
+	Findings []reviewFinding `json:"findings"`
+}
+
+// reviewFinding mirrors agent.ReviewFinding.
+type reviewFinding struct {
+	Severity   string `json:"severity"`
+	Confidence string `json:"confidence"`
+	Path       string `json:"path,omitempty"`
+	Line       int    `json:"line,omitempty"`
+	Title      string `json:"title"`
+	Body       string `json:"body"`
+}
+
+var (
+	validSeverity   = map[string]bool{"blocker": true, "major": true, "minor": true, "nit": true}
+	validConfidence = map[string]bool{"high": true, "medium": true, "low": true}
+)
+
+// reviewFindingsTool is the only tool exposed in a review fan-out pass.
+func reviewFindingsTool() map[string]any {
+	return map[string]any{
+		"name":        "submit_review_findings",
+		"description": "Submit your findings for this review pass. Call exactly once when finished (an empty findings list is valid). You do not decide pass/fail; findings from all reviewers are aggregated separately.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"summary": map[string]any{"type": "string", "description": "One or two sentences on what you reviewed and overall impression"},
+				"findings": map[string]any{"type": "array", "items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"severity":   map[string]any{"type": "string", "enum": []string{"blocker", "major", "minor", "nit"}, "description": "blocker/major = must be fixed before merge"},
+						"confidence": map[string]any{"type": "string", "enum": []string{"high", "medium", "low"}, "description": "How sure you are this is a real problem; low-confidence findings are discarded"},
+						"path":       map[string]any{"type": "string", "description": "Repo-relative file path"},
+						"line":       map[string]any{"type": "integer", "description": "Line number on the head side"},
+						"title":      map[string]any{"type": "string", "description": "Short title"},
+						"body":       map[string]any{"type": "string", "description": "What is wrong and how to fix it"},
+					},
+					"required": []string{"severity", "confidence", "title", "body"},
+				}},
+			},
+			"required": []string{"summary", "findings"},
 		},
 	}
 }

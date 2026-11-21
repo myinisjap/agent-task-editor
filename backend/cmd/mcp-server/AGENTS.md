@@ -30,6 +30,7 @@ The `claude`, `qwen_code` and `codex_cli` providers run this as a sidecar over s
 | `TRANSITIONS` | JSON array of available transitions for `get_task_transitions` |
 | `REVIEW_COMMENTS` | JSON array of open review comments, used to validate `resolve_comment` IDs |
 | `SUBTASKS_ENABLED` | `"1"` when the run's config opted in; gates the `create_subtask` tool |
+| `REVIEW_PASS` | `"1"` for a review fan-out pass: tools/list exposes only `submit_review_findings`; every other tool is hidden and rejected |
 | `CROSS_REPO_SUBTASKS_ENABLED` | `"1"` when the config also set `cross_repo_subtasks_enabled`; adds the optional `repo_id` arg to `create_subtask` |
 | `BACKEND_URL` / `TASK_ID` / `API_TOKEN` / `MAX_SUBTASKS` | Backend coordinates for `create_subtask`'s live POST (set only when subtasks are enabled) |
 

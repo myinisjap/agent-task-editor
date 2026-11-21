@@ -10,6 +10,7 @@ import (
 
 func buildPrompt(input agent.RunInput) string {
 	var b strings.Builder
+	writeReviewPassSection(&b, input)
 	writeHumanReplySection(&b, input)
 	writeSteeringNoteSection(&b, input)
 	writeHumanDecisionsSection(&b, input)
@@ -312,4 +313,33 @@ func writeRepoMapSection(b *strings.Builder, input agent.RunInput) {
 	if !strings.HasSuffix(section, "\n\n") {
 		b.WriteString("\n")
 	}
+}
+
+// writeReviewPassSection renders the focused-reviewer preamble for one pass of a
+// review fan-out (agent.RunInput.ReviewPass). It comes first so it frames
+// everything after it, and states that it overrides any instruction elsewhere
+// (e.g. the agent config's system prompt) about signal_complete and friends.
+func writeReviewPassSection(b *strings.Builder, input agent.RunInput) {
+	rp := input.ReviewPass
+	if rp == nil {
+		return
+	}
+	fmt.Fprintf(b, "REVIEW PASS: %s\n\n", rp.Title)
+	b.WriteString("You are one of several focused reviewers examining the same change. Review ONLY for the checklist below; other reviewers cover other concerns.\n\n")
+	b.WriteString("CHECKLIST:\n")
+	b.WriteString(rp.Checklist)
+	b.WriteString("\n\nRULES (these override any other instruction about signal_complete, request_human, update_task_notes or store_info — those tools are not available in this pass):\n")
+	b.WriteString("- Do NOT modify files, commit, or push. You may read files and run read-only commands.\n")
+	b.WriteString("- Report every finding with a severity (blocker|major|minor|nit) and a confidence (high|medium|low). Only blocker/major findings send the task back for rework, and low-confidence findings are discarded — be honest about confidence.\n")
+	b.WriteString("- Cite path and line (head side) whenever you can.\n")
+	b.WriteString("- You do not decide pass or fail; a separate step aggregates all reviewers.\n")
+	b.WriteString("- When finished, call submit_review_findings exactly once (an empty findings list is valid if you found nothing).\n\n")
+	if s := strings.TrimSpace(rp.DiffStat); s != "" {
+		b.WriteString("CHANGED FILES (git diff --stat):\n")
+		b.WriteString(stripSourceCommentsMarker(s))
+		b.WriteString("\n\n")
+	}
+	b.WriteString("DIFF UNDER REVIEW:\n```diff\n")
+	b.WriteString(strings.ReplaceAll(stripSourceCommentsMarker(rp.Diff), "```", "'''"))
+	b.WriteString("\n```\n\n---\n\n")
 }

@@ -1718,6 +1718,9 @@ components:
         resume_sessions: { type: boolean }
         subtasks_enabled: { type: boolean }
         cross_repo_subtasks_enabled: { type: boolean }
+        review_fanout_enabled: { type: boolean }
+        review_fanout_min_lines: { type: integer }
+        review_fanout_min_files: { type: integer }
         max_subtasks: { type: integer }
         enabled_plugins: { type: array, items: { type: string } }
         enabled_mcp_servers: { type: array, items: { type: string } }
@@ -1905,6 +1908,23 @@ components:
             Off by default; also requires subtasks_enabled. Lets create_subtask
             target another configured repo via repo_id (ADR 0041); each such child
             lands via its own pull request.
+        review_fanout_enabled:
+          type: boolean
+          description: >
+            Off by default. For the config that handles the agent-review stage:
+            when a review run's diff reaches review_fanout_min_lines changed lines
+            or review_fanout_min_files changed files, the pool runs four focused
+            reviewer passes (correctness, security, tests, conventions) and
+            aggregates them into one pass/fail decision. Smaller diffs use the
+            single reviewer.
+        review_fanout_min_lines:
+          type: integer
+          minimum: 0
+          description: "Changed-line threshold for review fan-out (default 400; 0 ignores this criterion)."
+        review_fanout_min_files:
+          type: integer
+          minimum: 0
+          description: "Changed-file threshold for review fan-out (default 15; 0 ignores this criterion)."
         max_subtasks:
           type: integer
           description: "Per-parent cap on children this config may create. Default 10."

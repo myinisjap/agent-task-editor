@@ -29,3 +29,17 @@ func TestSnapshotApplyToKeepsIdentity(t *testing.T) {
 		t.Fatal("ApplyTo mutated its argument")
 	}
 }
+
+func TestSnapshotReviewFanoutRoundTripAndLegacy(t *testing.T) {
+	src := gen.AgentConfig{ReviewFanoutEnabled: 1, ReviewFanoutMinLines: 50, ReviewFanoutMinFiles: 3}
+	got := SnapshotOf(src).ApplyTo(gen.AgentConfig{})
+	if got.ReviewFanoutEnabled != 1 || got.ReviewFanoutMinLines != 50 || got.ReviewFanoutMinFiles != 3 {
+		t.Fatalf("round trip: %+v", got)
+	}
+	// A legacy snapshot (fields absent → zero) must not clobber current thresholds.
+	cur := gen.AgentConfig{ReviewFanoutMinLines: 400, ReviewFanoutMinFiles: 15}
+	legacy := ConfigSnapshot{}.ApplyTo(cur)
+	if legacy.ReviewFanoutMinLines != 400 || legacy.ReviewFanoutMinFiles != 15 || legacy.ReviewFanoutEnabled != 0 {
+		t.Fatalf("legacy restore clobbered: %+v", legacy)
+	}
+}

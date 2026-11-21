@@ -45,7 +45,9 @@ func behaviourChanged(a, b gen.AgentConfig) bool {
 		a.RetryBackoffSecs != b.RetryBackoffSecs || a.MaxSubtasks != b.MaxSubtasks ||
 		(a.ResumeSessions != 0) != (b.ResumeSessions != 0) ||
 		(a.SubtasksEnabled != 0) != (b.SubtasksEnabled != 0) ||
-		(a.CrossRepoSubtasksEnabled != 0) != (b.CrossRepoSubtasksEnabled != 0) {
+		(a.CrossRepoSubtasksEnabled != 0) != (b.CrossRepoSubtasksEnabled != 0) ||
+		(a.ReviewFanoutEnabled != 0) != (b.ReviewFanoutEnabled != 0) ||
+		a.ReviewFanoutMinLines != b.ReviewFanoutMinLines || a.ReviewFanoutMinFiles != b.ReviewFanoutMinFiles {
 		return true
 	}
 	return !jsonSemanticallyEqual(a.FallbackProviderConfigIds, b.FallbackProviderConfigIds) ||
@@ -211,6 +213,9 @@ func (h *AgentsHandler) applySnapshot(ctx context.Context, existing gen.AgentCon
 		FallbackProviderConfigIds: fallbacks,
 		EscalationLadder:          ladderJSON,
 		CrossRepoSubtasksEnabled:  b2i(snap.CrossRepoSubtasksEnabled),
+		ReviewFanoutEnabled:       b2i(snap.ReviewFanoutEnabled),
+		ReviewFanoutMinLines:      snap.ReviewFanoutMinLines,
+		ReviewFanoutMinFiles:      snap.ReviewFanoutMinFiles,
 		ID:                        existing.ID,
 	})
 	if err != nil {

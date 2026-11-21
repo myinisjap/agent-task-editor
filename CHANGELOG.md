@@ -19,6 +19,9 @@ triggers the "Release" workflow the same way.
 
 ## [Unreleased]
 
+### Added
+- **Review fan-out.** Agent configs can run four focused reviewer passes (correctness, security, tests, conventions) on large diffs, aggregated into a single pass/fail decision (`review_fanout_enabled`, `review_fanout_min_lines`, `review_fanout_min_files`). Off by default; small diffs keep the single reviewer. New `submit_review_findings` MCP tool (only exposed to passes via `REVIEW_PASS=1`). Docs: [agents.md](docs/agents.md#review-fan-out).
+
 ## [1.1.0] - 2026-11-18
 
 ### Added

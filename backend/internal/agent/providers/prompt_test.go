@@ -392,3 +392,26 @@ func TestBuildPrompt_ChangeSetAndCrossRepo(t *testing.T) {
 		t.Error("empty sections changed the prompt")
 	}
 }
+
+func TestBuildPrompt_ReviewPass(t *testing.T) {
+	in := agent.RunInput{
+		Task: agent.Task{Title: "T"},
+		ReviewPass: &agent.ReviewPassSpec{
+			Name: "security", Title: "Security", Checklist: "- check injection",
+			Diff: "diff --git a/x b/x\n+evil", DiffStat: " x | 1 +",
+		},
+	}
+	p := buildPrompt(in)
+	if !strings.HasPrefix(p, "REVIEW PASS: Security") {
+		t.Fatalf("review pass section not first: %q", p[:40])
+	}
+	for _, want := range []string{"check injection", "+evil", "submit_review_findings", "override"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	in.ReviewPass = nil
+	if strings.Contains(buildPrompt(in), "REVIEW PASS") {
+		t.Error("section present without ReviewPass")
+	}
+}

@@ -108,6 +108,7 @@ type agentConfigView struct {
 	ResumeSessions           bool                `json:"resume_sessions"`
 	SubtasksEnabled          bool                `json:"subtasks_enabled"`
 	CrossRepoSubtasksEnabled bool                `json:"cross_repo_subtasks_enabled"`
+	ReviewFanoutEnabled      bool                `json:"review_fanout_enabled"`
 	ProviderConfig           *gen.ProviderConfig `json:"provider_config,omitempty"`
 	// CurrentVersion is the latest version number in the config's history
 	// (nil when it has none yet).
@@ -133,6 +134,7 @@ func (h *AgentsHandler) safeConfig(r *http.Request, cfg gen.AgentConfig) agentCo
 		ResumeSessions:            cfg.ResumeSessions != 0,
 		SubtasksEnabled:           cfg.SubtasksEnabled != 0,
 		CrossRepoSubtasksEnabled:  cfg.CrossRepoSubtasksEnabled != 0,
+		ReviewFanoutEnabled:       cfg.ReviewFanoutEnabled != 0,
 	}
 	if cfg.ProviderConfigID != "" {
 		if pc, err := h.q.GetProviderConfig(r.Context(), cfg.ProviderConfigID); err == nil {
@@ -321,6 +323,9 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		ResumeSessions           *flexBool          `json:"resume_sessions"`
 		SubtasksEnabled          *flexBool          `json:"subtasks_enabled"`
 		CrossRepoSubtasksEnabled *flexBool          `json:"cross_repo_subtasks_enabled"`
+		ReviewFanoutEnabled      *flexBool          `json:"review_fanout_enabled"`
+		ReviewFanoutMinLines     *int64             `json:"review_fanout_min_lines"`
+		ReviewFanoutMinFiles     *int64             `json:"review_fanout_min_files"`
 		MaxSubtasks              *int64             `json:"max_subtasks"`
 		MaxCostUsd               *float64           `json:"max_cost_usd"`
 		Priority                 *int64             `json:"priority"`
@@ -407,6 +412,20 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.CrossRepoSubtasksEnabled != nil && *body.CrossRepoSubtasksEnabled {
 		crossRepo = 1
 	}
+	fanoutEnabled, fanoutLines, fanoutFiles := int64(0), int64(400), int64(15)
+	if body.ReviewFanoutEnabled != nil && *body.ReviewFanoutEnabled {
+		fanoutEnabled = 1
+	}
+	if body.ReviewFanoutMinLines != nil {
+		fanoutLines = *body.ReviewFanoutMinLines
+	}
+	if body.ReviewFanoutMinFiles != nil {
+		fanoutFiles = *body.ReviewFanoutMinFiles
+	}
+	if fanoutLines < 0 || fanoutFiles < 0 {
+		Err(w, http.StatusBadRequest, "review_fanout_min_lines and review_fanout_min_files must be >= 0")
+		return
+	}
 	maxSubtasks := int64(10)
 	if body.MaxSubtasks != nil && *body.MaxSubtasks > 0 {
 		maxSubtasks = *body.MaxSubtasks
@@ -467,6 +486,9 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		ResumeSessions:            resumeSessions,
 		SubtasksEnabled:           subtasksEnabled,
 		CrossRepoSubtasksEnabled:  crossRepo,
+		ReviewFanoutEnabled:       fanoutEnabled,
+		ReviewFanoutMinLines:      fanoutLines,
+		ReviewFanoutMinFiles:      fanoutFiles,
 		MaxSubtasks:               maxSubtasks,
 		MaxCostUsd:                maxCostUsd,
 		Priority:                  priority,
@@ -505,6 +527,9 @@ func (h *AgentsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			FallbackProviderConfigIds: cfg.FallbackProviderConfigIds,
 			EscalationLadder:          cfg.EscalationLadder,
 			CrossRepoSubtasksEnabled:  cfg.CrossRepoSubtasksEnabled,
+			ReviewFanoutEnabled:       cfg.ReviewFanoutEnabled,
+			ReviewFanoutMinLines:      cfg.ReviewFanoutMinLines,
+			ReviewFanoutMinFiles:      cfg.ReviewFanoutMinFiles,
 			Enabled:                   0, ID: cfg.ID,
 		})
 		if err != nil {
@@ -546,6 +571,9 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		ResumeSessions           *flexBool           `json:"resume_sessions"`
 		SubtasksEnabled          *flexBool           `json:"subtasks_enabled"`
 		CrossRepoSubtasksEnabled *flexBool           `json:"cross_repo_subtasks_enabled"`
+		ReviewFanoutEnabled      *flexBool           `json:"review_fanout_enabled"`
+		ReviewFanoutMinLines     *int64              `json:"review_fanout_min_lines"`
+		ReviewFanoutMinFiles     *int64              `json:"review_fanout_min_files"`
 		MaxSubtasks              *int64              `json:"max_subtasks"`
 		MaxCostUsd               *float64            `json:"max_cost_usd"`
 		Priority                 *int64              `json:"priority"`
@@ -677,6 +705,23 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			crossRepo = 1
 		}
 	}
+	fanoutEnabled, fanoutLines, fanoutFiles := existing.ReviewFanoutEnabled, existing.ReviewFanoutMinLines, existing.ReviewFanoutMinFiles
+	if body.ReviewFanoutEnabled != nil {
+		fanoutEnabled = 0
+		if *body.ReviewFanoutEnabled {
+			fanoutEnabled = 1
+		}
+	}
+	if body.ReviewFanoutMinLines != nil {
+		fanoutLines = *body.ReviewFanoutMinLines
+	}
+	if body.ReviewFanoutMinFiles != nil {
+		fanoutFiles = *body.ReviewFanoutMinFiles
+	}
+	if fanoutLines < 0 || fanoutFiles < 0 {
+		Err(w, http.StatusBadRequest, "review_fanout_min_lines and review_fanout_min_files must be >= 0")
+		return
+	}
 	maxSubtasks := existing.MaxSubtasks
 	if body.MaxSubtasks != nil && *body.MaxSubtasks > 0 {
 		maxSubtasks = *body.MaxSubtasks
@@ -729,6 +774,9 @@ func (h *AgentsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		ResumeSessions:            resumeSessions,
 		SubtasksEnabled:           subtasksEnabled,
 		CrossRepoSubtasksEnabled:  crossRepo,
+		ReviewFanoutEnabled:       fanoutEnabled,
+		ReviewFanoutMinLines:      fanoutLines,
+		ReviewFanoutMinFiles:      fanoutFiles,
 		MaxSubtasks:               maxSubtasks,
 		MaxCostUsd:                maxCostUsd,
 		Priority:                  priority,

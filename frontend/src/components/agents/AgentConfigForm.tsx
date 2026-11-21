@@ -524,6 +524,42 @@ export default function AgentConfigForm({
           )}
         </Field>
 
+        <Field label="Review fan-out" hint="Use on your agent-review config. Runs 4 focused reviewers (correctness, security, tests, conventions) for diffs at or above either threshold; smaller diffs use this agent as a single reviewer. Costs roughly 4x a single review. Off by default.">
+          <label className="flex items-center gap-2 text-sm text-fg-muted cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.review_fanout_enabled ?? false}
+              onChange={(e) => setForm((f) => ({ ...f, review_fanout_enabled: e.target.checked }))}
+            />
+            Fan out large reviews into focused passes
+          </label>
+          {form.review_fanout_enabled && (
+            <div className="mt-2 flex flex-wrap gap-4">
+              <label className="flex items-center gap-2 text-xs text-fg-muted">
+                Min changed lines
+                <input
+                  type="number"
+                  min={0}
+                  value={form.review_fanout_min_lines ?? 400}
+                  onChange={(e) => setForm((f) => ({ ...f, review_fanout_min_lines: Math.max(0, Number(e.target.value)) }))}
+                  className="w-24 bg-surface-sunken border border-border rounded px-2 py-1 text-fg"
+                />
+              </label>
+              <label className="flex items-center gap-2 text-xs text-fg-muted">
+                Min changed files
+                <input
+                  type="number"
+                  min={0}
+                  value={form.review_fanout_min_files ?? 15}
+                  onChange={(e) => setForm((f) => ({ ...f, review_fanout_min_files: Math.max(0, Number(e.target.value)) }))}
+                  className="w-24 bg-surface-sunken border border-border rounded px-2 py-1 text-fg"
+                />
+              </label>
+              <p className="basis-full text-xs text-fg-subtle">0 ignores that criterion.</p>
+            </div>
+          )}
+        </Field>
+
         {providerStr === 'claude' ? (
           <PluginMcpPicker
             claudeOptions={claudeOptions}
