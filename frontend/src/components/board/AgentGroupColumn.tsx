@@ -13,6 +13,7 @@ type Props = {
   labels: WorkflowLabel[]
   tasks: Task[]
   runningTaskIds: Set<string>
+  verifyingTaskIds?: Set<string>
   rateLimitedTaskIds?: Map<string, string>
   costWarnedTaskIds?: Set<string>
   onDuplicate?: (task: Task) => void
@@ -33,7 +34,7 @@ type Props = {
  * - Tasks show a small label badge indicating which actual column they're in.
  * - Dropping a task onto this column moves it to the first label in the group.
  */
-export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLimitedTaskIds, costWarnedTaskIds, onDuplicate, className, selectedIds, onToggleSelect, dropState, mode = 'full', dropId: dropIdProp, dragging }: Props) {
+export default function AgentGroupColumn({ labels, tasks, runningTaskIds, verifyingTaskIds, rateLimitedTaskIds, costWarnedTaskIds, onDuplicate, className, selectedIds, onToggleSelect, dropState, mode = 'full', dropId: dropIdProp, dragging }: Props) {
   // Use the first label's name as the droppable id so DnD moves tasks here
   const dropId = dropIdProp ?? labels[0]?.name ?? '__agent-group__'
   const { setNodeRef, isOver } = useDroppable({ id: dropId, data: { label: labels[0]?.name } })
@@ -83,6 +84,7 @@ export default function AgentGroupColumn({ labels, tasks, runningTaskIds, rateLi
             key={task.id}
             task={task}
             isRunning={runningTaskIds.has(task.id)}
+            isVerifying={verifyingTaskIds?.has(task.id)}
             rateLimitedUntil={rateLimitedTaskIds?.get(task.id)}
             costWarned={costWarnedTaskIds?.has(task.id)}
             onDelete={handleDelete}

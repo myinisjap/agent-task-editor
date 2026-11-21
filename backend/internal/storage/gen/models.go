@@ -459,15 +459,17 @@ type RepoSkill struct {
 }
 
 type RunVerification struct {
-	RunID      string    `json:"run_id"`
-	TaskID     string    `json:"task_id"`
-	Command    string    `json:"command"`
-	Status     string    `json:"status"`
-	ExitCode   *int64    `json:"exit_code"`
-	Output     string    `json:"output"`
-	Truncated  int64     `json:"truncated"`
-	DurationMs int64     `json:"duration_ms"`
-	CreatedAt  time.Time `json:"created_at"`
+	RunID           string    `json:"run_id"`
+	TaskID          string    `json:"task_id"`
+	Command         string    `json:"command"`
+	Status          string    `json:"status"`
+	ExitCode        *int64    `json:"exit_code"`
+	Output          string    `json:"output"`
+	Truncated       int64     `json:"truncated"`
+	DurationMs      int64     `json:"duration_ms"`
+	CreatedAt       time.Time `json:"created_at"`
+	HeadSha         string    `json:"head_sha"`
+	ReusedFromRunID *string   `json:"reused_from_run_id"`
 }
 
 type SeedMarker struct {

@@ -3,11 +3,15 @@ package agent_test
 import (
 	"context"
 	"database/sql"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/myinisjap/agent-task-editor/backend/internal/agent"
 	"github.com/myinisjap/agent-task-editor/backend/internal/storage/gen"
 	"github.com/myinisjap/agent-task-editor/backend/internal/workflow"
@@ -127,7 +131,7 @@ func TestVerify_PassProceedsToSuccessTransition(t *testing.T) {
 		t.Errorf("unexpected row: %+v", rv)
 	}
 	ev := f.pub.payloadsFor("task.verification")
-	if len(ev) != 1 || ev[0]["status"] != "pass" || ev[0]["run_id"] != f.runID {
+	if len(ev) != 2 || ev[0]["status"] != "running" || ev[1]["status"] != "pass" || ev[1]["run_id"] != f.runID {
 		t.Errorf("task.verification events = %v", ev)
 	}
 }
@@ -337,4 +341,218 @@ func TestVerify_LabelCustomFailureStillAuthoritative(t *testing.T) {
 	f.setLabelVerify("testing", "custom", "./label-check.sh")
 	f.run("testing", "success")
 	f.waitSettled(func(task gen.Task) bool { return task.Label == "work" })
+}
+
+// --- verification reuse -------------------------------------------------
+
+func vgit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// gitFixture turns the fixture's worktree into a real repo with one commit and
+// returns HEAD.
+func (f *verifyFixture) gitFixture() string {
+	f.t.Helper()
+	vgit(f.t, f.repo, "init", "-q")
+	if err := os.WriteFile(filepath.Join(f.repo, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		f.t.Fatal(err)
+	}
+	vgit(f.t, f.repo, "add", "-A")
+	vgit(f.t, f.repo, "commit", "-q", "-m", "init")
+	return vgit(f.t, f.repo, "rev-parse", "HEAD")
+}
+
+// seedPrior stores an earlier verification row for the task on a fresh run.
+func (f *verifyFixture) seedPrior(status, sha, command string, reusedFrom *string) string {
+	f.t.Helper()
+	ctx := context.Background()
+	runID := uuid.NewString()
+	if _, err := f.q.CreateAgentRun(ctx, gen.CreateAgentRunParams{ID: runID, TaskID: f.taskID, AgentConfigID: &f.cfgID}); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := f.q.UpsertRunVerification(ctx, gen.UpsertRunVerificationParams{
+		RunID: runID, TaskID: f.taskID, Command: command, Status: status, HeadSha: sha, ReusedFromRunID: reusedFrom,
+	}); err != nil {
+		f.t.Fatal(err)
+	}
+	// Strictly older than the run under test regardless of clock resolution.
+	if _, err := f.db.Exec("UPDATE run_verifications SET created_at = datetime('now','-1 hour') WHERE run_id = ?", runID); err != nil {
+		f.t.Fatal(err)
+	}
+	return runID
+}
+
+func (f *verifyFixture) hasLog(prefix string) bool {
+	f.t.Helper()
+	logs, err := f.q.ListAgentLogs(context.Background(), f.runID)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	for _, l := range logs {
+		if l.Type == "system" && strings.HasPrefix(l.Content, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestVerify_ReusesPassOnUnchangedTree(t *testing.T) {
+	v := &fakeVerifier{res: agent.VerifyResult{Status: agent.VerifyFail}}
+	f := newVerifyFixture(t, "testing", "go test ./...", v)
+	sha := f.gitFixture()
+	prior := f.seedPrior("pass", sha, "go test ./...", nil)
+	f.run("testing", "success")
+	f.waitSettled(func(task gen.Task) bool { return task.Label == "agent-review" })
+
+	if v.callCount() != 0 {
+		t.Fatalf("verifier ran %d times, want 0 (reused)", v.callCount())
+	}
+	rv, err := f.q.GetRunVerification(context.Background(), f.runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rv.Status != "pass" || rv.DurationMs != 0 || rv.HeadSha != sha || rv.ReusedFromRunID == nil || *rv.ReusedFromRunID != prior {
+		t.Errorf("unexpected row: %+v", rv)
+	}
+	if !f.hasLog("Verification reused: unchanged since run " + prior) {
+		t.Error("missing reuse log line")
+	}
+	if f.hasLog("Verifying:") {
+		t.Error("reuse path must not announce Verifying")
+	}
+	for _, p := range f.pub.payloadsFor("task.verification") {
+		if p["status"] == "running" {
+			t.Error("running event emitted on reuse path")
+		}
+	}
+	ev := f.pub.payloadsFor("task.verification")
+	if len(ev) != 1 || ev[0]["status"] != "pass" {
+		t.Errorf("task.verification events = %v", ev)
+	}
+}
+
+func TestVerify_ReuseChainPointsAtOriginalRun(t *testing.T) {
+	v := &fakeVerifier{res: agent.VerifyResult{Status: agent.VerifyFail}}
+	f := newVerifyFixture(t, "testing", "go test ./...", v)
+	sha := f.gitFixture()
+	orig := f.seedPrior("pass", sha, "go test ./...", nil)
+	f.seedPrior("pass", sha, "go test ./...", &orig) // newer reused row (same -1h; tie broken by run id)
+	// Make the reused row strictly newest.
+	if _, err := f.db.Exec("UPDATE run_verifications SET created_at = datetime('now','-30 minutes') WHERE reused_from_run_id IS NOT NULL"); err != nil {
+		t.Fatal(err)
+	}
+	f.run("testing", "success")
+	f.waitSettled(func(task gen.Task) bool { return task.Label == "agent-review" })
+
+	rv, _ := f.q.GetRunVerification(context.Background(), f.runID)
+	if v.callCount() != 0 || rv.ReusedFromRunID == nil || *rv.ReusedFromRunID != orig {
+		t.Errorf("calls=%d reused_from=%v, want 0 and %s", v.callCount(), rv.ReusedFromRunID, orig)
+	}
+}
+
+func TestVerify_NoReuseWhenAnythingDiffers(t *testing.T) {
+	cases := []struct {
+		name string
+		prep func(f *verifyFixture, sha string)
+	}{
+		{"different sha", func(f *verifyFixture, sha string) { f.seedPrior("pass", "deadbeef", "go test ./...", nil) }},
+		{"different command", func(f *verifyFixture, sha string) { f.seedPrior("pass", sha, "make test", nil) }},
+		{"previous fail", func(f *verifyFixture, sha string) { f.seedPrior("fail", sha, "go test ./...", nil) }},
+		{"previous timeout", func(f *verifyFixture, sha string) { f.seedPrior("timeout", sha, "go test ./...", nil) }},
+		{"previous error", func(f *verifyFixture, sha string) { f.seedPrior("error", sha, "go test ./...", nil) }},
+		{"empty prior sha", func(f *verifyFixture, sha string) { f.seedPrior("pass", "", "go test ./...", nil) }},
+		{"no prior", func(f *verifyFixture, sha string) {}},
+		{"not a git worktree", func(f *verifyFixture, sha string) {
+			f.seedPrior("pass", sha, "go test ./...", nil)
+			if err := os.RemoveAll(filepath.Join(f.repo, ".git")); err != nil {
+				f.t.Fatal(err)
+			}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v := &fakeVerifier{res: agent.VerifyResult{Status: agent.VerifyPass, ExitCode: intPtr(0)}}
+			f := newVerifyFixture(t, "testing", "go test ./...", v)
+			sha := f.gitFixture()
+			tc.prep(f, sha)
+			f.run("testing", "success")
+			f.waitSettled(func(task gen.Task) bool { return task.Label == "agent-review" })
+			if v.callCount() != 1 {
+				t.Fatalf("verifier calls = %d, want 1", v.callCount())
+			}
+			rv, _ := f.q.GetRunVerification(context.Background(), f.runID)
+			if rv.ReusedFromRunID != nil {
+				t.Errorf("row marked reused: %+v", rv)
+			}
+		})
+	}
+}
+
+// A new commit made by the run itself (safety-net or agent) changes the sha.
+func TestVerify_NewCommitRunsVerifier(t *testing.T) {
+	v := &fakeVerifier{res: agent.VerifyResult{Status: agent.VerifyPass, ExitCode: intPtr(0)}}
+	f := newVerifyFixture(t, "testing", "go test ./...", v)
+	sha := f.gitFixture()
+	f.seedPrior("pass", sha, "go test ./...", nil)
+	if err := os.WriteFile(filepath.Join(f.repo, "a.txt"), []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	vgit(t, f.repo, "commit", "-q", "-am", "change")
+	f.run("testing", "success")
+	f.waitSettled(func(task gen.Task) bool { return task.Label == "agent-review" })
+	if v.callCount() != 1 {
+		t.Fatalf("verifier calls = %d, want 1", v.callCount())
+	}
+	rv, _ := f.q.GetRunVerification(context.Background(), f.runID)
+	if rv.HeadSha == "" || rv.HeadSha == sha {
+		t.Errorf("head_sha = %q, want new sha", rv.HeadSha)
+	}
+}
+
+// --- verifying state ----------------------------------------------------
+
+type observingVerifier struct {
+	f      *verifyFixture
+	sawRun bool
+	sawLog bool
+}
+
+func (o *observingVerifier) Verify(context.Context, agent.VerifyRequest) agent.VerifyResult {
+	for _, p := range o.f.pub.payloadsFor("task.verification") {
+		if p["status"] == "running" && p["run_id"] == o.f.runID {
+			o.sawRun = true
+		}
+	}
+	o.sawLog = o.f.hasLog("Verifying: go test ./...")
+	return agent.VerifyResult{Status: agent.VerifyPass, ExitCode: intPtr(0)}
+}
+
+func TestVerify_AnnouncesVerifyingBeforeCommandRuns(t *testing.T) {
+	obs := &observingVerifier{}
+	f := newVerifyFixture(t, "testing", "go test ./...", obs)
+	obs.f = f
+	f.run("testing", "success")
+	f.waitSettled(func(task gen.Task) bool { return task.Label == "agent-review" })
+	if !obs.sawRun || !obs.sawLog {
+		t.Errorf("running event seen=%v, Verifying log seen=%v at Verify time", obs.sawRun, obs.sawLog)
+	}
+}
+
+func TestPool_OnDispatchableFiresWhenRunFinishes(t *testing.T) {
+	v := &fakeVerifier{res: agent.VerifyResult{Status: agent.VerifyPass, ExitCode: intPtr(0)}}
+	f := newVerifyFixture(t, "testing", "", v)
+	woke := make(chan struct{}, 4)
+	f.pool.OnDispatchable = func() { woke <- struct{}{} }
+	f.run("testing", "success")
+	select {
+	case <-woke:
+	case <-time.After(pollDeadline):
+		t.Fatal("OnDispatchable not called after the run finished")
+	}
 }

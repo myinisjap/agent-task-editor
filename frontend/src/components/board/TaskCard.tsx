@@ -34,6 +34,7 @@ const TASK_TYPES = ['feature', 'bug', 'chore', 'spike']
 function TaskCard({
   task,
   isRunning,
+  isVerifying,
   rateLimitedUntil,
   costWarned,
   onDelete,
@@ -45,6 +46,8 @@ function TaskCard({
 }: {
   task: Task
   isRunning?: boolean
+  /** The run finished but the repo verify command is still running. */
+  isVerifying?: boolean
   rateLimitedUntil?: string
   /** True once this task has crossed the cost early-warning threshold (see task.cost_warning WS event) */
   costWarned?: boolean
@@ -544,7 +547,13 @@ function TaskCard({
               needs detail
             </Badge>
           )}
-          {isRunning && !needsMe && (
+          {isVerifying && !needsMe && (
+            <span className="inline-flex items-center gap-1 text-[10px] text-amber-300" title="Running the repo verify command">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              Verifying
+            </span>
+          )}
+          {isRunning && !isVerifying && !needsMe && (
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="Agent running" />
           )}
           {/* The needs-me entry already carries the reason; this is the fallback

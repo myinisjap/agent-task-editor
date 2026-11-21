@@ -20,6 +20,7 @@ type Props = {
   label: WorkflowLabel
   tasks: Task[]
   runningTaskIds: Set<string>
+  verifyingTaskIds?: Set<string>
   rateLimitedTaskIds?: Map<string, string>
   costWarnedTaskIds?: Set<string>
   onAddTask?: () => void
@@ -41,7 +42,7 @@ type Props = {
   dragging?: boolean
 }
 
-export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTaskIds, costWarnedTaskIds, onAddTask, onDuplicate, isStartingColumn, isTerminal, className, selectedIds, onToggleSelect, dropState, mode = 'full', onToggleCollapsed, dropId, dragging }: Props) {
+export default function TaskColumn({ label, tasks, runningTaskIds, verifyingTaskIds, rateLimitedTaskIds, costWarnedTaskIds, onAddTask, onDuplicate, isStartingColumn, isTerminal, className, selectedIds, onToggleSelect, dropState, mode = 'full', onToggleCollapsed, dropId, dragging }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: dropId ?? label.name, data: { label: label.name } })
   const [hovered, setHovered] = useState(false)
   const expandedTransient = mode !== 'full' && ((hovered && !dragging) || isOver)
@@ -169,6 +170,7 @@ export default function TaskColumn({ label, tasks, runningTaskIds, rateLimitedTa
             key={task.id}
             task={task}
             isRunning={runningTaskIds.has(task.id)}
+            isVerifying={verifyingTaskIds?.has(task.id)}
             rateLimitedUntil={rateLimitedTaskIds?.get(task.id)}
             costWarned={costWarnedTaskIds?.has(task.id)}
             onDelete={handleDelete}

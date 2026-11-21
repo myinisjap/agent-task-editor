@@ -9863,6 +9863,10 @@ export interface components {
             output: string;
             /** @description True when earlier output was dropped from output. */
             truncated: boolean;
+            /** @description Worktree HEAD commit the verification ran against (empty if unknown). */
+            head_sha: string;
+            /** @description Set when this pass was reused from an earlier run's pass on the same commit and command; the command was not re-run. */
+            reused_from_run_id: string | null;
             duration_ms: number;
             /** Format: date-time */
             created_at: string;
@@ -10575,12 +10579,12 @@ export interface components {
             type: "task.verification";
             payload: components["schemas"]["WsTaskVerificationPayload"];
         };
-        /** @description A run's repo verify command finished (refetch GET /tasks/{id}/verifications). */
+        /** @description A run's repo verify command started (status running, never stored; not sent for a reused pass) or finished (refetch GET /tasks/{id}/verifications). A final status always follows running. */
         WsTaskVerificationPayload: {
             task_id: string;
             run_id: string;
             /** @enum {string} */
-            status: "pass" | "fail" | "timeout" | "error";
+            status: "running" | "pass" | "fail" | "timeout" | "error";
         };
         WsTaskPreviewEvent: {
             /**

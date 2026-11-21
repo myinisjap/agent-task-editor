@@ -24,6 +24,9 @@ const (
 	// the work, so the task is escalated to a human instead of sent back to
 	// the agent.
 	VerifyError = "error"
+	// VerifyRunning is only used for the task.verification WS event sent when
+	// the command starts; it is never stored in run_verifications.
+	VerifyRunning = "running"
 )
 
 // Per-label verify override modes (workflow_labels.verify_mode).
@@ -120,13 +123,28 @@ func (p *Pool) verifyOutcome(ctx context.Context, job Job, result *Result, log *
 		timeout = DefaultVerifyTimeout
 	}
 
+	dir := verifyDir(job)
+	headSHA, herr := worktreeHead(ctx, dir)
+	if herr != nil {
+		headSHA = ""
+	}
+	if origin, ok := p.reusableVerification(ctx, job, dir, headSHA, command); ok {
+		res := VerifyResult{
+			Status: VerifyPass,
+			Output: fmt.Sprintf("Verification reused: unchanged since run %s (commit %s)", origin, shortSHA(headSHA)),
+		}
+		p.recordVerification(ctx, job, command, res, headSHA, &origin, log)
+		return false
+	}
+
 	var res VerifyResult
 	if p.Verifier == nil {
 		res = VerifyResult{Status: VerifyError, Output: "no verifier is configured on this server"}
 	} else {
+		p.announceVerifying(ctx, job, command)
 		res = p.Verifier.Verify(ctx, VerifyRequest{
 			Command:        command,
-			Dir:            verifyDir(job),
+			Dir:            dir,
 			Timeout:        timeout,
 			MaxOutputBytes: VerifyMaxOutputBytes,
 			Runtime:        job.Input.Runtime,
@@ -137,7 +155,7 @@ func (p *Pool) verifyOutcome(ctx context.Context, job Job, result *Result, log *
 		return true
 	}
 
-	p.recordVerification(ctx, job, command, res, log)
+	p.recordVerification(ctx, job, command, res, headSHA, nil, log)
 
 	switch res.Status {
 	case VerifyPass:
@@ -221,7 +239,7 @@ func buildVerifyFeedback(command, summary string, res VerifyResult) string {
 // recordVerification persists the run_verifications row, adds a system log
 // line to the run and broadcasts task.verification. Failures are logged, never
 // fatal: the verdict has already been decided.
-func (p *Pool) recordVerification(ctx context.Context, job Job, command string, res VerifyResult, log *slog.Logger) {
+func (p *Pool) recordVerification(ctx context.Context, job Job, command string, res VerifyResult, headSHA string, reusedFrom *string, log *slog.Logger) {
 	var exit *int64
 	if res.ExitCode != nil {
 		v := int64(*res.ExitCode)
@@ -232,23 +250,29 @@ func (p *Pool) recordVerification(ctx context.Context, job Job, command string, 
 		truncated = 1
 	}
 	if err := p.q.UpsertRunVerification(ctx, gen.UpsertRunVerificationParams{
-		RunID:      job.RunID,
-		TaskID:     job.Input.Task.ID,
-		Command:    command,
-		Status:     res.Status,
-		ExitCode:   exit,
-		Output:     res.Output,
-		Truncated:  truncated,
-		DurationMs: res.Duration.Milliseconds(),
+		RunID:           job.RunID,
+		TaskID:          job.Input.Task.ID,
+		Command:         command,
+		Status:          res.Status,
+		ExitCode:        exit,
+		Output:          res.Output,
+		Truncated:       truncated,
+		DurationMs:      res.Duration.Milliseconds(),
+		HeadSha:         headSHA,
+		ReusedFromRunID: reusedFrom,
 	}); err != nil {
 		log.Error("pool: persist verification", "err", err)
+	}
+	logLine := fmt.Sprintf("Verification %s: %s", res.Status, command)
+	if reusedFrom != nil {
+		logLine = fmt.Sprintf("Verification reused: unchanged since run %s", *reusedFrom)
 	}
 	if err := p.q.CreateAgentLog(ctx, gen.CreateAgentLogParams{
 		ID:         uuid.NewString(),
 		AgentRunID: job.RunID,
 		Timestamp:  time.Now(),
 		Type:       "system",
-		Content:    fmt.Sprintf("Verification %s: %s", res.Status, command),
+		Content:    logLine,
 		Seq:        NextLogSeq(),
 	}); err != nil {
 		log.Warn("pool: verification log line", "err", err)
@@ -300,4 +324,79 @@ func (p *Pool) escalateVerifyError(ctx context.Context, job Job, result Result, 
 		TaskID: job.Input.Task.ID, RunID: job.RunID, Reason: ReasonVerifyError, Message: result.verify.errMsg, Result: &result,
 	})
 	log.Warn("pool: verify command could not run, escalating to waiting_human", "err", result.verify.errMsg)
+}
+
+// worktreeHead returns the HEAD commit of the git checkout at dir.
+func worktreeHead(ctx context.Context, dir string) (string, error) {
+	out, err := gitcmd.Output(ctx, dir, "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// worktreeClean reports whether dir has no uncommitted changes (untracked
+// files count, ignored ones do not — the same check as the safety-net commit).
+func worktreeClean(ctx context.Context, dir string) (bool, error) {
+	out, err := gitcmd.Output(ctx, dir, "status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(out)) == "", nil
+}
+
+func shortSHA(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
+}
+
+// reusableVerification reports whether the task's latest verification is a
+// pass on exactly this HEAD commit with the same command, in a clean real
+// worktree. Any doubt (git error, dirty tree, main-clone fallback, empty sha,
+// nil Verifier, non-pass row) returns false so the command runs as usual. The
+// returned run id is the run that actually executed the command.
+func (p *Pool) reusableVerification(ctx context.Context, job Job, dir, headSHA, command string) (string, bool) {
+	if p.Verifier == nil || headSHA == "" || dir == "" || dir != job.Input.RepoPath {
+		return "", false
+	}
+	clean, err := worktreeClean(ctx, dir)
+	if err != nil || !clean {
+		return "", false
+	}
+	prev, err := p.q.GetLatestTaskVerification(ctx, job.Input.Task.ID)
+	if err != nil {
+		return "", false
+	}
+	if prev.Status != VerifyPass || prev.HeadSha != headSHA || prev.Command != command {
+		return "", false
+	}
+	origin := prev.RunID
+	if prev.ReusedFromRunID != nil && *prev.ReusedFromRunID != "" {
+		origin = *prev.ReusedFromRunID
+	}
+	return origin, true
+}
+
+// announceVerifying logs a "Verifying" line and publishes a running
+// task.verification event just before the verify command starts.
+func (p *Pool) announceVerifying(ctx context.Context, job Job, command string) {
+	if err := p.q.CreateAgentLog(ctx, gen.CreateAgentLogParams{
+		ID:         uuid.NewString(),
+		AgentRunID: job.RunID,
+		Timestamp:  time.Now(),
+		Type:       "system",
+		Content:    "Verifying: " + command,
+		Seq:        NextLogSeq(),
+	}); err != nil {
+		slog.Warn("pool: verifying log line", "err", err)
+	}
+	if p.pub != nil {
+		p.pub.Publish(wsevent.TypeTaskVerification, wsevent.TaskVerification{
+			TaskID: job.Input.Task.ID,
+			RunID:  job.RunID,
+			Status: VerifyRunning,
+		})
+	}
 }

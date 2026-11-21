@@ -118,7 +118,8 @@ type TaskReviewCommentsChanged struct {
 }
 
 // TaskVerification is the payload of task.verification: a run's repo verify
-// command finished. Status is pass | fail | timeout | error.
+// command started (Status "running", never stored) or finished (pass | fail
+// | timeout | error). A reused pass publishes pass without a running event.
 type TaskVerification struct {
 	TaskID string `json:"task_id"`
 	RunID  string `json:"run_id"`

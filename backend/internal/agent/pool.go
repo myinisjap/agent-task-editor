@@ -100,6 +100,10 @@ type Pool struct {
 	// lock; it must hand the lock to the new run with a compare-and-swap. The pool
 	// releases the lock (owner-scoped) if it returns an error. Nil disables Steer.
 	OnSteer func(ctx context.Context, job Job, req SteerRequest) error
+	// OnDispatchable is called whenever a run finishes (or panics) so the
+	// dispatcher can sweep immediately: the task lock and the worker slot are
+	// free by now. Must not block.
+	OnDispatchable func()
 
 	// running tracks the cancel func for each in-flight run so a human can stop
 	// a runaway agent (see Cancel). Populated in run(), removed when it returns.
@@ -224,6 +228,7 @@ func (p *Pool) Shutdown(drain time.Duration) {
 		select {
 		case job := <-p.jobs:
 			p.handleCancelled(job, Result{}, time.Now(), CancelReasonShutdown)
+			p.notifyDispatchable()
 			continue
 		default:
 		}
@@ -421,6 +426,7 @@ func (p *Pool) worker(ctx context.Context) {
 // goroutine (which would permanently shrink the pool). It logs, marks the run
 // failed, and clears the lock so the dispatcher can re-pick the task.
 func (p *Pool) runGuarded(ctx context.Context, job Job) {
+	defer p.notifyDispatchable()
 	log := slog.With("component", "pool", "run_id", job.RunID, "task_id", job.Input.Task.ID)
 	defer func() {
 		if r := recover(); r != nil {
@@ -432,6 +438,13 @@ func (p *Pool) runGuarded(ctx context.Context, job Job) {
 		}
 	}()
 	p.run(ctx, job)
+}
+
+// notifyDispatchable calls OnDispatchable if set.
+func (p *Pool) notifyDispatchable() {
+	if p.OnDispatchable != nil {
+		p.OnDispatchable()
+	}
 }
 
 func (p *Pool) run(ctx context.Context, job Job) {

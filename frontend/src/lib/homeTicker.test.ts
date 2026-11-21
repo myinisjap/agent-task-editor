@@ -25,6 +25,7 @@ describe('formatTickerEvent', () => {
     expect(t('fail')).toContain('verify failed')
     expect(t('timeout')).toContain('verify timed out')
     expect(t('error')).toContain('verify errored')
+    expect(t('running')).toBeUndefined()
   })
   it('pr mergeable', () => {
     expect(f('task.pr_mergeable_changed', { task_id: 't1', pr_mergeable: 'conflicting' })?.text).toContain('PR has conflicts')

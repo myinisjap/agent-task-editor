@@ -256,8 +256,10 @@ agent. Only published when at least one comment was actually resolved.
 ### `task.verification`
 A run's repo verify command finished (see
 [workflows.md § Verify commands](workflows.md#verify-commands)). Published for
-every verification, before the resulting transition. `status` is `pass`,
-`fail`, `timeout` or `error`; refetch `GET /tasks/{id}/verifications` for the
+every verification, before the resulting transition. `status` is `running`
+(sent when the command starts, never stored; not sent for a reused pass),
+then the final `pass`, `fail`, `timeout` or `error` (a reused pass publishes
+`pass`); refetch `GET /tasks/{id}/verifications` for the
 details.
 
 ```json

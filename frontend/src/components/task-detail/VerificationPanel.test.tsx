@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, act } from '@testing-library/react'
+import { wsClient } from '../../api/ws'
 import userEvent from '@testing-library/user-event'
 import VerificationPanel from './VerificationPanel'
 import type { RunVerification } from '../../api/client'
@@ -12,7 +13,7 @@ vi.mock('../../api/client', async () => {
 
 const v = (over: Partial<RunVerification> = {}): RunVerification => ({
   run_id: 'r1', task_id: 't1', command: 'go test ./...', status: 'pass', exit_code: 0,
-  output: 'ok  all packages', truncated: false, duration_ms: 2500, created_at: '2026-01-01T00:00:00Z', ...over,
+  output: 'ok  all packages', truncated: false, duration_ms: 2500, head_sha: 'abc', reused_from_run_id: null, created_at: '2026-01-01T00:00:00Z', ...over,
 })
 
 beforeEach(() => m.verifications.mockReset())
@@ -54,5 +55,26 @@ describe('VerificationPanel', () => {
     expect(await screen.findByTestId('verification-badge')).toHaveTextContent('timed out')
     rerender(<VerificationPanel taskId="t1" refreshKey={1} />)
     await waitFor(() => expect(m.verifications).toHaveBeenCalledTimes(2))
+  })
+
+  it('shows reuse instead of a duration for a reused pass', async () => {
+    m.verifications.mockResolvedValue([v({ duration_ms: 0, reused_from_run_id: 'run-origin-1' })])
+    render(<VerificationPanel taskId="t1" />)
+    expect(await screen.findByText(/reused from run run-orig/)).toBeInTheDocument()
+  })
+
+  it('shows a Verifying row between the running event and the final status', async () => {
+    m.verifications.mockResolvedValue([])
+    const handlers: Array<(e: unknown) => void> = []
+    const spy = vi.spyOn(wsClient, 'on').mockImplementation((h) => {
+      handlers.push(h as (e: unknown) => void)
+      return () => {}
+    })
+    render(<VerificationPanel taskId="t1" />)
+    act(() => handlers.forEach((h) => h({ type: 'task.verification', payload: { task_id: 't1', run_id: 'r', status: 'running' } })))
+    expect(await screen.findByTestId('verification-running')).toHaveTextContent('Verifying\u2026 running the repo verify command')
+    act(() => handlers.forEach((h) => h({ type: 'task.verification', payload: { task_id: 't1', run_id: 'r', status: 'pass' } })))
+    expect(screen.queryByTestId('verification-running')).not.toBeInTheDocument()
+    spy.mockRestore()
   })
 })

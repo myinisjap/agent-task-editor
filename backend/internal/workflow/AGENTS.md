@@ -57,3 +57,7 @@ Used by `ListAgentPickupTasks` SQL query logic — returns label names where an 
 ## Publisher Interface
 
 `workflow.Publisher` is satisfied by `*ws.Hub`. The engine calls `Publish("task.label_changed", ...)` after each successful transition.
+
+## OnTransitioned hook
+
+`Engine.OnTransitioned(taskID, from, to)` is called after a label transition commits (all of `Transition`, `TransitionExpecting`, `Approve`, `MoveBack`, `ForceTransition` go through `transition()`). It must not block; `cmd/server/main.go` wires it to `Dispatcher.Wake()` so the next stage starts without waiting for the sweep tick. Set it before the engine is shared with other goroutines.

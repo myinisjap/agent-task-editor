@@ -233,6 +233,7 @@ func (h *TasksHandler) createTask(ctx context.Context, w http.ResponseWriter, in
 			Err(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		h.wakeDispatcher()
 		JSON(w, http.StatusCreated, h.withIntake(ctx, toTaskResponse(task), task))
 		return
 	}
@@ -275,6 +276,7 @@ func (h *TasksHandler) createTask(ctx context.Context, w http.ResponseWriter, in
 		return
 	}
 
+	h.wakeDispatcher()
 	resp := struct {
 		taskResponse
 		RelatedRepoIDs []string       `json:"related_repo_ids,omitempty"`

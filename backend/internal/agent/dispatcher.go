@@ -79,6 +79,8 @@ type Dispatcher struct {
 	globalCostMu     sync.Mutex
 	globalCostState  GlobalCostStatus
 	globalCostAlerts bool // whether the one-shot trip alert has already fired for the current trip
+	// wake requests an immediate sweep (buffered 1, see Wake).
+	wake chan struct{}
 }
 
 // NewDispatcher creates a Dispatcher with a 5-second sweep interval.
@@ -89,10 +91,12 @@ func NewDispatcher(db *sql.DB, pool *Pool, engine *workflow.Engine, factory func
 		q:               gen.New(db),
 		engine:          engine,
 		interval:        5 * time.Second,
+		wake:            make(chan struct{}, 1),
 		ProviderFactory: factory,
 	}
 	if pool != nil {
 		pool.OnSteer = d.steerFollowUp
+		pool.OnDispatchable = d.Wake
 	}
 	return d
 }
@@ -129,7 +133,18 @@ func (d *Dispatcher) materializeSkills(ctx context.Context, workDir, provider, a
 	}
 }
 
-// Run sweeps on interval until ctx is cancelled.
+// Wake requests an immediate sweep instead of waiting for the next tick. It
+// never blocks, coalesces repeated calls into one pending sweep, and is safe
+// to call before Run starts or on a zero-value Dispatcher. Sweeps stay serial
+// in the Run goroutine.
+func (d *Dispatcher) Wake() {
+	select {
+	case d.wake <- struct{}{}:
+	default:
+	}
+}
+
+// Run sweeps on interval (and immediately on Wake) until ctx is cancelled.
 func (d *Dispatcher) Run(ctx context.Context) {
 	// Record an initial heartbeat before the loop starts so /readyz doesn't
 	// report "never swept" during the up-to-interval window before the first
@@ -138,19 +153,22 @@ func (d *Dispatcher) Run(ctx context.Context) {
 
 	ticker := time.NewTicker(d.interval)
 	defer ticker.Stop()
+	// Record the heartbeat at the start of the tick, before sweep runs, so a
+	// sweep that hangs mid-execution makes the heartbeat go stale - that is the
+	// "wedged loop" /readyz detects.
+	tick := func() {
+		d.lastSweep.Store(time.Now().UnixNano())
+		d.sweep(ctx)
+		d.sweeps.Add(1)
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Record the heartbeat at the start of the tick, before sweep
-			// runs, so a sweep that hangs mid-execution causes the
-			// heartbeat to go stale — that's the "wedged loop" /readyz is
-			// meant to detect. Recording after sweep() returns would hide
-			// a hang for as long as it lasts.
-			d.lastSweep.Store(time.Now().UnixNano())
-			d.sweep(ctx)
-			d.sweeps.Add(1)
+			tick()
+		case <-d.wake:
+			tick()
 		}
 	}
 }
@@ -421,7 +439,13 @@ func (d *Dispatcher) PausedProviders() []PausedProvider { return d.ProviderPause
 
 // ResumeProvider manually clears a provider's pause and reports whether it
 // was paused.
-func (d *Dispatcher) ResumeProvider(provider string) bool { return d.ProviderPauses.Resume(provider) }
+func (d *Dispatcher) ResumeProvider(provider string) bool {
+	was := d.ProviderPauses.Resume(provider)
+	if was {
+		d.Wake()
+	}
+	return was
+}
 
 // effectiveBudget resolves the effective cost budget for a task from its
 // own max_cost_usd and its matched agent config's max_cost_usd. A value of
