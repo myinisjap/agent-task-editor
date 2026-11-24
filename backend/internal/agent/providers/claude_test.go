@@ -1627,7 +1627,7 @@ func TestBuildClaudeArgs_PermissionMode(t *testing.T) {
 }
 
 // TestClaudeRunner_PassesBare keeps Claude Code auto-memory off for task runs.
-// `--bare` skips auto-memory and CLAUDE.md discovery (claude CLI 2.1.301). Each
+// `--bare` skips auto-memory and CLAUDE.md discovery (claude CLI 2.1.325). Each
 // task runs in its own worktree, so memories would be written per worktree and
 // never read again; cross-task knowledge comes from repo lessons instead.
 func TestClaudeRunner_PassesBare(t *testing.T) {

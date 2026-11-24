@@ -18,7 +18,7 @@ const markerFile = ".ate-managed-skill"
 
 // providerDirs maps a provider to the worktree-relative directory its CLI
 // scans for project skills, verified against the versions pinned in
-// backend/Dockerfile (claude 2.1.301, codex 0.163.0, qwen 0.25.2, opencode
+// backend/Dockerfile (claude 2.1.325, codex 0.163.0, qwen 0.25.2, opencode
 // 1.19.1).
 var providerDirs = map[string]string{
 	"claude":    ".claude/skills",

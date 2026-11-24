@@ -126,7 +126,7 @@ ENV MISE_YES=1
 # command needing classification is denied with "Classifier unavailable" —
 # verified empirically in-container (2.1.223: 100% denials; 2.1.238: none,
 # same account/network/env).
-ARG CLAUDE_CLI_VERSION=2.1.301
+ARG CLAUDE_CLI_VERSION=2.1.325
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CLI_VERSION}
 
 # Codex CLI (codex_cli provider), Qwen CLI (qwen_code provider) and Opencode
